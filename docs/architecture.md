@@ -33,7 +33,7 @@ flowchart LR
     SHELL["Desktop Shell\nTauri / WebView2 / WKWebView"]
     UI["Dashboard\nReact + TypeScript"]
     MANAGER["Local Manager\nRust service"]
-    DB[("SQLite\nlocal state")]
+    DB[("SQLite\noperations, settings, disposable cache")]
     HOST["SDK Runtime Host\nloads brosdk.dll"]
     DLL["brosdk.dll"]
     BROWSER["YunBrowser / Chromium envs"]
@@ -84,9 +84,9 @@ brosdk-dashboard/
 
 ## 6. 数据模型
 
-首版保留本地事实来源，远端 SDK 环境作为可同步资源：
+服务端是环境配置的唯一事实来源，本地只保留 operation、设置、profile 和可丢弃的远端缓存：
 
-- `EnvironmentRecord`：本地显示名、分组、标签、远端 `envId`、绑定代理/指纹摘要、最近运行状态。
+- `EnvironmentRecord`：SDK 服务端名称、远端 `envId` 与本机运行状态；不允许本地名称或标签覆盖。
 - `RuntimeInstance`：易失态，包含 `envId`、generation、SDK reqId、PID/CDP/ready/exit fact。
 - `ProxyProfile`：本地代理配置，密码进入系统密钥库。
 - `FingerprintProfile`：先显示 SDK 返回的指纹摘要和预览；完整本地编辑器后续移植。
@@ -94,7 +94,7 @@ brosdk-dashboard/
 - `Operation`：所有启动、停止、创建、更新、删除、安装、诊断都必须进入 operation。
 - `Settings`：数据目录、工作目录、扩展目录、SDK API URL、启动策略、日志级别。
 
-阶段 3 已落地 SQLite WAL schema、持久化 operation 状态机和递增 Manager 事件。具体 schema、事务边界与 generation 规则见 [manager-domain.md](manager-domain.md)。
+阶段 3 已落地 SQLite WAL schema、持久化 operation 状态机和递增 Manager 事件。阶段 11 把 environment/environment_details 明确降级为可丢弃缓存：完整分页成功后原子替换，失败时保留旧值并标记 stale。具体 schema、事务边界与 generation 规则见 [manager-domain.md](manager-domain.md)。
 
 ## 7. API 与事件形态
 
@@ -138,7 +138,7 @@ DLL 的 `/sdk/v1/env/create` 与第三方服务端 `/api/v2/browser/create` 复�
 
 `brosdk.dll` 本身已经包含内嵌 MCP / HTTP 能力。新客户端把它作为 `sdk-host` 的 platform capability 暴露：当 Manager 明确配置端口时，由 `sdk_init` 的 `port` 字段启用 DLL 内嵌端点；Dashboard 不直接依赖该端点，仍通过 Manager 统一处理 envId 路由、operation 状态、安全策略和未来审批。
 
-阶段 9 的 Manager MCP adapter 使用 DLL 的 Streamable HTTP 单环境端点 `/sdk/v1/mcp/env/{envId}`，严格执行 `initialize -> notifications/initialized -> tools/list/tools/call -> DELETE`。当前只允许 ready 环境调用 `browser_state(action=get)` 与 `tabs(action=list|current)`；每次调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。设置端口只代表下次 init 的配置，只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。
+阶段 9 的 Manager MCP adapter 使用 DLL 的 Streamable HTTP 单环境端点 `/sdk/v1/mcp/env/{envId}`，严格执行 `initialize -> notifications/initialized -> tools/list/tools/call -> DELETE`。阶段 11 增加全局 `/sdk/v1/mcp` 路由和动态工具发现：全局写工具仍由 Manager 对应 operation 代替，单环境工具按 DLL annotations 和 Manager 白名单分层。每次调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。设置端口只代表下次 init 的配置，只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。
 
 ## 8. 运行状态语义
 

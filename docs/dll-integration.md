@@ -70,7 +70,7 @@ BROSDK_API_KEY -> sdk_get_user_sig -> userSig -> sdk_init -> sdk_info
 
 补充：当前 DLL 已自带 MCP 功能，和内嵌 HTTP/WS 服务同属 `sdk_init` 的 `port` 启用路径。新客户端首版把它标记为 `embedded_mcp` capability；需要 smoke 或后续自动化验证时，由 `sdk-host` 在隔离进程中传入端口。Manager 仍然是 Dashboard 与自动化工具的策略边界，负责 envId 路由、operation 追踪和敏感信息脱敏。
 
-阶段 9 已验证 DLL 的真实 MCP 协议路径：全局管理端点为 `/sdk/v1/mcp`，单环境自动化端点为 `/sdk/v1/mcp/env/{envId}`。Dashboard/Agent 不直接持有 MCP session；Manager adapter 负责严格 lifecycle、只读工具白名单、ready 状态校验、operation 追踪、URL 降级和响应脱敏。
+阶段 11 源码审计确认 DLL 的真实 MCP 分层并不缺少单环境操作：全局管理端点 `/sdk/v1/mcp` 已注册 `env.list/resolve/get/create/update/destroy`、`browser.open/close/cleanup/status/install`、`task.list/get` 和 `mcp.endpoint`；单环境自动化端点 `/sdk/v1/mcp/env/{envId}` 已注册 `browser_state`、`tabs`、`snapshot/diff/read/grep/screenshot/pdf/wait` 及导航、交互、上传下载等工具。当前产品缺口是 Manager client 只连接单环境 endpoint 且策略只开放两个动作。Dashboard/Agent 不直接持有 MCP session；Manager adapter 负责严格 lifecycle、工具发现、读写分层、ready 状态校验、operation 追踪、URL 降级和响应脱敏。
 
 ## 4. 进程锁风险
 
@@ -156,7 +156,7 @@ Manager 内部统一转换为：
 
 | Dashboard 操作 | DLL 调用 | 产品语义 |
 | --- | --- | --- |
-| 拉取环境 | `sdk_env_page` | 同步远端列表，合并本地标签、备注、最近状态 |
+| 拉取环境 | `sdk_env_page` | 完整分页缓存远端列表，叠加当前设备最近运行状态 |
 | 查看详情 | `sdk_env_getinfo` | 获取已解密环境详情，用于指纹/代理/内核预览 |
 | 新建环境 | `sdk_env_create` | 写入远端后保存本地镜像 |
 | 修改环境 | `sdk_env_update` | 远端成功后更新本地镜像 |

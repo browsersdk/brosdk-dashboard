@@ -216,7 +216,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-10 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-10 已完成，阶段 11 实施中；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 所有 API Key 只从环境变量读取，不写入仓库、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -236,3 +236,12 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 Dashboard 子阶段结果：5 个环境创建组件测试通过；production build 通过。Browser 插件实测打开创建带、切换代理、按钮取消和 Esc 取消；1440x900、390x844 下 `documentElement.scrollWidth === clientWidth`，无控制台 warning/error。普通浏览器预览仅验证交互，提交按钮保持禁用，不触发远端 mutation。
 
 真实 E2E 子阶段结果：门禁辅助测试 2 项通过；无 API Key 时命令以 `skipped` 退出。设置 mutation 门禁后，真实 DLL 使用 `chrome-134-windows-x86_64` 和本机网络完成创建、镜像确认、删除、`env_page` 再对账；`cleanupAttempted=true`、`cleanupSucceeded=true`，测试前后账号环境数均为 1。
+
+## 12. 阶段 11 远端缓存与 MCP 验收
+
+- 环境分页测试至少覆盖两页、空列表、重复 envId、`total` 缺失、第二页失败和条数上限。
+- 成功同步必须删除缓存中服务端已不存在的环境；失败同步不得写入部分结果，cache status 必须为 stale。
+- schema migration 必须清除旧 `local_label`/`tags_json` 覆盖，Dashboard 搜索和展示只使用服务端名称与 envId。
+- 全局 MCP 测试覆盖 `/sdk/v1/mcp` 的 initialize、initialized、tools/list、只读 tools/call、DELETE，并确认 mutation 工具不会被 Dashboard 直通。
+- 单环境 MCP 测试覆盖 advertised tools 与 Manager 白名单交集；非 ready 环境、未公布工具和变更工具必须拒绝。
+- 真实测试至少验证全局 `sdk.health`、`env.list`、`mcp.endpoint`，以及 ready 环境的 `tabs(list)` 和一个页面读取工具；报告不输出 envId、页面正文、URL query、API Key 或 userSig。

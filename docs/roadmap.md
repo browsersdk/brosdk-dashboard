@@ -15,6 +15,7 @@
 | 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
 | 9. AI Agent | P2 | 已完成 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、持久化幂等、DLL MCP 只读 adapter |
 | 10. 环境创建交互收敛 | P0 | 已完成 | 创建环境只要求选择代理和内核版本，真实 DLL 创建/删除及镜像对账通过 |
+| 11. 远端事实源与 MCP 双层路由 | P0 | 实施中 | 环境配置以 SDK 服务端为准，本地仅保留可丢弃缓存；补齐 DLL 全局与单环境 MCP 路由 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -78,7 +79,7 @@
 
 ## 5. 阶段 3：Manager Domain
 
-目标：建立本地事实来源和操作模型。
+目标：建立本地 operation/运行状态来源和操作模型；阶段 11 再把环境配置收敛为服务端事实源。
 
 任务：
 
@@ -102,7 +103,7 @@
 任务：
 
 - 总览：SDK 初始化状态、运行环境数、最近操作、组件健康。
-- 环境列表：搜索、状态筛选、远端 envId、本地标签、启动/停止按钮。
+- 环境列表：搜索、状态筛选、服务端名称、远端 envId、启动/停止按钮。
 - 运行详情：状态、CDP、reqId、最后事件、错误信息。
 - 操作记录：启动、停止、同步、失败详情。
 - 设置：API Key 来源状态、workDir、扩展目录、日志目录。
@@ -285,9 +286,49 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - E2E 自动选择最新可用本地内核，以本机网络创建环境，确认 operation 只保存两个 ID 字段，并验证创建结果进入本地镜像。
 - 真实 DLL 验收使用 `chrome-134-windows-x86_64` 通过；创建后立即删除，再执行 `env_page`，测试前后账号环境数均为 1，补偿清理成功。
 
-## 13. 当前状态
+## 13. 阶段 11：远端事实源与 MCP 双层路由
 
-阶段 0-10 的仓库内规划已完成。阶段 10 已按“Manager 创建链路 -> Dashboard 交互 -> 真实 E2E/视觉验收”完成，每一部分均独立执行自动测试、更新文档并提交。
+目标：消除“SQLite 是环境事实来源”的歧义，并完整接入 DLL 已提供的全局管理 MCP 与单环境 BrowserOS MCP。
+
+产品原则：
+
+- API Key 只用于 `sdk_get_user_sig(role=user)`，后续环境读取和写入由初始化后的 DLL 使用 userSig 访问 SDK 服务端；服务端是环境配置唯一事实来源。
+- SQLite 环境表只允许保存服务端响应的脱敏、可删除缓存。缓存不能产生本地专属环境名称、标签或覆盖服务端字段。
+- `sdk_env_page` 必须分页拉取完整集合。只有所有页都成功时才原子替换缓存；任一页失败时保留上一份缓存并明确标记 stale。
+- generation、reqId、CDP 和 ready/stopped 是当前设备的浏览器进程事实，作为本地运行态叠加在远端缓存上，不视为远端环境配置。
+- DLL 全局 MCP `/sdk/v1/mcp` 用于环境发现、详情和运行状态诊断；单环境 MCP `/sdk/v1/mcp/env/{envId}` 用于具体浏览器页面操作。
+- 全局 MCP 的 create/update/destroy/open/close 等写工具不直接暴露给 Dashboard，继续复用 Manager operation、状态校验、审批和补偿逻辑。
+
+任务：
+
+- 把默认环境分页从固定前 20 条改为完整分页读取，解析服务端 `data.list` 与 `data.total`，设置页数和条数上限。
+- 增加环境缓存元数据：来源、fresh/stale/empty 状态、最后成功时间、最后尝试时间、脱敏错误和缓存条数。
+- 成功同步时事务替换远端缓存并删除服务端已不存在的记录；失败时不写入半套结果。
+- 清除并停止使用 `local_label`/`tags_json` 等本地环境覆盖字段；Dashboard 只显示服务端名称和 envId。
+- 启动时在 API Key 可用且缓存过期时自动刷新；网络失败允许只读显示 stale 缓存，但 mutation 仍由 SDK 服务端最终校验。
+- 为 MCP client 增加全局 endpoint、`tools/list` 发现和严格 session lifecycle 复用。
+- Manager 分别维护全局只读工具策略与单环境工具策略，并核对 DLL 实际 advertised tools；响应继续脱敏，URL 继续降为 origin。
+- Dashboard MCP 页面增加“全局/单环境”作用域、动态工具状态与安全参数输入，不直接访问 DLL 端口。
+
+已核对契约：
+
+- DLL 源码的全局 MCP 已包含 `sdk.health`、`sdk.info`、`env.list/resolve/get/create/update/destroy`、`browser.open/close/cleanup/status/install`、`task.list/get` 和 `mcp.endpoint`。
+- DLL 单环境 MCP 已包含 `browser_state`、`tabs`、`snapshot`、`diff`、`read`、`grep`、`screenshot`、`pdf`、`wait` 以及导航/交互类工具。
+- 因此缺口不在 DLL，而在本项目当前只实现 `/sdk/v1/mcp/env/{envId}` 且只允许 `browser_state(get)`、`tabs(list/current)`。
+- `brostu` 与当前 DLL 一样通过 init `port` 启用内嵌服务，并直接使用 `PageEnv/GetEnvInfo/CreateEnv/UpdateEnv/BrowserInfo`，没有额外的本地环境事实库要求。
+
+验收：
+
+- 超过一页的服务端环境能完整进入缓存；同步后已删除的远端环境不会残留。
+- 中途分页失败不会覆盖上一份完整缓存，Dashboard 明确显示 stale 而不是伪装为最新。
+- SQLite 不再保存或展示本地环境名称/标签覆盖，诊断包说明环境数据为服务端缓存。
+- 全局 MCP 能完成 initialize、tools/list、只读 `sdk.health`/`env.list` 和 session DELETE。
+- ready 环境能发现并调用允许的单环境只读工具；非 ready 环境和未批准的 mutation 被 Manager 拒绝。
+- `npm run check`、`npm test`、`npm run build`、真实 SDK/MCP E2E 和 1440x900/390x844 浏览器验收通过。
+
+## 14. 当前状态
+
+阶段 0-10 的仓库内规划已完成。阶段 11 正按“远端缓存语义 -> MCP 双层路由 -> Dashboard/真实 E2E”推进，每一部分独立执行自动测试、更新文档并提交。
 
 阶段 7 实现结果：
 

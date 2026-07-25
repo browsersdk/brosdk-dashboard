@@ -1,20 +1,27 @@
 # Manager Domain 与 SQLite
 
-## 1. 本地事实来源
+## 1. 本地持久化与远端事实来源
 
-Manager 使用 `runtime/data/manager.sqlite3` 作为默认本地事实来源，可通过 `BROSDK_DATA_DIR` 改写目录。数据库启用 WAL、foreign keys 和 5 秒 busy timeout。Dashboard 不直接访问 SQLite，只通过 Tauri command 获取 snapshot、operation 和递增事件。
+Manager 使用 `runtime/data/manager.sqlite3` 持久化设置、operation、本地 profile、事件和可丢弃缓存，可通过 `BROSDK_DATA_DIR` 改写目录。SDK 服务端是环境配置的唯一事实来源；数据库启用 WAL、foreign keys 和 5 秒 busy timeout。Dashboard 不直接访问 SQLite，只通过 Tauri command 获取 snapshot、operation 和递增事件。
+
+阶段 11 缓存规则：
+
+- `environments`/`environment_details` 只缓存 DLL 从 SDK 服务端返回的脱敏数据，不允许本地名称或标签覆盖。
+- 每次同步读取全部分页；全部成功后单事务替换缓存并删除远端已不存在的行。
+- 任一分页失败时不写入部分结果，保留上一份缓存并标记 stale。
+- generation、reqId、CDP、ready/stopped 属于当前设备运行态，可与缓存一起保存，但不能覆盖远端环境配置。
 
 当前 schema version 为 4：
 
 | 表 | 用途 |
 | --- | --- |
 | `settings` | dataDir、workDir、extensionDir、logDir、sdkApiUrl、debug、startupPolicy、embeddedMcpPort |
-| `environments` | 远端环境镜像、本地标签、generation、当前状态和 CDP |
+| `environments` | SDK 服务端环境的可丢弃脱敏缓存，以及当前设备 generation、状态和 CDP |
 | `operations` | queued/running/succeeded/failed/cancelled 状态机与脱敏 request snapshot |
 | `runtime_snapshots` | 每个 envId 最近一次运行事实 |
 | `proxy_profiles` | 本地代理 profile；只保存 secret reference |
 | `fingerprint_profiles` | 本地指纹 profile JSON |
-| `environment_details` | `sdk_env_getinfo` 的脱敏指纹/代理/内核摘要 |
+| `environment_details` | `sdk_env_getinfo` 的可丢弃脱敏指纹/代理/内核缓存 |
 | `kernel_records` | SDK catalog 与本地 `.core.json` 合并视图 |
 | `manager_events` | AUTOINCREMENT sequence 的增量事件流 |
 | `schema_migrations` | 已应用 schema version |
