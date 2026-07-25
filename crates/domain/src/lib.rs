@@ -270,19 +270,52 @@ pub enum HostWireMessage {
 pub struct EnvironmentRecord {
     pub env_id: String,
     pub name: String,
+    pub local_label: String,
+    pub tags: Vec<String>,
     pub status: String,
     pub cdp: String,
     pub last_event: String,
+    pub generation: u64,
+    pub request_id: Option<i32>,
+    pub current_operation_id: Option<String>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OperationRecord {
     pub id: String,
+    pub kind: String,
+    pub env_id: Option<String>,
     pub label: String,
     pub status: String,
     pub message: String,
+    pub request_id: Option<i32>,
+    pub generation: u64,
+    pub error_code: Option<String>,
+    pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagerSettings {
+    pub work_dir: String,
+    pub extension_dir: String,
+    pub log_dir: String,
+    pub sdk_api_url: Option<String>,
+    pub debug: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagerEvent {
+    pub sequence: u64,
+    pub event_type: String,
+    pub env_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub payload: Value,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,6 +336,9 @@ pub struct DashboardSnapshot {
     pub mcp: McpPanel,
     pub environments: Vec<EnvironmentRecord>,
     pub operations: Vec<OperationRecord>,
+    pub settings: ManagerSettings,
+    pub latest_event_sequence: u64,
+    pub database_path: String,
 }
 
 pub fn summarize_json(value: &Value) -> JsonSummary {

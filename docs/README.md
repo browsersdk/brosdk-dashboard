@@ -21,18 +21,19 @@
 2. 再读 [architecture.md](architecture.md)，确认客户端架构、进程边界和技术栈。
 3. 再读 [dll-integration.md](dll-integration.md)，确认 `brosdk.dll` 的调用方式、回调、状态和风险。
 4. 再读 [roadmap.md](roadmap.md)，按阶段实施。
-5. 最后读 [testing-handoff.md](testing-handoff.md)，按约定设置测试密钥并跑 E2E。
+5. 读 [manager-domain.md](manager-domain.md)，确认 SQLite、operation、generation 和事件规则。
+6. 最后读 [testing-handoff.md](testing-handoff.md)，按约定设置测试密钥并跑 E2E。
 
 ## 当前实现状态
 
-截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke 和阶段 2 Runtime Host 已实现：
+截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host 和阶段 3 Manager Domain 已实现：
 
 ```text
 brosdk-dashboard/
   apps/dashboard/            React + TypeScript + Vite Dashboard
   apps/desktop/src-tauri/    Tauri 2 桌面外壳
   crates/domain/             领域与传输模型
-  crates/manager/            Manager 入口
+  crates/manager/            SQLite、operation、镜像、事件与 Manager API
   crates/runtime-ipc/        named pipe/UDS 与长度前缀 JSON 帧
   crates/sdk-ffi/            brosdk.dll C ABI 绑定
   crates/sdk-host/           DLL 隔离进程与 smoke CLI
@@ -64,7 +65,7 @@ brosdk-dashboard/
 
 ## 当前实施目标
 
-下一步按 [roadmap.md](roadmap.md) 推进阶段 3 Manager Domain，再逐步完成最小环境生命周期闭环：
+下一步按 [roadmap.md](roadmap.md) 推进阶段 4 Dashboard MVP，把已有 Manager API 接入完整环境生命周期交互：
 
 1. 启动桌面窗口。
 2. 从环境变量读取 API Key，换取 userSig。

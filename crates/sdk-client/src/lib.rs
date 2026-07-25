@@ -165,6 +165,10 @@ impl RuntimeHost {
         self.events.subscribe()
     }
 
+    pub fn subscribe_status(&self) -> watch::Receiver<RuntimeHostStatus> {
+        self.status.clone()
+    }
+
     pub async fn call(
         &self,
         command: HostCommand,

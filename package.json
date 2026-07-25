@@ -16,6 +16,7 @@
     "tauri:build": "npm run build --workspace apps/desktop",
     "sdk:smoke": "cargo run -p sdk-host -- smoke --json",
     "sdk:runtime-smoke": "cargo build -p sdk-host && cargo run -p sdk-client --bin runtime-host-smoke",
+    "manager:smoke": "cargo build -p sdk-host && cargo run -p manager --bin manager-smoke",
     "sdk:capabilities": "cargo run -p sdk-host -- capabilities --json"
   }
 }

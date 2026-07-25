@@ -2,7 +2,7 @@
 async fn manager_snapshot(
     manager: tauri::State<'_, manager::Manager>,
 ) -> Result<domain::DashboardSnapshot, String> {
-    Ok(manager.snapshot().await)
+    manager.snapshot().await.map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -46,6 +46,56 @@ async fn runtime_host_kill(
 }
 
 #[tauri::command]
+async fn manager_sync_environments(
+    manager: tauri::State<'_, manager::Manager>,
+) -> Result<domain::OperationRecord, String> {
+    manager
+        .sync_environments()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn manager_reconcile_runtimes(
+    manager: tauri::State<'_, manager::Manager>,
+) -> Result<domain::OperationRecord, String> {
+    manager
+        .reconcile_runtimes()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn manager_events_since(
+    manager: tauri::State<'_, manager::Manager>,
+    sequence: u64,
+) -> Result<Vec<domain::ManagerEvent>, String> {
+    manager
+        .events_since(sequence)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn manager_update_settings(
+    manager: tauri::State<'_, manager::Manager>,
+    settings: domain::ManagerSettings,
+) -> Result<(), String> {
+    manager
+        .update_settings(settings)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn manager_cancel_operation(
+    manager: tauri::State<'_, manager::Manager>,
+    operation_id: String,
+) -> Result<domain::OperationRecord, String> {
+    manager
+        .cancel_operation(&operation_id)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn sdk_host_path() -> Result<String, String> {
     sdk_client::discover_host_path()
         .map(|path| path.display().to_string())
@@ -69,6 +119,11 @@ pub fn run() {
             runtime_host_start,
             runtime_host_stop,
             runtime_host_kill,
+            manager_sync_environments,
+            manager_reconcile_runtimes,
+            manager_events_since,
+            manager_update_settings,
+            manager_cancel_operation,
             sdk_host_path
         ])
         .run(tauri::generate_context!())

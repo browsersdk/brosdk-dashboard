@@ -67,6 +67,14 @@ npm run sdk:runtime-smoke
 
 该命令先构建 `sdk-host`，再验证 health/capability、正常 shutdown 和强制 kill。预期正常路径状态为 `stopped`，强制 kill 路径状态为 `degraded`，完成后没有残留 `sdk-host.exe`。可设置 `BROSDK_IPC_TRACE=1` 输出不含 payload 的 IPC 阶段诊断。
 
+Manager Domain smoke：
+
+```powershell
+npm run manager:smoke
+```
+
+该命令验证 SQLite 初始化、runtime host 启停、持久化 operation、snapshot 和 `events_since`。未设置 `BROSDK_API_KEY` 时，同步 operation 预期以 `SDK_HOST_ERROR` 失败并产生 queued/running/failed 事件；设置密钥时预期执行真实 `sdk_env_page` 并更新环境镜像。
+
 ## 4. 生命周期 E2E 预期流程
 
 前置条件：

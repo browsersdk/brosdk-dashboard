@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { DashboardSnapshot, SmokeReport } from "./types";
+import type { DashboardSnapshot, ManagerEvent, ManagerSettings, SmokeReport } from "./types";
 
 export async function getSnapshot(): Promise<DashboardSnapshot> {
   if (isTauri()) {
@@ -13,6 +13,22 @@ export async function runSmoke(): Promise<SmokeReport> {
     throw new Error("请在 Tauri 桌面窗口中运行 SDK smoke");
   }
   return invoke<SmokeReport>("run_sdk_smoke");
+}
+
+export async function syncEnvironments() {
+  return invoke("manager_sync_environments");
+}
+
+export async function reconcileRuntimes() {
+  return invoke("manager_reconcile_runtimes");
+}
+
+export async function eventsSince(sequence: number): Promise<ManagerEvent[]> {
+  return invoke<ManagerEvent[]>("manager_events_since", { sequence });
+}
+
+export async function updateSettings(settings: ManagerSettings): Promise<void> {
+  return invoke("manager_update_settings", { settings });
 }
 
 function isTauri() {
@@ -60,11 +76,26 @@ function demoSnapshot(): DashboardSnapshot {
       {
         envId: "-",
         name: "等待 env_page 同步",
+        localLabel: "",
+        tags: [],
         status: "stopped",
         cdp: "-",
         lastEvent: "桌面命令不可用",
+        generation: 0,
+        requestId: null,
+        currentOperationId: null,
+        updatedAt: new Date(0).toISOString(),
       },
     ],
     operations: [],
+    settings: {
+      workDir: "runtime/sdk-work",
+      extensionDir: "runtime/data/extensions",
+      logDir: "runtime/data/logs",
+      sdkApiUrl: null,
+      debug: false,
+    },
+    latestEventSequence: 0,
+    databasePath: "runtime/data/manager.sqlite3",
   };
 }

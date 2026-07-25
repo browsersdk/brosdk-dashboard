@@ -78,15 +78,47 @@ export interface DashboardSnapshot {
   environments: Array<{
     envId: string;
     name: string;
+    localLabel: string;
+    tags: string[];
     status: string;
     cdp: string;
     lastEvent: string;
+    generation: number;
+    requestId: number | null;
+    currentOperationId: string | null;
+    updatedAt: string;
   }>;
   operations: Array<{
     id: string;
+    kind: string;
+    envId: string | null;
     label: string;
     status: string;
     message: string;
+    requestId: number | null;
+    generation: number;
+    errorCode: string | null;
+    createdAt: string;
     updatedAt: string;
   }>;
+  settings: ManagerSettings;
+  latestEventSequence: number;
+  databasePath: string;
+}
+
+export interface ManagerSettings {
+  workDir: string;
+  extensionDir: string;
+  logDir: string;
+  sdkApiUrl: string | null;
+  debug: boolean;
+}
+
+export interface ManagerEvent {
+  sequence: number;
+  eventType: string;
+  envId: string | null;
+  operationId: string | null;
+  payload: unknown;
+  createdAt: string;
 }

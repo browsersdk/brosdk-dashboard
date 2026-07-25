@@ -194,6 +194,8 @@ function SdkPanel({ snapshot }: { snapshot: DashboardSnapshot | null }) {
     ["Runtime", snapshot?.sdk.runtime.state ?? "-"],
     ["PID / Generation", snapshot?.sdk.runtime.pid ? `${snapshot.sdk.runtime.pid} / ${snapshot.sdk.runtime.generation}` : "-"],
     ["WorkDir", snapshot?.sdk.workDir ?? "-"],
+    ["Database", snapshot?.databasePath ?? "-"],
+    ["Event sequence", snapshot ? String(snapshot.latestEventSequence) : "-"],
     ["平台", capabilities?.platform ?? "-"],
     ["C ABI", capabilities?.cAbi ? "ready" : "unknown"],
     ["CDP", capabilities?.cdpCalls.join(", ") || "-"],
@@ -331,6 +333,11 @@ function SettingsPage({ snapshot }: { snapshot: DashboardSnapshot | null }) {
           <div><dt>API Key 来源</dt><dd>{snapshot?.sdk.apiKey.source ?? "BROSDK_API_KEY"}</dd></div>
           <div><dt>API Key 状态</dt><dd>{snapshot?.sdk.apiKey.present ? "present" : "missing"}</dd></div>
           <div><dt>SDK WorkDir</dt><dd>{snapshot?.sdk.workDir ?? "-"}</dd></div>
+          <div><dt>扩展目录</dt><dd>{snapshot?.settings.extensionDir ?? "-"}</dd></div>
+          <div><dt>日志目录</dt><dd>{snapshot?.settings.logDir ?? "-"}</dd></div>
+          <div><dt>SDK API URL</dt><dd>{snapshot?.settings.sdkApiUrl ?? "默认"}</dd></div>
+          <div><dt>Debug</dt><dd>{snapshot?.settings.debug ? "enabled" : "disabled"}</dd></div>
+          <div><dt>SQLite</dt><dd>{snapshot?.databasePath ?? "-"}</dd></div>
           <div><dt>DLL</dt><dd>{snapshot?.sdk.dllPath ?? "-"}</dd></div>
         </dl>
       </div>

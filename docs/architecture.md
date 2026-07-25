@@ -94,6 +94,8 @@ brosdk-dashboard/
 - `Operation`：所有启动、停止、创建、更新、删除、安装、诊断都必须进入 operation。
 - `Settings`：数据目录、工作目录、扩展目录、SDK API URL、启动策略、日志级别。
 
+阶段 3 已落地 SQLite WAL schema、持久化 operation 状态机和递增 Manager 事件。具体 schema、事务边界与 generation 规则见 [manager-domain.md](manager-domain.md)。
+
 ## 7. API 与事件形态
 
 Dashboard 首选 Tauri command/event：

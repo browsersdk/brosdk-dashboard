@@ -9,9 +9,13 @@ publish.workspace = true
 chrono.workspace = true
 domain = { path = "../domain" }
 platform = { path = "../platform" }
+rusqlite.workspace = true
 sdk-client = { path = "../sdk-client" }
 sdk-ffi = { path = "../sdk-ffi" }
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3.20"
