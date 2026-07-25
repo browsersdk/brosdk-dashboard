@@ -11,7 +11,7 @@
     "dev": "npm run dev --workspace apps/dashboard",
     "build": "npm run build --workspace apps/dashboard",
     "check": "npm run check --workspace apps/dashboard && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
-    "test": "cargo test --workspace",
+    "test": "npm run test --workspace apps/dashboard && cargo test --workspace",
     "tauri:dev": "npm run dev --workspace apps/desktop",
     "tauri:build": "npm run build --workspace apps/desktop",
     "sdk:smoke": "cargo run -p sdk-host -- smoke --json",

@@ -20,6 +20,7 @@ import {
   LoaderCircle,
   Network,
   Play,
+  Plus,
   RefreshCw,
   RotateCcw,
   ServerCog,
@@ -40,6 +41,7 @@ import {
   callEmbeddedMcp,
   cancelOperation,
   cleanupKernelCache,
+  createEnvironment,
   createDiagnosticBundle,
   deleteFingerprintProfile,
   deleteProxyProfile,
@@ -69,6 +71,7 @@ import {
   uninstallKernel,
   updateSettings,
 } from "./api";
+import { EnvironmentCreatePanel } from "./features/environments/EnvironmentCreatePanel";
 import type {
   AiAgentExecution,
   AiAgentPlan,
@@ -257,6 +260,7 @@ export default function App() {
             snapshot={snapshot}
             onRefresh={load}
             onError={(message) => setError(message)}
+            onOpenKernels={() => setPage("kernels")}
           />
         )}
         {page === "fingerprints" && <FingerprintPage snapshot={snapshot} onRefresh={load} onError={setError} />}
@@ -355,15 +359,17 @@ function StageRow({ stage }: { stage: SmokeStage }) {
   );
 }
 
-function EnvironmentPage({ snapshot, onRefresh, onError }: {
+function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
   snapshot: DashboardSnapshot | null;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
+  onOpenKernels: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
   const rows = snapshot?.environments ?? [];
   const filteredRows = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -383,6 +389,25 @@ function EnvironmentPage({ snapshot, onRefresh, onError }: {
       await onRefresh();
     } catch (requestError) {
       onError(requestError instanceof Error ? requestError.message : "环境操作失败");
+    } finally {
+      setBusyAction("");
+    }
+  }
+
+  async function create(input: Parameters<typeof createEnvironment>[0]) {
+    setBusyAction("create");
+    onError("");
+    try {
+      const operation = await createEnvironment(input);
+      if (operation.status !== "succeeded") {
+        onError(operation.message || "环境创建失败");
+        return;
+      }
+      await onRefresh();
+      setSelectedEnvId(operation.envId);
+      setCreateOpen(false);
+    } catch (requestError) {
+      onError(errorMessage(requestError, "环境创建失败"));
     } finally {
       setBusyAction("");
     }
@@ -417,8 +442,23 @@ function EnvironmentPage({ snapshot, onRefresh, onError }: {
           <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busyAction)} onClick={() => void runAction("reconcile", reconcileRuntimes)}>
             <Activity className={busyAction === "reconcile" ? "spin" : ""} size={14} />对账
           </button>
+          <button className="button primary compact" type="button" aria-expanded={createOpen} disabled={Boolean(busyAction)} onClick={() => { onError(""); setCreateOpen((open) => !open); }}>
+            <Plus size={14} />新建环境
+          </button>
         </div>
       </div>
+      {createOpen && (
+        <EnvironmentCreatePanel
+          proxies={snapshot?.proxies ?? []}
+          kernels={snapshot?.kernels ?? []}
+          platform={snapshot?.capabilities.platform ?? ""}
+          busy={busyAction === "create"}
+          desktop={isDesktopRuntime()}
+          onCancel={() => setCreateOpen(false)}
+          onOpenKernels={() => { setCreateOpen(false); onOpenKernels(); }}
+          onCreate={create}
+        />
+      )}
       <div className="environment-body">
       <div className="table-wrap environment-table-wrap">
         <table className="module-table">

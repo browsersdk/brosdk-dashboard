@@ -238,6 +238,13 @@ export interface KernelRecord {
   updatedAt: string;
 }
 
+export interface EnvironmentCreateInput {
+  proxyProfileId: string | null;
+  kernelId: string;
+}
+
+export type OperationRecord = DashboardSnapshot["operations"][number];
+
 export interface OperationExecution {
   operation: DashboardSnapshot["operations"][number];
   response: unknown;

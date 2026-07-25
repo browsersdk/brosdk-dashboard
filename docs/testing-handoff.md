@@ -231,3 +231,5 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 - 真实创建 E2E 必须同时设置 `BROSDK_API_KEY` 与 `BROSDK_E2E_ALLOW_MUTATION=1`，测试创建成功后立即删除测试环境并再次 `env_page` 对账。
 
 2026-07-26 Manager 子阶段结果：28 个 Manager 测试、6 个 sdk-ffi 测试、4 个 sdk-host 测试及 environment-e2e 辅助测试通过；workspace all-targets 编译通过。新增覆盖包括 `role=user`、最小 DTO、无代理省略、不可用内核拒绝、业务码检查、错误脱敏、字符串/数字 envId 和本地删除清理。
+
+Dashboard 子阶段结果：5 个环境创建组件测试通过；production build 通过。Browser 插件实测打开创建带、切换代理、按钮取消和 Esc 取消；1440x900、390x844 下 `documentElement.scrollWidth === clientWidth`，无控制台 warning/error。普通浏览器预览仅验证交互，提交按钮保持禁用，不触发远端 mutation。

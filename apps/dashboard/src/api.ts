@@ -4,12 +4,14 @@ import type {
   AiAgentPlan,
   AiChatResponse,
   DashboardSnapshot,
+  EnvironmentCreateInput,
   FingerprintProfile,
   FingerprintProfileInput,
   ManagerEvent,
   ManagerSettings,
   McpToolCallExecution,
   OperationExecution,
+  OperationRecord,
   ProxyParseResult,
   ProxyProfile,
   ProxyProfileInput,
@@ -32,6 +34,10 @@ export async function runSmoke(): Promise<SmokeReport> {
 
 export async function syncEnvironments() {
   return invoke("manager_sync_environments");
+}
+
+export async function createEnvironment(input: EnvironmentCreateInput): Promise<OperationRecord> {
+  return invoke<OperationRecord>("manager_create_environment", { input });
 }
 
 export async function reconcileRuntimes() {
@@ -205,7 +211,7 @@ function demoSnapshot(): DashboardSnapshot {
       embeddedMcp: true,
       supportsInitPort: true,
       callbacks: ["result", "log", "cookies-storage", "security-decision"],
-      syncCalls: ["sdk_get_user_sig", "sdk_init", "sdk_info", "sdk_env_page"],
+      syncCalls: ["sdk_get_user_sig", "sdk_init", "sdk_info", "sdk_env_create", "sdk_env_destroy", "sdk_env_page"],
       asyncCalls: ["sdk_browser_open", "sdk_browser_close"],
       cdpCalls: ["sdk_browser_command", "sdk_browser_snapshot"],
       dllPath: "libs/windows_x64/brosdk.dll",
@@ -275,22 +281,22 @@ function demoSnapshot(): DashboardSnapshot {
       updatedAt: new Date().toISOString(),
     }],
     kernels: [{
-      id: "yun-141-windows-x86_64",
-      kernelType: "yun",
-      name: "YunBrowser",
+      id: "chrome-141-windows-x86_64",
+      kernelType: "chrome",
+      name: "Chrome",
       major: 141,
       version: "141.0.7390.0",
       latestVersion: null,
       platform: "windows",
       arch: "x86_64",
       status: "installed",
-      installPath: "runtime/sdk-work/cores/yun-141-windows-x86_64",
+      installPath: "runtime/sdk-work/cores/chrome-141-windows-x86_64",
       downloadAvailable: false,
       updatedAt: new Date().toISOString(),
     }, {
-      id: "yun-142-windows-x86_64",
-      kernelType: "yun",
-      name: "YunBrowser",
+      id: "chrome-142-windows-x86_64",
+      kernelType: "chrome",
+      name: "Chrome",
       major: 142,
       version: null,
       latestVersion: null,

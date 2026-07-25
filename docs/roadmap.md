@@ -270,6 +270,14 @@ Manager/Runtime Host 子阶段完成（2026-07-26）：
 - 后端响应必须满足 `code=200` 且包含 `data.envId`；失败消息先脱敏再进入 operation。
 - `cargo test -p domain -p sdk-ffi -p sdk-host -p manager` 与 `cargo check --workspace --all-targets` 通过。
 
+Dashboard 交互子阶段完成（2026-07-26）：
+
+- 环境工具栏新增“新建环境”，展开同页紧凑创建带，不引入向导或高级参数。
+- 代理默认“本机网络”，内核默认最新的当前平台本地已安装版本；仅展示 Manager 可接受的 Chrome/Firefox/Chromium/Broium core。
+- 无可用内核时禁用选择并提供“前往内核”；提交期间锁定表单，业务失败保留选择，成功后刷新并选中新环境。
+- 新增 Vitest + Testing Library，覆盖双字段边界、默认排序、代理/内核 ID 提交、无内核跳转、按钮与 Esc 取消。
+- Browser 插件在 1440x900 与 390x844 完成交互和视觉验收；两种视口均无页面级横向溢出，浏览器控制台无 warning/error。
+
 ## 13. 当前状态
 
 阶段 0-9 的仓库内规划已完成。阶段 10 已批准并进入实施，按“Manager 创建链路 -> Dashboard 交互 -> 真实 E2E/视觉验收”的顺序推进；每一部分独立执行自动测试、更新文档并提交。
