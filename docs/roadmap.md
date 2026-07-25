@@ -11,7 +11,7 @@
 | 4. Dashboard MVP | P0 | 已完成 | 总览、环境列表、启动、停止、运行详情完成 |
 | 5. 环境 E2E | P0 | 已完成 | 使用测试 API Key 完成列表、启动、ready、CDP command、手动关闭对账入口、停止 |
 | 6. 完整菜单 | P1 | 已完成 | 指纹、代理、内核、操作、设置菜单与 Manager API 已补齐 |
-| 7. 打包发布 | P1 | 待实施 | Windows 安装/便携包、图标、签名准备、升级策略 |
+| 7. 打包发布 | P1 | 已完成（安装器需本机工具链） | Windows 便携包、Tauri 资源、图标、WebView2、签名准备、升级策略 |
 | 8. 跨平台 | P2 | 待实施 | macOS/Linux 动态库和平台 adapter 接入 |
 | 9. AI Agent | P2 | 待实施 | Chat 只读、Agent 受控操作、MCP 自动化工具 |
 
@@ -223,9 +223,15 @@
 
 ## 12. 当前下一步
 
-阶段 0/1/2/3/4/5/6 已完成。当前从阶段 7 开始：
+阶段 0/1/2/3/4/5/6/7 已完成。当前从阶段 8 开始：
 
-1. 配置 Tauri bundle、Windows 安装器和便携目录。
-2. 将 `sdk-host.exe` 与 `brosdk.dll` 作为发布资源打包，并让运行时从安装目录发现它们。
-3. 增加 WebView2 检查、版本/签名清单、升级与回滚文档。
-4. 在打包产物上验证启动、卸载与用户数据保留策略。
+1. 增加 macOS/Linux 动态库目录与能力探测，不让 Windows 路径泄漏到通用层。
+2. 实现平台 adapter 的 UDS、进程、数据目录和密钥能力边界。
+3. 为不支持的平台能力提供明确 capability 和自动化测试。
+
+阶段 7 实现结果：
+
+- Tauri Windows bundle 已启用 NSIS/MSI 配置，便携包使用相同的 Dashboard、`sdk-host.exe` 和 `brosdk.dll` 资源布局。
+- 运行时支持便携目录、安装目录、Tauri `resources`/`resources/bin` 和目标三元组 sidecar 名称发现。
+- 发布脚本兼容当前 Windows PowerShell，生成 `RELEASE-MANIFEST.json` 和 ZIP，并由 `npm run release:verify` 校验文件存在性、SHA-256 和大小。
+- WebView2 使用 `embedBootstrapper`；正式发布仍需在 Windows 构建机安装 NSIS/WiX，证书由发布环境注入。

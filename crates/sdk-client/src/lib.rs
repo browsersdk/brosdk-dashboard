@@ -444,13 +444,19 @@ where
 
 pub fn discover_host_path() -> Result<PathBuf, SdkClientError> {
     let exe_name = format!("sdk-host{}", platform::executable_suffix());
+    let target_exe_name = format!(
+        "sdk-host-{}{}",
+        platform::target_triple(),
+        platform::executable_suffix()
+    );
 
     if let Ok(current_exe) = std::env::current_exe()
         && let Some(dir) = current_exe.parent()
     {
-        let sibling = dir.join(&exe_name);
-        if sibling.exists() {
-            return Ok(sibling);
+        for candidate in host_candidates(dir, &exe_name, &target_exe_name) {
+            if candidate.exists() {
+                return Ok(candidate);
+            }
         }
     }
 
@@ -471,6 +477,26 @@ pub fn discover_host_path() -> Result<PathBuf, SdkClientError> {
     }
 
     Err(SdkClientError::HostNotFound)
+}
+
+fn host_candidates(
+    executable_dir: &std::path::Path,
+    exe_name: &str,
+    target_exe_name: &str,
+) -> Vec<PathBuf> {
+    vec![
+        executable_dir.join(exe_name),
+        executable_dir.join(target_exe_name),
+        executable_dir.join("resources").join(exe_name),
+        executable_dir.join("resources").join(target_exe_name),
+        executable_dir.join("resources").join("bin").join(exe_name),
+        executable_dir
+            .join("resources")
+            .join("bin")
+            .join(target_exe_name),
+        executable_dir.join("bin").join(exe_name),
+        executable_dir.join("bin").join(target_exe_name),
+    ]
 }
 
 #[cfg(windows)]
@@ -526,5 +552,21 @@ mod tests {
     #[test]
     fn named_pipe_endpoint_is_unique() {
         assert_ne!(unique_endpoint(), unique_endpoint());
+    }
+
+    #[test]
+    fn release_host_candidates_cover_portable_and_tauri_layouts() {
+        let root = std::path::Path::new("C:\\Program Files\\BroSDK Dashboard");
+        let candidates =
+            host_candidates(root, "sdk-host.exe", "sdk-host-x86_64-pc-windows-msvc.exe");
+        assert_eq!(candidates[0], root.join("sdk-host.exe"));
+        assert_eq!(
+            candidates[3],
+            root.join("resources\\sdk-host-x86_64-pc-windows-msvc.exe")
+        );
+        assert_eq!(
+            candidates[5],
+            root.join("resources\\bin\\sdk-host-x86_64-pc-windows-msvc.exe")
+        );
     }
 }

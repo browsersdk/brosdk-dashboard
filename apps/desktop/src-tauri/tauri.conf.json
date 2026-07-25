@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.brosdk.dashboard",
   "build": {
-    "beforeDevCommand": "npm run dev --prefix ../../dashboard -- --host 127.0.0.1 --port 1420",
+    "beforeDevCommand": "npm run dev --prefix ../dashboard -- --host 127.0.0.1 --port 1420",
     "devUrl": "http://127.0.0.1:1420",
-    "beforeBuildCommand": "npm run build --prefix ../../dashboard",
-    "frontendDist": "../../dashboard/dist"
+    "beforeBuildCommand": "npm run build --prefix ../dashboard",
+    "frontendDist": "../../../apps/dashboard/dist"
   },
   "app": {
     "windows": [
@@ -24,7 +24,43 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all"
+    "active": true,
+    "targets": ["nsis", "msi"],
+    "publisher": "BroSDK",
+    "category": "DeveloperTool",
+    "shortDescription": "Local multi-environment browser SDK dashboard",
+    "longDescription": "BroSDK Dashboard manages browser environments, fingerprints, proxies, kernels, operations and controlled automation through an isolated local SDK runtime.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "../../../libs/windows_x64/brosdk.dll": "brosdk/brosdk.dll"
+    },
+    "externalBin": ["bin/sdk-host"],
+    "useLocalToolsDir": true,
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper",
+        "silent": true
+      },
+      "allowDowngrades": false,
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "languages": ["SimpChinese", "English"],
+        "displayLanguageSelector": false,
+        "installerHooks": "windows/nsis-hooks.nsh",
+        "startMenuFolder": "BroSDK"
+      },
+      "wix": {
+        "upgradeCode": "30a62539-a61f-5ee6-a81e-064d37fd1968",
+        "language": ["zh-CN", "en-US"]
+      }
+    }
   }
 }

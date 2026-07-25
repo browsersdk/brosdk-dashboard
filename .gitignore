@@ -8,3 +8,5 @@ dist/
 runtime/
 apps/dashboard/dist/
 apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/bin/*.exe
+dist/release/

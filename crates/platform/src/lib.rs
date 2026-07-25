@@ -93,6 +93,29 @@ pub fn executable_suffix() -> &'static str {
     std::env::consts::EXE_SUFFIX
 }
 
+#[cfg(all(windows, target_arch = "x86_64"))]
+const TARGET_TRIPLE: &str = "x86_64-pc-windows-msvc";
+#[cfg(all(windows, target_arch = "aarch64"))]
+const TARGET_TRIPLE: &str = "aarch64-pc-windows-msvc";
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+const TARGET_TRIPLE: &str = "x86_64-apple-darwin";
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+const TARGET_TRIPLE: &str = "aarch64-apple-darwin";
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const TARGET_TRIPLE: &str = "x86_64-unknown-linux-gnu";
+#[cfg(not(any(
+    all(windows, target_arch = "x86_64"),
+    all(windows, target_arch = "aarch64"),
+    all(target_os = "macos", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+)))]
+const TARGET_TRIPLE: &str = "unknown-target";
+
+pub fn target_triple() -> &'static str {
+    TARGET_TRIPLE
+}
+
 pub fn secrets_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("secrets")
 }

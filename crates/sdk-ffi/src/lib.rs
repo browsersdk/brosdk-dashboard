@@ -355,17 +355,38 @@ impl BroSdk {
 }
 
 pub fn default_library_path() -> PathBuf {
-    std::env::var_os("BROSDK_DLL_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .ancestors()
-                .nth(2)
-                .expect("sdk-ffi crate lives under crates/sdk-ffi")
-                .join("libs")
-                .join("windows_x64")
-                .join("brosdk.dll")
-        })
+    if let Some(path) = std::env::var_os("BROSDK_DLL_PATH").map(PathBuf::from) {
+        return path;
+    }
+
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(directory) = current_exe.parent()
+    {
+        for candidate in library_candidates(directory) {
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("sdk-ffi crate lives under crates/sdk-ffi")
+        .join("libs")
+        .join("windows_x64")
+        .join("brosdk.dll")
+}
+
+fn library_candidates(executable_dir: &Path) -> [PathBuf; 3] {
+    [
+        executable_dir.join("brosdk").join("brosdk.dll"),
+        executable_dir
+            .join("resources")
+            .join("brosdk")
+            .join("brosdk.dll"),
+        executable_dir.join("brosdk.dll"),
+    ]
 }
 
 pub fn capabilities_for_path(path: impl Into<PathBuf>) -> SdkCapabilities {
@@ -559,5 +580,14 @@ mod tests {
         let mut value = json!({ "proxy": "socks5://alice:secret@127.0.0.1:1080" });
         redact_value(&mut value);
         assert_eq!(value["proxy"], "socks5://alice:***@127.0.0.1:1080");
+    }
+
+    #[test]
+    fn release_library_candidates_cover_portable_and_tauri_layouts() {
+        let root = Path::new("C:\\Program Files\\BroSDK Dashboard");
+        let candidates = library_candidates(root);
+        assert_eq!(candidates[0], root.join("brosdk\\brosdk.dll"));
+        assert_eq!(candidates[1], root.join("resources\\brosdk\\brosdk.dll"));
+        assert_eq!(candidates[2], root.join("brosdk.dll"));
     }
 }
