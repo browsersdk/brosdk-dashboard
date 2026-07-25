@@ -7,9 +7,10 @@ use std::{
 
 use domain::{
     AiAgentExecuteRequest, AiAgentExecution, AiAgentPlan, AiAgentPlanRequest, AiChatRequest,
-    AiChatResponse, ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot, FingerprintProfile,
-    FingerprintProfileInput, HostCommand, KernelInstallInput, ManagerEvent, ManagerSettings,
-    McpPanel, McpToolCallExecution, McpToolCallRequest, OperationExecution, OperationRecord,
+    AiChatResponse, ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot,
+    EnvironmentCreateInput, FingerprintProfile, FingerprintProfileInput, HostCommand,
+    KernelInstallInput, KernelRecord, ManagerEvent, ManagerSettings, McpPanel,
+    McpToolCallExecution, McpToolCallRequest, OperationExecution, OperationRecord,
     ProxyParseResult, ProxyProfile, ProxyProfileInput, RuntimeHostState, RuntimeHostStatus,
     SdkPanel, SmokeReport,
 };
@@ -36,6 +37,8 @@ pub enum ManagerError {
     RuntimeNotRunning,
     #[error("invalid runtime host response: {0}")]
     InvalidHostResponse(String),
+    #[error("SDK backend rejected the request: {0}")]
+    BackendRejected(String),
     #[error("environment was not found in the local account mirror")]
     EnvironmentNotFound,
     #[error("environment is not ready for browser commands (current state: {0})")]
@@ -56,6 +59,10 @@ pub enum ManagerError {
     OperationNotRetryable,
     #[error("kernel is not known to the local manager")]
     KernelNotFound,
+    #[error("kernel cannot be used to create an environment: {0}")]
+    KernelNotUsable(String),
+    #[error("proxy profile was not found")]
+    ProxyNotFound,
     #[error("installed kernels cannot be removed while an environment is running")]
     KernelBusy,
     #[error("kernel install path is outside the SDK work directory")]
@@ -738,6 +745,167 @@ impl Manager {
                 .inner
                 .operations
                 .succeed(&operation.id, &format!("synced {count} environments"))?),
+            Err(error) => Ok(self.inner.operations.fail(
+                &operation.id,
+                manager_error_code(&error),
+                &error.to_string(),
+            )?),
+        }
+    }
+
+    pub async fn create_environment(
+        &self,
+        input: EnvironmentCreateInput,
+    ) -> Result<OperationRecord, ManagerError> {
+        let operation_request = environment_create_operation_request(&input);
+        let operation = self.inner.operations.enqueue(
+            "environment.create",
+            None,
+            "创建环境",
+            0,
+            Some(&operation_request),
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "validating proxy and kernel")?;
+
+        let result = async {
+            let kernel = self
+                .inner
+                .store
+                .list_kernel_records()?
+                .into_iter()
+                .find(|kernel| kernel.id == input.kernel_id)
+                .ok_or(ManagerError::KernelNotFound)?;
+            validate_environment_kernel(&kernel)?;
+            let proxy = input
+                .proxy_profile_id
+                .as_deref()
+                .map(|profile_id| self.proxy_url_for_create(profile_id))
+                .transpose()?;
+            let request = build_environment_create_request(&kernel, proxy.as_deref())?;
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            let response = host
+                .call(
+                    HostCommand::EnvCreate { request },
+                    Some(operation.id.clone()),
+                )
+                .await?;
+            ensure_backend_success("environment create", &response)?;
+            let env_id = response_env_id(&response).ok_or_else(|| {
+                ManagerError::InvalidHostResponse(
+                    "environment create response did not contain data.envId".into(),
+                )
+            })?;
+            let name =
+                response_environment_name(&response).unwrap_or_else(|| format!("环境 {env_id}"));
+            let remote = response
+                .get("data")
+                .cloned()
+                .unwrap_or_else(|| json!({ "envId": env_id, "envName": name }));
+            self.inner
+                .store
+                .upsert_remote_environments(&[(env_id.clone(), name, remote)])?;
+            self.inner
+                .store
+                .attach_operation_environment(&operation.id, &env_id)?;
+
+            let mirror_synced = match host
+                .call(
+                    HostCommand::EnvPage {
+                        request: sdk_ffi::default_env_page_request(),
+                    },
+                    Some(operation.id.clone()),
+                )
+                .await
+            {
+                Ok(value) => {
+                    let rows = mirror::environment_rows(&value);
+                    self.inner.store.upsert_remote_environments(&rows)?;
+                    true
+                }
+                Err(_) => false,
+            };
+            self.inner.store.append_event(
+                "environment.created",
+                Some(&env_id),
+                Some(&operation.id),
+                &json!({
+                    "kernelId": input.kernel_id,
+                    "proxyProfileId": input.proxy_profile_id,
+                    "mirrorSynced": mirror_synced,
+                }),
+            )?;
+            Ok::<(String, bool), ManagerError>((env_id, mirror_synced))
+        }
+        .await;
+
+        match result {
+            Ok((_env_id, true)) => Ok(self
+                .inner
+                .operations
+                .succeed(&operation.id, "environment created and mirror synchronized")?),
+            Ok((_env_id, false)) => Ok(self.inner.operations.succeed(
+                &operation.id,
+                "environment created; full mirror refresh deferred",
+            )?),
+            Err(error) => Ok(self.inner.operations.fail(
+                &operation.id,
+                manager_error_code(&error),
+                &error.to_string(),
+            )?),
+        }
+    }
+
+    pub async fn destroy_environment(&self, env_id: &str) -> Result<OperationRecord, ManagerError> {
+        let operation = self.inner.operations.enqueue(
+            "environment.destroy",
+            Some(env_id),
+            "删除环境",
+            0,
+            Some(&json!({ "envId": env_id })),
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "validating environment state")?;
+        let result = async {
+            let environment = self
+                .inner
+                .store
+                .environment(env_id)?
+                .ok_or(ManagerError::EnvironmentNotFound)?;
+            if environment.status != "stopped" {
+                return Err(ManagerError::EnvironmentNotReady(environment.status));
+            }
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            let response = host
+                .call(
+                    HostCommand::EnvDestroy {
+                        request: json!({ "envId": env_id }),
+                    },
+                    Some(operation.id.clone()),
+                )
+                .await?;
+            ensure_backend_success("environment destroy", &response)?;
+            self.inner.store.delete_environment(env_id)?;
+            self.inner.store.append_event(
+                "environment.destroyed",
+                Some(env_id),
+                Some(&operation.id),
+                &json!({}),
+            )?;
+            Ok::<(), ManagerError>(())
+        }
+        .await;
+        match result {
+            Ok(()) => Ok(self
+                .inner
+                .operations
+                .succeed(&operation.id, "environment deleted")?),
             Err(error) => Ok(self.inner.operations.fail(
                 &operation.id,
                 manager_error_code(&error),
@@ -1570,13 +1738,21 @@ impl Manager {
     }
 
     fn proxy_url_for_diagnostics(&self, profile_id: &str) -> Result<String, ManagerError> {
+        self.proxy_url_for_profile(profile_id)
+    }
+
+    fn proxy_url_for_create(&self, profile_id: &str) -> Result<String, ManagerError> {
+        self.proxy_url_for_profile(profile_id)
+    }
+
+    fn proxy_url_for_profile(&self, profile_id: &str) -> Result<String, ManagerError> {
         let profile = self
             .inner
             .store
             .list_proxy_profiles()?
             .into_iter()
             .find(|profile| profile.id == profile_id)
-            .ok_or(ManagerError::EnvironmentNotFound)?;
+            .ok_or(ManagerError::ProxyNotFound)?;
         let settings = self.inner.store.settings()?;
         let password = self
             .inner
@@ -1782,6 +1958,147 @@ impl Manager {
     }
 }
 
+fn environment_create_operation_request(input: &EnvironmentCreateInput) -> serde_json::Value {
+    json!({
+        "proxyProfileId": input.proxy_profile_id,
+        "kernelId": input.kernel_id,
+    })
+}
+
+fn validate_environment_kernel(kernel: &KernelRecord) -> Result<(), ManagerError> {
+    if kernel.major.is_none() {
+        return Err(ManagerError::KernelNotUsable(
+            "kernel version is missing".into(),
+        ));
+    }
+    if kernel.install_path.is_none()
+        || !matches!(kernel.status.as_str(), "installed" | "update-available")
+    {
+        return Err(ManagerError::KernelNotUsable(
+            "kernel is not installed locally".into(),
+        ));
+    }
+    if normalize_platform(&kernel.platform) != normalize_platform(std::env::consts::OS) {
+        return Err(ManagerError::KernelNotUsable(format!(
+            "kernel platform {} does not match {}",
+            kernel.platform,
+            std::env::consts::OS
+        )));
+    }
+    if normalize_arch(&kernel.arch) != normalize_arch(std::env::consts::ARCH) {
+        return Err(ManagerError::KernelNotUsable(format!(
+            "kernel architecture {} does not match {}",
+            kernel.arch,
+            std::env::consts::ARCH
+        )));
+    }
+    backend_kernel_name(&kernel.kernel_type)?;
+    Ok(())
+}
+
+fn build_environment_create_request(
+    kernel: &KernelRecord,
+    proxy: Option<&str>,
+) -> Result<serde_json::Value, ManagerError> {
+    validate_environment_kernel(kernel)?;
+    let mut request = json!({
+        "kernel": backend_kernel_name(&kernel.kernel_type)?,
+        "kernelVersion": kernel.major.expect("validated kernel major").to_string(),
+    });
+    if let Some(proxy) = proxy.filter(|value| !value.trim().is_empty()) {
+        request["proxy"] = json!(proxy);
+    }
+    Ok(request)
+}
+
+fn backend_kernel_name(kernel_type: &str) -> Result<&'static str, ManagerError> {
+    match kernel_type.trim().to_ascii_lowercase().as_str() {
+        "chrome" => Ok("Chrome"),
+        "firefox" => Ok("Firefox"),
+        "chromium" => Ok("Chromium"),
+        "broium" => Ok("Broium"),
+        other => Err(ManagerError::KernelNotUsable(format!(
+            "unsupported kernel type {other}"
+        ))),
+    }
+}
+
+fn normalize_platform(value: &str) -> &str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "win" | "win32" | "windows" => "windows",
+        "mac" | "macos" | "darwin" => "macos",
+        "linux" => "linux",
+        _ => "unknown",
+    }
+}
+
+fn normalize_arch(value: &str) -> &str {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "amd64" | "x64" | "x86_64" => "x86_64",
+        "aarch64" | "arm64" => "aarch64",
+        "x86" | "i386" | "i686" => "x86",
+        _ => "unknown",
+    }
+}
+
+fn ensure_backend_success(action: &str, response: &serde_json::Value) -> Result<(), ManagerError> {
+    let code = response.get("code").and_then(value_as_i64).ok_or_else(|| {
+        ManagerError::InvalidHostResponse(format!(
+            "{action} response did not contain a numeric code"
+        ))
+    })?;
+    if code == 200 {
+        return Ok(());
+    }
+    let message = response
+        .get("msg")
+        .or_else(|| response.get("message"))
+        .and_then(serde_json::Value::as_str)
+        .map(redacted_response_text)
+        .filter(|message| !message.is_empty())
+        .unwrap_or_else(|| "request failed".into());
+    Err(ManagerError::BackendRejected(format!(
+        "{action} returned code {code}: {message}"
+    )))
+}
+
+fn value_as_i64(value: &serde_json::Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+}
+
+fn redacted_response_text(text: &str) -> String {
+    let mut value = serde_json::Value::String(text.to_string());
+    sdk_ffi::redact_value(&mut value);
+    value
+        .as_str()
+        .unwrap_or("[redacted]")
+        .chars()
+        .take(256)
+        .collect()
+}
+
+fn response_env_id(response: &serde_json::Value) -> Option<String> {
+    response
+        .pointer("/data/envId")
+        .or_else(|| response.get("envId"))
+        .and_then(|value| match value {
+            serde_json::Value::String(value) if !value.trim().is_empty() => Some(value.clone()),
+            serde_json::Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        })
+}
+
+fn response_environment_name(response: &serde_json::Value) -> Option<String> {
+    response
+        .pointer("/data/envName")
+        .or_else(|| response.get("envName"))
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+}
+
 fn embedded_port() -> Option<u16> {
     std::env::var("BROSDK_EMBEDDED_PORT")
         .ok()
@@ -1978,6 +2295,7 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::Store(_) => "STORE_ERROR",
         ManagerError::RuntimeNotRunning => "RUNTIME_NOT_RUNNING",
         ManagerError::InvalidHostResponse(_) => "INVALID_HOST_RESPONSE",
+        ManagerError::BackendRejected(_) => "BACKEND_REJECTED",
         ManagerError::EnvironmentNotFound => "ENVIRONMENT_NOT_FOUND",
         ManagerError::EnvironmentNotReady(_) => "ENVIRONMENT_NOT_READY",
         ManagerError::InvalidBrowserCommand => "INVALID_BROWSER_COMMAND",
@@ -1988,6 +2306,8 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::Json(_) => "JSON_ERROR",
         ManagerError::OperationNotRetryable => "OPERATION_NOT_RETRYABLE",
         ManagerError::KernelNotFound => "KERNEL_NOT_FOUND",
+        ManagerError::KernelNotUsable(_) => "KERNEL_NOT_USABLE",
+        ManagerError::ProxyNotFound => "PROXY_NOT_FOUND",
         ManagerError::KernelBusy => "KERNEL_BUSY",
         ManagerError::UnsafeKernelPath => "UNSAFE_KERNEL_PATH",
         ManagerError::Ai(_) => "AI_PROVIDER_ERROR",
@@ -2005,6 +2325,23 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn usable_kernel() -> KernelRecord {
+        KernelRecord {
+            id: "chrome-134-current".into(),
+            kernel_type: "chrome".into(),
+            name: "Chrome 134".into(),
+            major: Some(134),
+            version: Some("3".into()),
+            latest_version: Some("3".into()),
+            platform: std::env::consts::OS.into(),
+            arch: std::env::consts::ARCH.into(),
+            status: "installed".into(),
+            install_path: Some("cores/chrome-134".into()),
+            download_available: true,
+            updated_at: chrono::Utc::now(),
+        }
+    }
 
     #[test]
     fn manager_reads_persistent_snapshot() {
@@ -2044,6 +2381,98 @@ mod tests {
             validate_agent_plan(&plan),
             Err(ManagerError::InvalidAgentPlan(_))
         ));
+    }
+
+    #[test]
+    fn environment_create_operation_request_only_contains_profile_and_kernel_ids() {
+        let request = environment_create_operation_request(&EnvironmentCreateInput {
+            proxy_profile_id: Some("proxy-1".into()),
+            kernel_id: "chrome-134-current".into(),
+        });
+        assert_eq!(
+            request,
+            json!({
+                "proxyProfileId": "proxy-1",
+                "kernelId": "chrome-134-current",
+            })
+        );
+        assert!(!request.to_string().contains("secret"));
+        assert!(!request.to_string().contains("socks5://"));
+    }
+
+    #[test]
+    fn environment_create_request_matches_server_minimal_contract() {
+        let request = build_environment_create_request(
+            &usable_kernel(),
+            Some("socks5://alice:secret@127.0.0.1:1080"),
+        )
+        .expect("create request");
+        assert_eq!(request["kernel"], "Chrome");
+        assert_eq!(request["kernelVersion"], "134");
+        assert_eq!(request["proxy"], "socks5://alice:secret@127.0.0.1:1080");
+        assert_eq!(request.as_object().expect("object").len(), 3);
+        assert!(request.get("customerId").is_none());
+        assert!(request.get("envName").is_none());
+        assert!(request.get("finger").is_none());
+    }
+
+    #[test]
+    fn environment_create_request_omits_unselected_proxy() {
+        let request =
+            build_environment_create_request(&usable_kernel(), None).expect("create request");
+        assert_eq!(request.as_object().expect("object").len(), 2);
+        assert!(request.get("proxy").is_none());
+    }
+
+    #[test]
+    fn environment_create_rejects_catalog_only_or_wrong_platform_kernel() {
+        let mut kernel = usable_kernel();
+        kernel.status = "available".into();
+        kernel.install_path = None;
+        assert!(matches!(
+            validate_environment_kernel(&kernel),
+            Err(ManagerError::KernelNotUsable(_))
+        ));
+
+        let mut kernel = usable_kernel();
+        kernel.platform = if cfg!(windows) { "linux" } else { "windows" }.into();
+        assert!(matches!(
+            validate_environment_kernel(&kernel),
+            Err(ManagerError::KernelNotUsable(_))
+        ));
+    }
+
+    #[test]
+    fn backend_response_requires_business_success_code() {
+        ensure_backend_success("environment create", &json!({ "code": 200, "data": {} }))
+            .expect("success");
+        assert!(matches!(
+            ensure_backend_success(
+                "environment create",
+                &json!({
+                    "code": 400,
+                    "msg": "proxy socks5://alice:secret@127.0.0.1:1080 failed"
+                })
+            ),
+            Err(ManagerError::BackendRejected(message))
+                if !message.contains("secret") && message.contains("***")
+        ));
+        assert!(matches!(
+            ensure_backend_success("environment create", &json!({ "data": {} })),
+            Err(ManagerError::InvalidHostResponse(_))
+        ));
+    }
+
+    #[test]
+    fn environment_create_response_accepts_string_or_numeric_id() {
+        assert_eq!(
+            response_env_id(&json!({ "data": { "envId": "2034183257439866880" } })),
+            Some("2034183257439866880".into())
+        );
+        assert_eq!(
+            response_env_id(&json!({ "data": { "envId": 42 } })),
+            Some("42".into())
+        );
     }
 
     #[test]

@@ -223,9 +223,11 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 
 ## 11. 阶段 10 环境创建验收
 
-- 单元测试验证最小输入只包含 `proxyProfileId` 和 `kernelId`，Manager 构造的 SDK 请求包含自动生成的 `customerId`、`envName`、`finger.kernel` 与 `finger.kernelVersion`。
+- 单元测试验证最小输入只包含 `proxyProfileId` 和 `kernelId`，Manager 构造的 SDK 请求只包含顶层 `kernel`、`kernelVersion` 与可选 `proxy`；`customerId`、`envName` 和 `finger` 必须省略。
 - 代理测试使用受保护 secret round trip；断言 operation request、事件和错误文本均不包含代理密码或完整代理 URL。
 - 无代理创建必须覆盖，确认请求省略 `proxy` 而不是发送伪造占位值。
 - 不存在的 proxy profile、未知内核、缺少 major version 和非当前平台内核都必须在调用 DLL 前失败。
 - Dashboard 自动测试覆盖打开创建面板、选择代理、选择内核、禁用态和取消，不在普通浏览器 mock 环境执行真实 mutation。
 - 真实创建 E2E 必须同时设置 `BROSDK_API_KEY` 与 `BROSDK_E2E_ALLOW_MUTATION=1`，测试创建成功后立即删除测试环境并再次 `env_page` 对账。
+
+2026-07-26 Manager 子阶段结果：28 个 Manager 测试、6 个 sdk-ffi 测试、4 个 sdk-host 测试及 environment-e2e 辅助测试通过；workspace all-targets 编译通过。新增覆盖包括 `role=user`、最小 DTO、无代理省略、不可用内核拒绝、业务码检查、错误脱敏、字符串/数字 envId 和本地删除清理。

@@ -56,6 +56,17 @@ async fn manager_sync_environments(
 }
 
 #[tauri::command]
+async fn manager_create_environment(
+    manager: tauri::State<'_, manager::Manager>,
+    input: domain::EnvironmentCreateInput,
+) -> Result<domain::OperationRecord, String> {
+    manager
+        .create_environment(input)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn manager_reconcile_runtimes(
     manager: tauri::State<'_, manager::Manager>,
 ) -> Result<domain::OperationRecord, String> {
@@ -366,6 +377,7 @@ pub fn run() {
             runtime_host_stop,
             runtime_host_kill,
             manager_sync_environments,
+            manager_create_environment,
             manager_reconcile_runtimes,
             manager_start_environment,
             manager_stop_environment,

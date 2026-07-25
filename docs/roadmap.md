@@ -230,8 +230,8 @@
 
 - 代理可选；不选择时使用本机网络。
 - 内核版本必选；默认预选最新的本地可用版本。
-- `customerId`、环境名称和指纹细项不由普通用户填写。
-- 环境名称由 Manager 自动生成，保证列表中可识别且不要求用户先命名。
+- `customerId`、环境名称和指纹细项不由普通用户填写，也不由 Manager 伪造。
+- 创建请求省略环境名称；列表在远端名称为空时使用 `环境 <envId>` 作为本地展示回退。
 - 语言、时区、UA、Canvas、WebGL 等指纹参数不在创建界面暴露，由后端根据代理 IP 和 SDK 默认策略生成。
 - 高级指纹编辑继续保留在独立“指纹”模块，不混入环境创建主流程。
 
@@ -240,8 +240,8 @@
 - 为 `sdk_env_create` 补齐 FFI、runtime host、Manager operation 和 Tauri command 链路。
 - 定义 `EnvironmentCreateInput`，只接受 `proxyProfileId` 和 `kernelId`。
 - Manager 从受保护的代理 profile 恢复完整代理 URL，仅在调用 DLL 的瞬间使用；operation、事件和错误日志只记录 profile id 与脱敏摘要。
-- Manager 校验内核存在且可用于当前平台，构造 `finger.kernel` 与 `finger.kernelVersion`。
-- Manager 自动生成 `customerId` 和 `envName`，调用成功后立即同步环境镜像。
+- Manager 校验内核已安装且可用于当前平台，构造服务端 DTO 的顶层 `kernel` 与 `kernelVersion`。
+- Manager 省略 `customerId`、`envName` 和 `finger`，由 userSig 上下文与服务端默认策略处理；调用成功后立即同步环境镜像。
 - Dashboard 环境页增加紧凑创建面板；主表单只展示代理与内核两个选择控件。
 - 无本地可用内核时明确引导到内核页，不提交不完整请求。
 
@@ -261,6 +261,14 @@
 - `npm run check`、`npm test`、`npm run build` 通过。
 - 1440x900 与 390x844 下创建面板无重叠、无横向溢出，键盘焦点和错误状态可用。
 - 真实创建/删除验证只在 mutation 门禁开启时运行，并在测试后清理创建的环境。
+
+Manager/Runtime Host 子阶段完成（2026-07-26）：
+
+- 已按 `doc.json` 的 `browser-third-server` 契约和 `browser-open-server/modules/open/router/browser` 源码复核 `FingerReqDto`、认证与响应结构。
+- 已补齐 `sdk_env_create`/`sdk_env_destroy` FFI、HostCommand、Manager operation、Tauri 创建命令和本地镜像写入/删除。
+- `getUserSig` 固定发送 `role=user`；创建请求只含顶层 `kernel`、`kernelVersion` 和可选 `proxy`。
+- 后端响应必须满足 `code=200` 且包含 `data.envId`；失败消息先脱敏再进入 operation。
+- `cargo test -p domain -p sdk-ffi -p sdk-host -p manager` 与 `cargo check --workspace --all-targets` 通过。
 
 ## 13. 当前状态
 

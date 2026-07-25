@@ -164,6 +164,20 @@ Manager 内部统一转换为：
 | 启动环境 | `sdk_browser_open` | 创建 operation，等待 ready event |
 | 停止环境 | `sdk_browser_close` | 创建 operation，等待 close event |
 
+创建/更新参数与 `browser-open-server` 的第三方接口保持一致：`sdk_env_create` 使用 userSig 访问 `/sdk/v1/env/create`，服务端 `/api/v2/browser/create` 使用 API Key，但两者最终复用 `BrowserApi.Create` 和 `dto.FingerReqDto`。Dashboard 普通创建只向 Manager 提交 `proxyProfileId? + kernelId`，Manager 解析为：
+
+```json
+{
+  "kernel": "Chrome",
+  "kernelVersion": "134",
+  "proxy": "socks5://user:password@host:port"
+}
+```
+
+未选择代理时省略 `proxy`。`customerId`、`envName` 和完整 `finger` 不发送；服务端从 userSig 上下文识别调用方，并由 `FingerReqDto.Valid()` 补齐默认指纹。代理 URL 只存在于 Manager 到 Runtime Host 的瞬时请求，Host 返回值和持久化入口都会脱敏。
+
+`sdk_env_create` 的 C 返回码只能证明传输层调用完成。服务端业务失败仍可能随 JSON 返回，因此 Manager 必须额外校验 `code=200`，并在成功时提取 `data.envId`。
+
 ## 9. 扩展参数
 
 v2 文档说明 `browser_open.envs[].extensions[]` 支持：

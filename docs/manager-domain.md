@@ -4,7 +4,7 @@
 
 Manager 使用 `runtime/data/manager.sqlite3` 作为默认本地事实来源，可通过 `BROSDK_DATA_DIR` 改写目录。数据库启用 WAL、foreign keys 和 5 秒 busy timeout。Dashboard 不直接访问 SQLite，只通过 Tauri command 获取 snapshot、operation 和递增事件。
 
-当前 schema version 为 2：
+当前 schema version 为 4：
 
 | 表 | 用途 |
 | --- | --- |
@@ -72,5 +72,9 @@ queued -> initialize SDK once -> sdk_env_page -> upsert mirror -> succeeded/fail
 ```
 
 `manager_reconcile_runtimes` 调用 `sdk_browser_info`，把存在于返回值中的环境对账为 ready，把本地活动但不再存在的环境改为 stopped。该路径用于手动关闭浏览器后的状态恢复。
+
+`manager_create_environment` 串行执行：校验 proxy profile 和本地已安装内核，临时恢复受保护代理 URL，调用 `sdk_env_create`，校验后端 `code=200` 与 `data.envId`，立即 upsert 创建结果，再尽力执行 `sdk_env_page` 完整对账。远端创建已经成功但后续分页同步失败时，operation 仍成功并标记镜像刷新延后，避免盲目重试造成重复环境。
+
+创建 operation 的 request snapshot 只保存 `proxyProfileId` 和 `kernelId`。后端 DTO、完整代理 URL、API Key、userSig 和原始响应均不进入 operation request。测试清理使用 `sdk_env_destroy`，成功后事务删除本地 environment/runtime snapshot，environment detail 通过外键级联删除。
 
 数据库和事件 payload 不保存 API Key、userSig、代理密码、Cookie 或完整 Authorization。SDK 数据在 host 出口和 Manager 持久化入口都执行脱敏。

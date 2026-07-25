@@ -382,6 +382,15 @@ impl ManagerStore {
         Ok(())
     }
 
+    pub fn delete_environment(&self, env_id: &str) -> Result<(), StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM runtime_snapshots WHERE env_id = ?1", [env_id])?;
+        transaction.execute("DELETE FROM environments WHERE env_id = ?1", [env_id])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn save_environment_detail(&self, env_id: &str, detail: &Value) -> Result<(), StoreError> {
         self.connection()?.execute(
             r#"INSERT INTO environment_details(env_id, detail_json, refreshed_at)
@@ -761,6 +770,19 @@ impl ManagerStore {
         transaction.commit()?;
         drop(connection);
         self.operation(id)?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows.into())
+    }
+
+    pub fn attach_operation_environment(
+        &self,
+        operation_id: &str,
+        env_id: &str,
+    ) -> Result<OperationRecord, StoreError> {
+        self.connection()?.execute(
+            "UPDATE operations SET env_id = ?1, updated_at = ?2 WHERE id = ?3",
+            params![env_id, timestamp(), operation_id],
+        )?;
+        self.operation(operation_id)?
             .ok_or(rusqlite::Error::QueryReturnedNoRows.into())
     }
 
@@ -1577,6 +1599,35 @@ mod tests {
             .create_operation("kernel.install", None, "安装内核", 0, Some(&request))
             .expect("operation");
         assert_eq!(operation.request, Some(request));
+    }
+
+    #[test]
+    fn created_environment_can_be_attached_to_operation_and_deleted() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        let operation = store
+            .create_operation("environment.create", None, "创建环境", 0, None)
+            .expect("operation");
+        store
+            .upsert_remote_environments(&[(
+                "env-created".into(),
+                "Created".into(),
+                json!({ "envId": "env-created" }),
+            )])
+            .expect("environment");
+        let attached = store
+            .attach_operation_environment(&operation.id, "env-created")
+            .expect("attach environment");
+        assert_eq!(attached.env_id.as_deref(), Some("env-created"));
+
+        store
+            .save_environment_detail("env-created", &json!({ "kernel": "Chrome" }))
+            .expect("detail");
+        store
+            .delete_environment("env-created")
+            .expect("delete environment");
+        assert!(store.environment("env-created").expect("lookup").is_none());
+        assert!(store.environment_details().expect("details").is_empty());
     }
 
     #[test]

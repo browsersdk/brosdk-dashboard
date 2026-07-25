@@ -67,6 +67,8 @@ pub struct BroSdk {
     get_user_sig: JsonOutCall,
     init: InitCall,
     info: InfoCall,
+    env_create: JsonOutCall,
+    env_destroy: JsonOutCall,
     env_page: JsonOutCall,
     env_get_info: JsonOutCall,
     network_diagnostics: JsonOutCall,
@@ -107,6 +109,8 @@ impl BroSdk {
                 get_user_sig: required(&library, b"sdk_get_user_sig\0")?,
                 init: required(&library, b"sdk_init\0")?,
                 info: required(&library, b"sdk_info\0")?,
+                env_create: required(&library, b"sdk_env_create\0")?,
+                env_destroy: required(&library, b"sdk_env_destroy\0")?,
                 env_page: required(&library, b"sdk_env_page\0")?,
                 env_get_info: required(&library, b"sdk_env_getinfo\0")?,
                 network_diagnostics: required(&library, b"sdk_network_diagnostics\0")?,
@@ -183,6 +187,14 @@ impl BroSdk {
 
     pub fn info(&self) -> Result<SdkCallOutput, SdkFfiError> {
         self.call_info("sdk_info", self.info)
+    }
+
+    pub fn env_create(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
+        self.call_json_out("sdk_env_create", self.env_create, request)
+    }
+
+    pub fn env_destroy(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
+        self.call_json_out("sdk_env_destroy", self.env_destroy, request)
     }
 
     pub fn env_page(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
@@ -426,6 +438,8 @@ pub fn capabilities_for_path(path: impl Into<PathBuf>) -> SdkCapabilities {
             "sdk_get_user_sig".into(),
             "sdk_init".into(),
             "sdk_info".into(),
+            "sdk_env_create".into(),
+            "sdk_env_destroy".into(),
             "sdk_env_page".into(),
             "sdk_browser_info".into(),
             "sdk_browser_command".into(),
@@ -650,5 +664,22 @@ mod tests {
         assert_eq!(candidates[1], root.join("resources\\brosdk\\brosdk.dll"));
         assert_eq!(candidates[2], root.join("brosdk.dll"));
         assert_eq!(candidates[3], root.join("resources\\brosdk.dll"));
+    }
+
+    #[test]
+    fn user_sig_request_uses_user_role() {
+        let request = get_user_sig_request("test-key");
+        assert_eq!(request["role"], "user");
+        assert_eq!(request["apiKey"], "test-key");
+        assert_eq!(request.as_object().expect("object").len(), 2);
+    }
+
+    #[test]
+    fn capabilities_expose_environment_mutations_when_library_exists() {
+        let capabilities = capabilities_for_path(default_library_path());
+        if capabilities.dll_exists {
+            assert!(capabilities.sync_calls.contains(&"sdk_env_create".into()));
+            assert!(capabilities.sync_calls.contains(&"sdk_env_destroy".into()));
+        }
     }
 }

@@ -132,7 +132,9 @@ EnvironmentCreateInput {
 }
 ```
 
-Manager 根据 `kernelId` 生成后端要求的 `finger.kernel` 和 `finger.kernelVersion`，根据 `proxyProfileId` 从系统密钥库临时恢复完整代理 URL，并自动生成 `customerId` 与 `envName`。Dashboard 不接触代理密码，也不允许透传任意创建 JSON。语言、时区、UA、Canvas、WebGL 等指纹细项由后端根据代理 IP 和 SDK 默认策略生成。
+Manager 根据 `kernelId` 生成服务端 `dto.FingerReqDto` 的顶层 `kernel` 和 `kernelVersion`，根据 `proxyProfileId` 从系统密钥库临时恢复完整代理 URL。`customerId`、`envName` 和 `finger` 均不发送：customer identity 来自 `getUserSig(role=user)` 建立的 userSig 上下文，服务端 `FingerReqDto.Valid()` 负责补齐默认指纹。Dashboard 不接触代理密码，也不允许透传任意创建 JSON。
+
+DLL 的 `/sdk/v1/env/create` 与第三方服务端 `/api/v2/browser/create` 复用同一个 Go handler 和 `dto.FingerReqDto`，差异仅在认证中间件：DLL 初始化后使用 userSig，第三方接口直接使用 API Key。C ABI 的同步返回成功只代表 HTTP/FFI 调用完成；Manager 还必须校验响应业务字段 `code=200`，并要求 `data.envId` 存在。
 
 `brosdk.dll` 本身已经包含内嵌 MCP / HTTP 能力。新客户端把它作为 `sdk-host` 的 platform capability 暴露：当 Manager 明确配置端口时，由 `sdk_init` 的 `port` 字段启用 DLL 内嵌端点；Dashboard 不直接依赖该端点，仍通过 Manager 统一处理 envId 路由、operation 状态、安全策略和未来审批。
 
