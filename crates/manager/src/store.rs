@@ -6,15 +6,20 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use domain::{
-    EnvironmentRecord, FingerprintProfile, HostEvent, KernelRecord, ManagerEvent, ManagerSettings,
-    OperationRecord, ProxyProfile,
+    AiAgentExecution, EnvironmentRecord, FingerprintProfile, HostEvent, KernelRecord, ManagerEvent,
+    ManagerSettings, OperationRecord, ProxyProfile,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
+
+pub struct StoredAgentExecution {
+    pub plan_hash: String,
+    pub execution: AiAgentExecution,
+}
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -185,6 +190,13 @@ impl ManagerStore {
                 env_id TEXT,
                 operation_id TEXT,
                 payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_agent_executions (
+                idempotency_key TEXT PRIMARY KEY,
+                plan_hash TEXT NOT NULL,
+                execution_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
             "#,
@@ -963,6 +975,47 @@ impl ManagerStore {
             .map_err(Into::into)
     }
 
+    pub fn agent_execution(
+        &self,
+        idempotency_key: &str,
+    ) -> Result<Option<StoredAgentExecution>, StoreError> {
+        self.connection()?
+            .query_row(
+                r#"SELECT plan_hash, execution_json
+                   FROM ai_agent_executions WHERE idempotency_key = ?1"#,
+                [idempotency_key],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .map(|(plan_hash, execution)| {
+                Ok(StoredAgentExecution {
+                    plan_hash,
+                    execution: serde_json::from_str(&execution)?,
+                })
+            })
+            .transpose()
+    }
+
+    pub fn save_agent_execution(
+        &self,
+        idempotency_key: &str,
+        plan_hash: &str,
+        execution: &AiAgentExecution,
+    ) -> Result<(), StoreError> {
+        self.connection()?.execute(
+            r#"INSERT INTO ai_agent_executions(
+                   idempotency_key, plan_hash, execution_json, created_at
+               ) VALUES (?1, ?2, ?3, ?4)"#,
+            params![
+                idempotency_key,
+                plan_hash,
+                serde_json::to_string(execution)?,
+                timestamp(),
+            ],
+        )?;
+        Ok(())
+    }
+
     pub fn apply_host_event(&self, event: &HostEvent) -> Result<ManagerEvent, StoreError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
@@ -1486,6 +1539,45 @@ mod tests {
             .create_operation("kernel.install", None, "安装内核", 0, Some(&request))
             .expect("operation");
         assert_eq!(operation.request, Some(request));
+    }
+
+    #[test]
+    fn agent_execution_survives_reopen() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("manager.sqlite3");
+        let store = test_store(&directory);
+        let execution = AiAgentExecution {
+            action: "none".into(),
+            operation: None,
+            response: Some(json!({ "summary": "read only" })),
+            status_semantics: "No write action was executed.".into(),
+            replayed: false,
+        };
+        store
+            .save_agent_execution("key-1", "hash-1", &execution)
+            .expect("save execution");
+        drop(store);
+
+        let reopened = ManagerStore::open(
+            path,
+            &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
+                work_dir: "unused".into(),
+                extension_dir: "unused".into(),
+                log_dir: "unused".into(),
+                sdk_api_url: None,
+                debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: None,
+            },
+        )
+        .expect("reopen store");
+        let stored = reopened
+            .agent_execution("key-1")
+            .expect("execution")
+            .expect("stored execution");
+        assert_eq!(stored.plan_hash, "hash-1");
+        assert_eq!(stored.execution.action, "none");
     }
 
     #[test]

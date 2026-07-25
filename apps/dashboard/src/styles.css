@@ -1111,6 +1111,127 @@ h2 {
   gap: 7px;
 }
 
+.ai-workspace {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+}
+
+.ai-toolbar {
+  justify-content: space-between;
+}
+
+.segmented-control {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(76px, 1fr));
+  padding: 3px;
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+  background: #f4f6f8;
+}
+
+.segmented-control button {
+  height: 30px;
+  border: 0;
+  border-radius: 4px;
+  color: #697486;
+  background: transparent;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.segmented-control button.active {
+  color: #2454b9;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(32 45 65 / 12%);
+}
+
+.ai-provider-status {
+  display: grid;
+  grid-template-columns: 10px auto;
+  align-items: center;
+  gap: 2px 8px;
+  text-align: right;
+}
+
+.ai-provider-status .service-dot {
+  grid-row: 1 / 3;
+}
+
+.ai-provider-status strong,
+.ai-provider-status small {
+  grid-column: 2;
+}
+
+.ai-provider-status strong {
+  color: #344054;
+  font-size: 12px;
+}
+
+.ai-provider-status small {
+  color: #8a94a3;
+  font-size: 10px;
+}
+
+.ai-grid {
+  display: grid;
+  grid-template-columns: minmax(300px, .8fr) minmax(420px, 1.2fr);
+  min-width: 0;
+  gap: 12px;
+}
+
+.ai-compose textarea {
+  width: 100%;
+  min-height: 220px;
+  margin: 4px 0 12px;
+  padding: 12px;
+  resize: vertical;
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+  color: #344054;
+  background: #fff;
+  font: inherit;
+  line-height: 1.6;
+}
+
+.ai-compose .button {
+  width: 100%;
+}
+
+.ai-answer p,
+.agent-summary,
+.agent-execution p {
+  margin: 0;
+  color: #465267;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.ai-answer small {
+  display: block;
+  margin-top: 12px;
+  color: #8a94a3;
+  font-size: 10px;
+}
+
+.agent-summary {
+  margin: 12px 0;
+}
+
+.agent-execution {
+  display: grid;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e8ebef;
+  gap: 8px;
+}
+
+.agent-execution .status-badge {
+  justify-self: start;
+}
+
 @media (max-width: 1400px) {
   .app-shell {
     grid-template-columns: 68px minmax(0, 1fr);
@@ -1181,6 +1302,20 @@ h2 {
   .settings-section + .settings-section {
     border-top: 1px solid #e3e7ec;
     border-left: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .ai-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-toolbar {
+    align-items: stretch;
+  }
+
+  .ai-provider-status {
+    text-align: left;
   }
 }
 

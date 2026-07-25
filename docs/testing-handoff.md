@@ -192,6 +192,13 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 
 ## 10. 新会话实施提示
 
+阶段 9 AI 验收补充：
+
+- `cargo test -p manager agent_execution_survives_reopen` 验证幂等执行记录跨重启保留。
+- Chat 上下文只包含脱敏摘要，不包含数据目录、workDir、logDir、完整代理 URL、CDP endpoint、API Key 或 userSig。
+- 同一 `idempotencyKey` 只能对应一个序列化计划；不同计划复用必须返回 `INVALID_AGENT_PLAN`。
+- `npm run ai:smoke` 只记录模型、只读标志和回答长度。
+
 新会话可以直接从这里开始：
 
 1. `cd D:\go\src\browsersdk\brosdk-dashboard`

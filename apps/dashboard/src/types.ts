@@ -81,6 +81,7 @@ export interface DashboardSnapshot {
     endpointHint: string;
     notes: string[];
   };
+  ai: AiProviderStatus;
   environments: Array<{
     envId: string;
     name: string;
@@ -115,6 +116,36 @@ export interface DashboardSnapshot {
   settings: ManagerSettings;
   latestEventSequence: number;
   databasePath: string;
+}
+
+export interface AiProviderStatus {
+  provider: string;
+  baseUrl: string;
+  model: string;
+  apiKeyPresent: boolean;
+}
+
+export interface AiChatResponse {
+  answer: string;
+  model: string;
+  readOnly: boolean;
+}
+
+export interface AiAgentPlan {
+  summary: string;
+  action: string;
+  envId: string | null;
+  expectedState: string | null;
+  idempotencyKey: string;
+  arguments: unknown;
+}
+
+export interface AiAgentExecution {
+  action: string;
+  operation: DashboardSnapshot["operations"][number] | null;
+  response: unknown | null;
+  statusSemantics: string;
+  replayed: boolean;
 }
 
 export interface ManagerSettings {

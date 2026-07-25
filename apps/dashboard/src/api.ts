@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AiAgentExecution,
+  AiAgentPlan,
+  AiChatResponse,
   DashboardSnapshot,
   FingerprintProfile,
   FingerprintProfileInput,
@@ -126,6 +129,18 @@ export async function createDiagnosticBundle(outputPath: string) {
   return invoke("manager_create_diagnostic_bundle", { outputPath });
 }
 
+export async function aiChat(prompt: string): Promise<AiChatResponse> {
+  return invoke<AiChatResponse>("manager_ai_chat", { request: { prompt } });
+}
+
+export async function aiPlanAgent(prompt: string): Promise<AiAgentPlan> {
+  return invoke<AiAgentPlan>("manager_ai_plan_agent", { request: { prompt } });
+}
+
+export async function aiExecuteAgent(plan: AiAgentPlan): Promise<AiAgentExecution> {
+  return invoke<AiAgentExecution>("manager_ai_execute_agent", { request: { plan, approved: true } });
+}
+
 export async function pickDirectory(defaultPath?: string): Promise<string | null> {
   if (!isTauri()) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");
@@ -195,6 +210,12 @@ function demoSnapshot(): DashboardSnapshot {
       managerRoute: "Manager routes envId and operation state; DLL embedded MCP remains a capability.",
       endpointHint: "not enabled",
       notes: ["Browser preview mode"],
+    },
+    ai: {
+      provider: "openai-compatible",
+      baseUrl: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+      apiKeyPresent: false,
     },
     environments: [
       {

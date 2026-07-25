@@ -223,3 +223,10 @@ Windows x64 是首个完成平台。macOS/Linux 不在没有动态库和平台�
 - macOS：解析 `libs/macos_universal/libbrosdk.dylib`，使用 UDS 和 Keychain；缺库时 capability 为 unavailable。
 - Linux x64：解析 `libs/linux_x64/libbrosdk.so`，使用 UDS 和 Secret Service；缺库时 capability 为 unavailable。
 - `SdkCapabilities` 同时报告 `supportStatus`、`unsupportedReason`、`libraryDir`、`libraryFilename`、`secretBackend` 和 `ipcTransport`。
+
+AI Agent 边界：
+
+- Chat 只能读取 Manager 生成的脱敏快照，模型没有 SDK 或本地文件工具。
+- Agent 模型只生成结构化计划；Manager 再校验 action 白名单、显式批准、`envId`、`expectedState` 和 `idempotencyKey`。
+- Agent 写操作统一复用现有 operation 队列，返回 operation id 和 accepted/ready 的状态语义。
+- DLL 内嵌 MCP 仍是 `sdk-host` capability，由 Manager 配置生命周期和路由，不把 DLL 端口暴露为 Dashboard 的直接写入口。

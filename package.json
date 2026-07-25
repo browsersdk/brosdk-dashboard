@@ -19,6 +19,7 @@
     "manager:smoke": "cargo build -p sdk-host && cargo run -p manager --bin manager-smoke",
     "e2e:environment": "cargo build -p sdk-host && cargo run -p manager --bin environment-e2e",
     "sdk:capabilities": "cargo run -p sdk-host -- capabilities --json",
+    "ai:smoke": "cargo run -p ai-agent --bin ai-smoke",
     "release:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-windows-sidecar.ps1",
     "release:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-release.ps1 -PortableOnly",
     "release:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-portable.ps1",

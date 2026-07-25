@@ -295,6 +295,39 @@ fn manager_create_diagnostic_bundle(
 }
 
 #[tauri::command]
+async fn manager_ai_chat(
+    manager: tauri::State<'_, manager::Manager>,
+    request: domain::AiChatRequest,
+) -> Result<domain::AiChatResponse, String> {
+    manager
+        .ai_chat(request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn manager_ai_plan_agent(
+    manager: tauri::State<'_, manager::Manager>,
+    request: domain::AiAgentPlanRequest,
+) -> Result<domain::AiAgentPlan, String> {
+    manager
+        .ai_plan_agent(request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn manager_ai_execute_agent(
+    manager: tauri::State<'_, manager::Manager>,
+    request: domain::AiAgentExecuteRequest,
+) -> Result<domain::AiAgentExecution, String> {
+    manager
+        .ai_execute_agent(request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn sdk_host_path() -> Result<String, String> {
     sdk_client::discover_host_path()
         .map(|path| path.display().to_string())
@@ -345,6 +378,9 @@ pub fn run() {
             manager_uninstall_kernel,
             manager_retry_operation,
             manager_create_diagnostic_bundle,
+            manager_ai_chat,
+            manager_ai_plan_agent,
+            manager_ai_execute_agent,
             sdk_host_path
         ])
         .run(tauri::generate_context!())

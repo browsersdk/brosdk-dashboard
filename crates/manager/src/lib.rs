@@ -6,7 +6,8 @@ use std::{
 };
 
 use domain::{
-    ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot, FingerprintProfile,
+    AiAgentExecuteRequest, AiAgentExecution, AiAgentPlan, AiAgentPlanRequest, AiChatRequest,
+    AiChatResponse, ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot, FingerprintProfile,
     FingerprintProfileInput, HostCommand, KernelInstallInput, ManagerEvent, ManagerSettings,
     McpPanel, OperationExecution, OperationRecord, ProxyParseResult, ProxyProfile,
     ProxyProfileInput, RuntimeHostState, RuntimeHostStatus, SdkPanel, SmokeReport,
@@ -57,6 +58,14 @@ pub enum ManagerError {
     KernelBusy,
     #[error("kernel install path is outside the SDK work directory")]
     UnsafeKernelPath,
+    #[error("{0}")]
+    Ai(#[from] ai_agent::AiError),
+    #[error("AI agent execution requires explicit approval")]
+    AgentApprovalRequired,
+    #[error("AI agent plan is invalid: {0}")]
+    InvalidAgentPlan(String),
+    #[error("AI agent expected environment state {expected}, but current state is {actual}")]
+    AgentStateMismatch { expected: String, actual: String },
 }
 
 #[derive(Clone)]
@@ -72,6 +81,7 @@ struct ManagerInner {
     sdk_initialized: RwLock<bool>,
     last_runtime_status: RwLock<RuntimeHostStatus>,
     last_smoke: RwLock<Option<SmokeReport>>,
+    agent_execution_lock: Mutex<()>,
 }
 
 impl Default for Manager {
@@ -100,6 +110,7 @@ impl Manager {
                 sdk_initialized: RwLock::new(false),
                 last_runtime_status: RwLock::new(RuntimeHostStatus::default()),
                 last_smoke: RwLock::new(None),
+                agent_execution_lock: Mutex::new(()),
             }),
         })
     }
@@ -252,6 +263,7 @@ impl Manager {
                     "Unexpected host exit becomes degraded state and never exits the desktop UI.".into(),
                 ],
             },
+            ai: ai_agent::AiClient::status(),
             environments,
             environment_bindings: bindings,
             fingerprints,
@@ -262,6 +274,253 @@ impl Manager {
             latest_event_sequence: self.inner.store.latest_event_sequence()?,
             database_path: self.inner.store.path().display().to_string(),
         })
+    }
+
+    pub async fn ai_chat(&self, request: AiChatRequest) -> Result<AiChatResponse, ManagerError> {
+        let prompt = require_prompt(&request.prompt)?;
+        let context = self.ai_context().await?;
+        Ok(ai_agent::AiClient::from_env()?
+            .chat(prompt, &context)
+            .await?)
+    }
+
+    pub async fn ai_plan_agent(
+        &self,
+        request: AiAgentPlanRequest,
+    ) -> Result<AiAgentPlan, ManagerError> {
+        let prompt = require_prompt(&request.prompt)?;
+        let context = self.ai_context().await?;
+        let plan = ai_agent::AiClient::from_env()?
+            .plan(prompt, &context)
+            .await?;
+        validate_agent_plan(&plan)?;
+        Ok(plan)
+    }
+
+    pub async fn ai_execute_agent(
+        &self,
+        request: AiAgentExecuteRequest,
+    ) -> Result<AiAgentExecution, ManagerError> {
+        if !request.approved {
+            return Err(ManagerError::AgentApprovalRequired);
+        }
+        let _execution_guard = self.inner.agent_execution_lock.lock().await;
+        validate_agent_plan(&request.plan)?;
+        let plan_hash = agent_plan_hash(&request.plan)?;
+        if let Some(previous) = self
+            .inner
+            .store
+            .agent_execution(&request.plan.idempotency_key)?
+        {
+            if previous.plan_hash != plan_hash {
+                return Err(ManagerError::InvalidAgentPlan(
+                    "idempotencyKey was already used for a different plan".into(),
+                ));
+            }
+            return Ok(AiAgentExecution {
+                replayed: true,
+                ..previous.execution
+            });
+        }
+
+        self.validate_expected_state(&request.plan)?;
+        let execution = match request.plan.action.as_str() {
+            "none" => AiAgentExecution {
+                action: "none".into(),
+                operation: None,
+                response: Some(json!({ "summary": request.plan.summary })),
+                status_semantics: "No write action was executed.".into(),
+                replayed: false,
+            },
+            "environment.start" => {
+                let operation = self.start_environment(required_env_id(&request.plan)?).await?;
+                AiAgentExecution {
+                    action: request.plan.action.clone(),
+                    operation: Some(operation),
+                    response: None,
+                    status_semantics: "The operation may be accepted or starting; ready requires browser-open-success or a ready browser_info reconciliation.".into(),
+                    replayed: false,
+                }
+            }
+            "environment.stop" => AiAgentExecution {
+                action: request.plan.action.clone(),
+                operation: Some(self.stop_environment(required_env_id(&request.plan)?).await?),
+                response: None,
+                status_semantics: "The operation may be accepted or stopping; stopped requires browser-close-success or reconciliation.".into(),
+                replayed: false,
+            },
+            "environment.sync" => AiAgentExecution {
+                action: request.plan.action.clone(),
+                operation: Some(self.sync_environments().await?),
+                response: None,
+                status_semantics: "The returned operation record is the source of truth.".into(),
+                replayed: false,
+            },
+            "runtime.reconcile" => AiAgentExecution {
+                action: request.plan.action.clone(),
+                operation: Some(self.reconcile_runtimes().await?),
+                response: None,
+                status_semantics: "The returned operation record is the source of truth.".into(),
+                replayed: false,
+            },
+            "proxy.diagnose" => {
+                let profile_id = request
+                    .plan
+                    .arguments
+                    .get("profileId")
+                    .and_then(serde_json::Value::as_str);
+                let url = request
+                    .plan
+                    .arguments
+                    .get("url")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("https://example.com");
+                let result = self.diagnose_proxy(profile_id, url).await?;
+                AiAgentExecution {
+                    action: request.plan.action.clone(),
+                    operation: Some(result.operation),
+                    response: Some(result.response),
+                    status_semantics: "The diagnostic operation result is final for this request.".into(),
+                    replayed: false,
+                }
+            }
+            "environment.diagnose" => {
+                let result = self.open_fingerprint_check(required_env_id(&request.plan)?).await?;
+                AiAgentExecution {
+                    action: request.plan.action.clone(),
+                    operation: Some(result.operation),
+                    response: Some(result.response),
+                    status_semantics: "The diagnostic operation result is final for this request.".into(),
+                    replayed: false,
+                }
+            }
+            action => return Err(ManagerError::InvalidAgentPlan(format!("unsupported action {action}"))),
+        };
+
+        self.inner.store.append_event(
+            "ai.agent-executed",
+            request.plan.env_id.as_deref(),
+            execution
+                .operation
+                .as_ref()
+                .map(|operation| operation.id.as_str()),
+            &json!({
+                "action": execution.action,
+                "idempotencyKey": request.plan.idempotency_key,
+            }),
+        )?;
+        self.inner.store.save_agent_execution(
+            &request.plan.idempotency_key,
+            &plan_hash,
+            &execution,
+        )?;
+        Ok(execution)
+    }
+
+    async fn ai_context(&self) -> Result<serde_json::Value, ManagerError> {
+        let environments = self.inner.store.list_environments()?;
+        let fingerprints = self.inner.store.list_fingerprint_profiles()?;
+        let proxies = self.inner.store.list_proxy_profiles()?;
+        let kernels = self.inner.store.list_kernel_records()?;
+        let operations = self.inner.store.list_operations(30)?;
+        let settings = self.inner.store.settings()?;
+        let capabilities = sdk_ffi::capabilities_for_path(sdk_ffi::default_library_path());
+        let runtime = self.inner.last_runtime_status.read().await.clone();
+        Ok(json!({
+            "capabilities": {
+                "platform": capabilities.platform,
+                "supportStatus": capabilities.support_status,
+                "unsupportedReason": capabilities.unsupported_reason,
+                "embeddedMcp": capabilities.embedded_mcp,
+                "embeddedWebApi": capabilities.embedded_web_api,
+                "ipcTransport": capabilities.ipc_transport,
+                "secretBackend": capabilities.secret_backend,
+            },
+            "runtime": {
+                "state": runtime.state,
+                "generation": runtime.generation,
+                "lastError": runtime.last_error,
+            },
+            "environments": environments.into_iter().map(|environment| json!({
+                "envId": environment.env_id,
+                "name": environment.name,
+                "localLabel": environment.local_label,
+                "tags": environment.tags,
+                "status": environment.status,
+                "generation": environment.generation,
+                "lastEvent": environment.last_event,
+            })).collect::<Vec<_>>(),
+            "fingerprints": fingerprints.into_iter().map(|profile| json!({
+                "id": profile.id,
+                "name": profile.name,
+                "source": profile.source,
+                "boundEnvIds": profile.bound_env_ids,
+                "profile": profiles::object_without_secrets(&profile.profile),
+            })).collect::<Vec<_>>(),
+            "proxies": proxies.into_iter().map(|proxy| json!({
+                "id": proxy.id,
+                "name": proxy.name,
+                "scheme": proxy.scheme,
+                "host": proxy.host,
+                "port": proxy.port,
+                "usernamePresent": proxy.username.is_some(),
+                "passwordPresent": proxy.password_present,
+                "boundEnvIds": proxy.bound_env_ids,
+            })).collect::<Vec<_>>(),
+            "kernels": kernels.into_iter().map(|kernel| json!({
+                "id": kernel.id,
+                "kernelType": kernel.kernel_type,
+                "name": kernel.name,
+                "major": kernel.major,
+                "version": kernel.version,
+                "latestVersion": kernel.latest_version,
+                "platform": kernel.platform,
+                "arch": kernel.arch,
+                "status": kernel.status,
+                "downloadAvailable": kernel.download_available,
+            })).collect::<Vec<_>>(),
+            "operations": operations.into_iter().map(|operation| json!({
+                "id": operation.id,
+                "kind": operation.kind,
+                "envId": operation.env_id,
+                "status": operation.status,
+                "message": operation.message,
+                "updatedAt": operation.updated_at,
+            })).collect::<Vec<_>>(),
+            "settings": {
+                "debug": settings.debug,
+                "startupPolicy": settings.startup_policy,
+                "sdkApiOverridePresent": settings.sdk_api_url.is_some(),
+                "embeddedMcpEnabled": settings.embedded_mcp_port.is_some(),
+            },
+            "agentPolicy": {
+                "allowedActions": allowed_agent_actions(),
+                "readySemantics": "accepted is not ready",
+                "writesRequireApproval": true,
+            }
+        }))
+    }
+
+    fn validate_expected_state(&self, plan: &AiAgentPlan) -> Result<(), ManagerError> {
+        if let Some(env_id) = plan.env_id.as_deref() {
+            let environment = self
+                .inner
+                .store
+                .environment(env_id)?
+                .ok_or(ManagerError::EnvironmentNotFound)?;
+            let expected = plan.expected_state.as_deref().ok_or_else(|| {
+                ManagerError::InvalidAgentPlan(
+                    "expectedState is required for environment actions".into(),
+                )
+            })?;
+            if environment.status != expected {
+                return Err(ManagerError::AgentStateMismatch {
+                    expected: expected.into(),
+                    actual: environment.status,
+                });
+            }
+        }
+        Ok(())
     }
 
     pub async fn sync_environments(&self) -> Result<OperationRecord, ManagerError> {
@@ -1357,6 +1616,68 @@ fn accepted_code(value: &serde_json::Value) -> Option<i32> {
         .and_then(|value| i32::try_from(value).ok())
 }
 
+fn require_prompt(prompt: &str) -> Result<&str, ManagerError> {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Err(ManagerError::InvalidAgentPlan(
+            "prompt must not be empty".into(),
+        ));
+    }
+    Ok(prompt)
+}
+
+fn allowed_agent_actions() -> &'static [&'static str] {
+    &[
+        "none",
+        "environment.start",
+        "environment.stop",
+        "environment.sync",
+        "runtime.reconcile",
+        "proxy.diagnose",
+        "environment.diagnose",
+    ]
+}
+
+fn validate_agent_plan(plan: &AiAgentPlan) -> Result<(), ManagerError> {
+    if !allowed_agent_actions().contains(&plan.action.as_str()) {
+        return Err(ManagerError::InvalidAgentPlan(format!(
+            "unsupported action {}",
+            plan.action
+        )));
+    }
+    if plan.idempotency_key.trim().is_empty() {
+        return Err(ManagerError::InvalidAgentPlan(
+            "idempotencyKey must not be empty".into(),
+        ));
+    }
+    if plan.action.starts_with("environment.")
+        && plan.action != "environment.sync"
+        && plan.env_id.as_deref().is_none_or(str::is_empty)
+    {
+        return Err(ManagerError::InvalidAgentPlan(
+            "envId is required for environment actions".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn required_env_id(plan: &AiAgentPlan) -> Result<&str, ManagerError> {
+    plan.env_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| ManagerError::InvalidAgentPlan("envId is required".into()))
+}
+
+fn agent_plan_hash(plan: &AiAgentPlan) -> Result<String, ManagerError> {
+    let value = serde_json::to_string(plan)?;
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in value.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    Ok(format!("{hash:016x}"))
+}
+
 fn copy_directory_if_exists(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
     if !source.exists() {
         return Ok(());
@@ -1393,6 +1714,10 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::KernelNotFound => "KERNEL_NOT_FOUND",
         ManagerError::KernelBusy => "KERNEL_BUSY",
         ManagerError::UnsafeKernelPath => "UNSAFE_KERNEL_PATH",
+        ManagerError::Ai(_) => "AI_PROVIDER_ERROR",
+        ManagerError::AgentApprovalRequired => "AGENT_APPROVAL_REQUIRED",
+        ManagerError::InvalidAgentPlan(_) => "INVALID_AGENT_PLAN",
+        ManagerError::AgentStateMismatch { .. } => "AGENT_STATE_MISMATCH",
     }
 }
 
@@ -1422,5 +1747,37 @@ mod tests {
             manager.inner.last_runtime_status.blocking_read().state,
             RuntimeHostState::Stopped
         );
+    }
+
+    #[test]
+    fn agent_plan_rejects_unlisted_actions() {
+        let plan = AiAgentPlan {
+            summary: "bad".into(),
+            action: "environment.destroy".into(),
+            env_id: Some("env-1".into()),
+            expected_state: Some("stopped".into()),
+            idempotency_key: "key-1".into(),
+            arguments: json!({}),
+        };
+        assert!(matches!(
+            validate_agent_plan(&plan),
+            Err(ManagerError::InvalidAgentPlan(_))
+        ));
+    }
+
+    #[test]
+    fn agent_plan_requires_environment_id() {
+        let plan = AiAgentPlan {
+            summary: "start".into(),
+            action: "environment.start".into(),
+            env_id: None,
+            expected_state: Some("stopped".into()),
+            idempotency_key: "key-1".into(),
+            arguments: json!({}),
+        };
+        assert!(matches!(
+            validate_agent_plan(&plan),
+            Err(ManagerError::InvalidAgentPlan(_))
+        ));
     }
 }

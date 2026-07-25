@@ -13,7 +13,7 @@
 | 6. 完整菜单 | P1 | 已完成 | 指纹、代理、内核、操作、设置菜单与 Manager API 已补齐 |
 | 7. 打包发布 | P1 | 已完成（安装器需本机工具链） | Windows 便携包、Tauri 资源、图标、WebView2、签名准备、升级策略 |
 | 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
-| 9. AI Agent | P2 | 待实施 | Chat 只读、Agent 受控操作、MCP 自动化工具 |
+| 9. AI Agent | P2 | 基础能力已完成，待扩展工具 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、operation/idempotency、MCP 边界 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -242,3 +242,13 @@
 - Windows 使用 named pipe + DPAPI；macOS/Linux 使用 UDS + 系统 keyring（Keychain/Secret Service），不再回退到明文 secret 文件。
 - `SdkCapabilities` 报告 support status、unsupported reason、动态库、IPC 和密钥后端；缺少平台动态库时明确 unavailable。
 - Windows workspace 测试通过，并对 `x86_64-unknown-linux-gnu`、`x86_64-apple-darwin` 完成平台核心 crates 的交叉 `cargo check`。
+
+阶段 9 实现结果：
+
+- 新增 `ai-agent` crate，兼容 OpenAI `/chat/completions`；默认支持 DeepSeek `https://api.deepseek.com` 与 `deepseek-v4-flash`，通过 `BROSDK_AI_API_KEY`、`BROSDK_AI_BASE_URL`、`BROSDK_AI_MODEL` 配置。
+- Chat 只发送脱敏环境/操作/能力摘要并标记 `readOnly=true`，不包含 API Key、userSig、Cookie、代理密码或完整 URL。
+- Chat 上下文覆盖环境、指纹、代理、内核、操作、设置和 runtime 诊断摘要；目录、完整代理 URL、CDP endpoint 与敏感字段不会发送给模型。
+- Agent 先生成结构化计划，执行要求显式批准、`envId`、`expectedState` 和 `idempotencyKey`；白名单动作复用 Manager operation，重复 key 返回原执行结果。
+- Agent 执行记录持久化到 SQLite；重启后相同计划可回放，不同计划复用同一 key 会被拒绝。
+- 启动/停止状态语义明确写入结果：accepted/starting 不等于 ready，必须等待 SDK callback 或 reconcile。
+- `npm run ai:smoke` 只输出模型名、只读标志和回答长度，不输出模型回答或密钥。

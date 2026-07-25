@@ -447,10 +447,69 @@ pub struct McpPanel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AiProviderStatus {
+    pub provider: String,
+    pub base_url: String,
+    pub model: String,
+    pub api_key_present: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiChatRequest {
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiChatResponse {
+    pub answer: String,
+    pub model: String,
+    pub read_only: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAgentPlanRequest {
+    pub prompt: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAgentPlan {
+    pub summary: String,
+    pub action: String,
+    pub env_id: Option<String>,
+    pub expected_state: Option<String>,
+    pub idempotency_key: String,
+    #[serde(default)]
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAgentExecuteRequest {
+    pub plan: AiAgentPlan,
+    pub approved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAgentExecution {
+    pub action: String,
+    pub operation: Option<OperationRecord>,
+    pub response: Option<Value>,
+    pub status_semantics: String,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DashboardSnapshot {
     pub sdk: SdkPanel,
     pub capabilities: SdkCapabilities,
     pub mcp: McpPanel,
+    pub ai: AiProviderStatus,
     pub environments: Vec<EnvironmentRecord>,
     pub environment_bindings: Vec<EnvironmentBindingSummary>,
     pub fingerprints: Vec<FingerprintProfile>,
