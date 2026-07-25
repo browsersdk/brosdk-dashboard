@@ -1117,6 +1117,34 @@ h2 {
   gap: 12px;
 }
 
+.mcp-workspace {
+  grid-template-columns: minmax(300px, .8fr) minmax(420px, 1.2fr);
+}
+
+.mcp-result {
+  display: grid;
+  margin-top: 14px;
+  gap: 10px;
+}
+
+.operation-inline {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
+  gap: 8px;
+}
+
+.operation-inline strong {
+  color: #344054;
+  font-size: 12px;
+}
+
+.operation-inline small {
+  margin-left: auto;
+  color: #8a94a3;
+  font-size: 10px;
+}
+
 .ai-toolbar {
   justify-content: space-between;
 }
@@ -1306,7 +1334,8 @@ h2 {
 }
 
 @media (max-width: 900px) {
-  .ai-grid {
+  .ai-grid,
+  .mcp-workspace {
     grid-template-columns: 1fr;
   }
 

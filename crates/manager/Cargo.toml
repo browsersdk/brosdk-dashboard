@@ -9,11 +9,13 @@ publish.workspace = true
 ai-agent = { path = "../ai-agent" }
 chrono.workspace = true
 domain = { path = "../domain" }
+mcp-client = { path = "../mcp-client" }
 platform = { path = "../platform" }
 rusqlite.workspace = true
 sdk-client = { path = "../sdk-client" }
 sdk-ffi = { path = "../sdk-ffi" }
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 uuid.workspace = true

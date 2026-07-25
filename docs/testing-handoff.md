@@ -116,7 +116,7 @@ ABI 注意事项：
 - `sdk_browser_info` 会包含 Starting 条目；只有 callback success 或明确 CDP endpoint 才算 ready。
 - 页面级 `Runtime.evaluate` 先执行 `Target.getTargets` 和 `Target.attachToTarget` 获取 `sessionId`，完成后执行 `Target.detachFromTarget`。
 
-2026-07-25 真实验证：测试账号完成环境同步、callback ready、页面 session `Runtime.evaluate`、SDK close、CDP `Browser.close` 模拟手动关闭对账，以及配置端口下的 DLL 内嵌 MCP TCP 监听检查。输出只记录布尔结果和环境数量，不记录 API Key、userSig 或 envId。
+2026-07-25 真实验证：测试账号完成环境同步、callback ready、页面 session `Runtime.evaluate`、SDK close、CDP `Browser.close` 模拟手动关闭对账，以及配置端口下 DLL 内嵌 MCP 的 Streamable HTTP lifecycle 和 `tabs(list)` 调用。输出只记录布尔结果和环境数量，不记录 API Key、userSig、envId、页面 URL 或 MCP 正文。
 
 验收：
 
@@ -190,21 +190,33 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 
 测试后执行 secret scan，至少检查当前仓库和运行日志目录。
 
-## 10. 新会话实施提示
+## 10. 新会话接力提示
 
 阶段 9 AI 验收补充：
 
 - `cargo test -p manager agent_execution_survives_reopen` 验证幂等执行记录跨重启保留。
 - Chat 上下文只包含脱敏摘要，不包含数据目录、workDir、logDir、完整代理 URL、CDP endpoint、API Key 或 userSig。
 - 同一 `idempotencyKey` 只能对应一个序列化计划；不同计划复用必须返回 `INVALID_AGENT_PLAN`。
+- Agent 在调用工具前写入 reservation；中断或结果未落盘时相同 key 必须返回 `AGENT_EXECUTION_UNCERTAIN`，不能重复执行。
 - `npm run ai:smoke` 只记录模型、只读标志和回答长度。
+- MCP 单元测试必须验证 `initialize -> initialized notification -> tools/list -> tools/call -> DELETE` 和 session/version headers。
+- 设置 `BROSDK_EMBEDDED_PORT` 的环境 E2E 必须完成一次 Manager 路由的 `tabs(list)`，输出只记录 `embeddedMcpToolVerified=true`，不记录 envId、页面 URL 或工具正文。
+
+2026-07-25 阶段 9 最终验证结果：
+
+- `npm run ai:smoke` 通过，仅输出模型、只读标志和回答长度。
+- `npm run sdk:smoke` 通过，确认 `getUserSig` 请求使用 `role=user`，并完成 init/info/env_page/shutdown。
+- `npm run sdk:runtime-smoke` 和带真实账号的 `npm run manager:smoke` 通过，host 优雅停止和异常退出降级均符合预期。
+- 带 `BROSDK_EMBEDDED_PORT`、唯一环境选择和模拟手动关闭的 `npm run e2e:environment` 通过，结果包含 `runtimeEvaluateVerified=true`、`embeddedMcpReachable=true`、`embeddedMcpToolVerified=true`、`manualCloseVerified=true`。
+- `npm run check`、`npm test`、`npm run build` 通过；Dashboard 在 1440x900 和 390x844 下完成 AI/MCP 导航、Chat/Agent 切换、禁用态、控制台和横向溢出检查。
 
 新会话可以直接从这里开始：
 
 1. `cd D:\go\src\browsersdk\brosdk-dashboard`
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
-3. 初始化项目骨架。
-4. 先实现 `sdk-ffi` 和 DLL smoke test。
-5. 只从环境变量读取 `BROSDK_API_KEY`。
+3. 运行 `git status --short --branch`，确认是否存在未提交工作。
+4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
+5. 当前阶段 0-9 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+6. 所有 API Key 只从环境变量读取，不写入仓库、日志或截图。
 
-不要先做完整 UI。先证明 DLL 调用链稳定，再把 Dashboard 菜单逐个迁移。
+涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。

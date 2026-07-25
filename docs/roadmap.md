@@ -13,7 +13,7 @@
 | 6. 完整菜单 | P1 | 已完成 | 指纹、代理、内核、操作、设置菜单与 Manager API 已补齐 |
 | 7. 打包发布 | P1 | 已完成（安装器需本机工具链） | Windows 便携包、Tauri 资源、图标、WebView2、签名准备、升级策略 |
 | 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
-| 9. AI Agent | P2 | 基础能力已完成，待扩展工具 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、operation/idempotency、MCP 边界 |
+| 9. AI Agent | P2 | 已完成 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、持久化幂等、DLL MCP 只读 adapter |
 
 ## 2. 阶段 0：项目骨架
 
@@ -221,13 +221,9 @@
 - Agent 不能把 accepted 说成 ready。
 - Agent 操作都有 operation id 和可追溯事件。
 
-## 12. 当前下一步
+## 12. 当前状态
 
-阶段 0/1/2/3/4/5/6/7 已完成，阶段 8 的平台 adapter 基础已完成。当前从阶段 9 开始：
-
-1. 接入 OpenAI 兼容模型提供商，API Key 只从环境变量读取。
-2. 实现只读 Chat 和白名单 Agent 操作，所有写操作返回 operation id。
-3. 将 DLL 内嵌 MCP 作为 capability，继续由 Manager 管理端口与 envId 路由。
+阶段 0-9 的仓库内规划已完成。当前没有已批准的阶段 10；后续新增需求应先在本文件补充阶段目标、任务、风险和验收标准，再按“实现 -> 自动测试 -> 文档 -> Git 提交”的循环推进。
 
 阶段 7 实现结果：
 
@@ -249,6 +245,10 @@
 - Chat 只发送脱敏环境/操作/能力摘要并标记 `readOnly=true`，不包含 API Key、userSig、Cookie、代理密码或完整 URL。
 - Chat 上下文覆盖环境、指纹、代理、内核、操作、设置和 runtime 诊断摘要；目录、完整代理 URL、CDP endpoint 与敏感字段不会发送给模型。
 - Agent 先生成结构化计划，执行要求显式批准、`envId`、`expectedState` 和 `idempotencyKey`；白名单动作复用 Manager operation，重复 key 返回原执行结果。
-- Agent 执行记录持久化到 SQLite；重启后相同计划可回放，不同计划复用同一 key 会被拒绝。
+- Agent 执行先在 SQLite 预留 key 再调用工具；重启后已完成的相同计划可回放，不同计划复用同一 key 会被拒绝，中断/不确定执行 fail closed，禁止同 key 再次执行。
 - 启动/停止状态语义明确写入结果：accepted/starting 不等于 ready，必须等待 SDK callback 或 reconcile。
 - `npm run ai:smoke` 只输出模型名、只读标志和回答长度，不输出模型回答或密钥。
+- DLL MCP adapter 严格完成 Streamable HTTP lifecycle，只允许 ready 环境执行 `browser_state(get)` 与 `tabs(list/current)`；调用有 operation，URL 降为 origin，响应脱敏。
+- `npm run e2e:environment` 在设置 `BROSDK_EMBEDDED_PORT` 时会实际调用 `/sdk/v1/mcp/env/{envId}` 的 `tabs(list)`，不再只检查 TCP 监听。
+- 2026-07-25 使用真实测试配置完成 DeepSeek smoke 和环境 E2E；报告确认 `readySource=sdk_callback`、`runtimeEvaluateVerified=true`、`embeddedMcpToolVerified=true`、`manualCloseVerified=true`。
+- Dashboard AI/MCP 页面通过 1440x900 与 390x844 Playwright 检查：导航与 Chat/Agent 模式切换有效、预览态写按钮保持禁用、控制台无应用错误、页面无横向溢出。

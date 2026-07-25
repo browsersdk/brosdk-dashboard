@@ -8,6 +8,7 @@ import type {
   FingerprintProfileInput,
   ManagerEvent,
   ManagerSettings,
+  McpToolCallExecution,
   OperationExecution,
   ProxyParseResult,
   ProxyProfile,
@@ -141,6 +142,16 @@ export async function aiExecuteAgent(plan: AiAgentPlan): Promise<AiAgentExecutio
   return invoke<AiAgentExecution>("manager_ai_execute_agent", { request: { plan, approved: true } });
 }
 
+export async function callEmbeddedMcp(
+  envId: string,
+  tool: "browser_state" | "tabs",
+  action: "get" | "list" | "current",
+): Promise<McpToolCallExecution> {
+  return invoke<McpToolCallExecution>("manager_call_embedded_mcp", {
+    request: { envId, tool, arguments: { action } },
+  });
+}
+
 export async function pickDirectory(defaultPath?: string): Promise<string | null> {
   if (!isTauri()) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");
@@ -207,6 +218,9 @@ function demoSnapshot(): DashboardSnapshot {
     mcp: {
       mode: "manager-routed",
       embeddedAvailable: true,
+      configured: false,
+      active: false,
+      allowedTools: ["browser_state:get", "tabs:list", "tabs:current"],
       managerRoute: "Manager routes envId and operation state; DLL embedded MCP remains a capability.",
       endpointHint: "not enabled",
       notes: ["Browser preview mode"],

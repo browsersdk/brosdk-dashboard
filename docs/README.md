@@ -65,13 +65,9 @@ brosdk-dashboard/
 
 阶段 6 已补齐指纹、代理、内核、操作和设置菜单。代理密码在 Windows 使用 DPAPI 保护；目录、导入/导出和诊断包使用系统文件选择器；内核没有可靠 catalog URL 时显示“未知”，不会误报可更新。
 
-## 当前实施目标
+## 当前实施状态
 
-下一步按 [roadmap.md](roadmap.md) 推进阶段 9 AI Agent：
-
-1. 接入 OpenAI 兼容模型配置和只读 Chat。
-2. 增加白名单 Agent 操作、operation id 和状态约束。
-3. 将 DLL 内嵌 MCP 保持在 Manager 策略边界内。
+[roadmap.md](roadmap.md) 中阶段 0-9 的仓库内规划已全部实施并通过当前平台验收。后续工作不再自动扩展阶段编号；新增产品范围应先补充路线图、风险和验收标准，再进入实现。
 
 阶段 5 已用真实账号完成 `getUserSig(role=user) -> init -> env_page -> browser_open -> browser-open-success -> Runtime.evaluate -> browser_close -> browser-close-success`。DLL 自带 MCP capability 已验证可用；只有设置 `BROSDK_EMBEDDED_PORT` 时才在 runtime host 初始化中启用端口。
 
@@ -79,4 +75,6 @@ brosdk-dashboard/
 
 阶段 8 已完成平台路径、UDS、系统 keyring 和 capability 边界；Windows、Linux x64 和 macOS x64 的核心平台 crates 均通过编译检查。仓库当前仍只携带 Windows x64 SDK 动态库，因此其他平台会明确显示 unavailable，直到对应库加入 `libs/<platform>_<arch>`。
 
-阶段 9 已接入 DeepSeek/OpenAI 兼容 AI：使用 `BROSDK_AI_API_KEY`、`BROSDK_AI_BASE_URL`、`BROSDK_AI_MODEL`，默认模型为 `deepseek-v4-flash`。Chat 为只读，Agent 需要显式批准并通过 Manager 的 action、状态和幂等校验；`npm run ai:smoke` 不输出回答正文。
+阶段 9 已完成 DeepSeek/OpenAI 兼容 AI 与 DLL MCP 只读 adapter：使用 `BROSDK_AI_API_KEY`、`BROSDK_AI_BASE_URL`、`BROSDK_AI_MODEL`，默认模型为 `deepseek-v4-flash`。Chat 为只读，Agent 需要显式批准并通过 Manager 的 action、状态和持久化幂等校验；MCP 只允许 ready 环境执行 `browser_state(get)` 和 `tabs(list/current)`，所有调用都有 operation。
+
+2026-07-25 最终验收已完成：DeepSeek smoke、`getUserSig(role=user) -> init -> env_page`、runtime/Manager smoke、环境 ready、页面级 CDP、DLL MCP `tabs(list)`、手动关闭对账、workspace 测试/Clippy、Dashboard production build，以及 1440x900 与 390x844 的 AI/MCP 页面交互和无横向溢出检查均通过。测试凭据未写入仓库。

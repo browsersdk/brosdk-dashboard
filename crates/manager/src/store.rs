@@ -14,10 +14,11 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 pub struct StoredAgentExecution {
     pub plan_hash: String,
+    pub state: String,
     pub execution: AiAgentExecution,
 }
 
@@ -196,6 +197,7 @@ impl ManagerStore {
             CREATE TABLE IF NOT EXISTS ai_agent_executions (
                 idempotency_key TEXT PRIMARY KEY,
                 plan_hash TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'completed',
                 execution_json TEXT NOT NULL,
                 created_at TEXT NOT NULL
             );
@@ -232,6 +234,12 @@ impl ManagerStore {
             "fingerprint_profiles",
             "bound_env_ids_json",
             "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column(
+            &connection,
+            "ai_agent_executions",
+            "state",
+            "TEXT NOT NULL DEFAULT 'completed'",
         )?;
         let now = timestamp();
         connection.execute(
@@ -981,37 +989,67 @@ impl ManagerStore {
     ) -> Result<Option<StoredAgentExecution>, StoreError> {
         self.connection()?
             .query_row(
-                r#"SELECT plan_hash, execution_json
+                r#"SELECT plan_hash, state, execution_json
                    FROM ai_agent_executions WHERE idempotency_key = ?1"#,
                 [idempotency_key],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             )
             .optional()?
-            .map(|(plan_hash, execution)| {
+            .map(|(plan_hash, state, execution)| {
                 Ok(StoredAgentExecution {
                     plan_hash,
+                    state,
                     execution: serde_json::from_str(&execution)?,
                 })
             })
             .transpose()
     }
 
-    pub fn save_agent_execution(
+    pub fn reserve_agent_execution(
         &self,
         idempotency_key: &str,
         plan_hash: &str,
         execution: &AiAgentExecution,
-    ) -> Result<(), StoreError> {
-        self.connection()?.execute(
+    ) -> Result<bool, StoreError> {
+        let inserted = self.connection()?.execute(
             r#"INSERT INTO ai_agent_executions(
-                   idempotency_key, plan_hash, execution_json, created_at
-               ) VALUES (?1, ?2, ?3, ?4)"#,
+                   idempotency_key, plan_hash, state, execution_json, created_at
+               ) VALUES (?1, ?2, 'running', ?3, ?4)
+               ON CONFLICT(idempotency_key) DO NOTHING"#,
             params![
                 idempotency_key,
                 plan_hash,
                 serde_json::to_string(execution)?,
                 timestamp(),
             ],
+        )?;
+        Ok(inserted == 1)
+    }
+
+    pub fn complete_agent_execution(
+        &self,
+        idempotency_key: &str,
+        execution: &AiAgentExecution,
+    ) -> Result<(), StoreError> {
+        self.connection()?.execute(
+            r#"UPDATE ai_agent_executions
+               SET state = 'completed', execution_json = ?1
+               WHERE idempotency_key = ?2"#,
+            params![serde_json::to_string(execution)?, idempotency_key],
+        )?;
+        Ok(())
+    }
+
+    pub fn mark_agent_execution_uncertain(&self, idempotency_key: &str) -> Result<(), StoreError> {
+        self.connection()?.execute(
+            "UPDATE ai_agent_executions SET state = 'uncertain' WHERE idempotency_key = ?1",
+            [idempotency_key],
         )?;
         Ok(())
     }
@@ -1553,9 +1591,14 @@ mod tests {
             status_semantics: "No write action was executed.".into(),
             replayed: false,
         };
+        assert!(
+            store
+                .reserve_agent_execution("key-1", "hash-1", &execution)
+                .expect("reserve execution")
+        );
         store
-            .save_agent_execution("key-1", "hash-1", &execution)
-            .expect("save execution");
+            .complete_agent_execution("key-1", &execution)
+            .expect("complete execution");
         drop(store);
 
         let reopened = ManagerStore::open(
@@ -1577,6 +1620,7 @@ mod tests {
             .expect("execution")
             .expect("stored execution");
         assert_eq!(stored.plan_hash, "hash-1");
+        assert_eq!(stored.state, "completed");
         assert_eq!(stored.execution.action, "none");
     }
 

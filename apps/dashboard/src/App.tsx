@@ -37,6 +37,7 @@ import {
   aiChat,
   aiExecuteAgent,
   aiPlanAgent,
+  callEmbeddedMcp,
   cancelOperation,
   cleanupKernelCache,
   createDiagnosticBundle,
@@ -75,6 +76,7 @@ import type {
   DashboardSnapshot,
   FingerprintProfile,
   ManagerSettings,
+  McpToolCallExecution,
   ProxyProfile,
   SmokeReport,
   SmokeStage,
@@ -260,7 +262,7 @@ export default function App() {
         {page === "fingerprints" && <FingerprintPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "proxies" && <ProxyPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "kernels" && <KernelPage snapshot={snapshot} onRefresh={load} onError={setError} />}
-        {page === "mcp" && <McpPage snapshot={snapshot} />}
+        {page === "mcp" && <McpPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "ai" && <AiPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "operations" && <OperationsPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "settings" && <SettingsPage snapshot={snapshot} onRefresh={load} onError={setError} />}
@@ -743,9 +745,41 @@ function KernelPage({ snapshot, onRefresh, onError }: {
   );
 }
 
-function McpPage({ snapshot }: { snapshot: DashboardSnapshot | null }) {
+function McpPage({ snapshot, onRefresh, onError }: {
+  snapshot: DashboardSnapshot | null;
+  onRefresh: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const readyEnvironments = snapshot?.environments.filter((environment) => environment.status === "ready") ?? [];
+  const [envId, setEnvId] = useState("");
+  const [tool, setTool] = useState<"browser_state" | "tabs">("tabs");
+  const [tabsAction, setTabsAction] = useState<"list" | "current">("list");
+  const [result, setResult] = useState<McpToolCallExecution | null>(null);
+  const [busy, setBusy] = useState(false);
+  const selectedEnvId = readyEnvironments.some((environment) => environment.envId === envId)
+    ? envId
+    : readyEnvironments[0]?.envId ?? "";
+
+  async function runTool() {
+    if (!selectedEnvId) return;
+    setBusy(true);
+    onError("");
+    try {
+      setResult(await callEmbeddedMcp(
+        selectedEnvId,
+        tool,
+        tool === "browser_state" ? "get" : tabsAction,
+      ));
+      await onRefresh();
+    } catch (requestError) {
+      onError(errorMessage(requestError, "MCP 调用失败"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <section className="workspace single-panel">
+    <section className="workspace mcp-workspace">
       <div className="panel">
         <div className="panel-heading"><Bot size={17} /><h2>DLL 内嵌 MCP</h2></div>
         <dl className="detail-list">
@@ -754,18 +788,26 @@ function McpPage({ snapshot }: { snapshot: DashboardSnapshot | null }) {
           <div><dt>模式</dt><dd>{snapshot?.mcp.mode ?? "-"}</dd></div>
           <div><dt>端点</dt><dd>{snapshot?.mcp.endpointHint ?? "-"}</dd></div>
           <div><dt>路由</dt><dd>{snapshot?.mcp.managerRoute ?? "-"}</dd></div>
+          <div><dt>白名单</dt><dd>{snapshot?.mcp.allowedTools.join(", ") || "-"}</dd></div>
         </dl>
         <div className="note-list">
           {snapshot?.mcp.notes.map((note) => <span key={note}>{note}</span>)}
         </div>
       </div>
       <div className="panel">
-        <div className="panel-heading"><Fingerprint size={17} /><h2>自动化边界</h2></div>
-        <dl className="detail-list">
-          <div><dt>工具参数</dt><dd>envId</dd></div>
-          <div><dt>CDP</dt><dd>{snapshot?.capabilities.cdpCalls.join(", ") || "-"}</dd></div>
-          <div><dt>HTTP/WS</dt><dd>{snapshot?.capabilities.embeddedWebApi ? "available" : "unknown"}</dd></div>
-        </dl>
+        <div className="panel-heading"><Fingerprint size={17} /><h2>只读工具</h2></div>
+        <div className="form-grid compact-form">
+          <label className="field"><span>环境</span><select value={selectedEnvId} onChange={(event) => setEnvId(event.target.value)}><option value="">选择 ready 环境</option>{readyEnvironments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.localLabel || environment.name}</option>)}</select></label>
+          <label className="field"><span>工具</span><select value={tool} onChange={(event) => setTool(event.target.value as "browser_state" | "tabs")}><option value="tabs">tabs</option><option value="browser_state">browser_state</option></select></label>
+          {tool === "tabs" && <label className="field"><span>Action</span><select value={tabsAction} onChange={(event) => setTabsAction(event.target.value as "list" | "current")}><option value="list">list</option><option value="current">current</option></select></label>}
+        </div>
+        <button className="button primary full-width" type="button" disabled={!isDesktopRuntime() || !selectedEnvId || busy || !snapshot?.mcp.active} onClick={() => void runTool()}>
+          {busy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}运行
+        </button>
+        {result && <div className="mcp-result">
+          <div className="operation-inline"><strong>{result.tool}</strong><span className={`status-badge ${result.operation.status}`}>{statusLabel[result.operation.status] ?? result.operation.status}</span><small>{result.protocolVersion}</small></div>
+          <JsonPreview label="响应" value={result.response} />
+        </div>}
       </div>
     </section>
   );

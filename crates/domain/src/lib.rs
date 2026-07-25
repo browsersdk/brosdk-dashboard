@@ -440,9 +440,30 @@ pub struct ManagerEvent {
 pub struct McpPanel {
     pub mode: String,
     pub embedded_available: bool,
+    pub configured: bool,
+    pub active: bool,
+    pub allowed_tools: Vec<String>,
     pub manager_route: String,
     pub endpoint_hint: String,
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolCallRequest {
+    pub env_id: String,
+    pub tool: String,
+    #[serde(default)]
+    pub arguments: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolCallExecution {
+    pub operation: OperationRecord,
+    pub tool: String,
+    pub protocol_version: String,
+    pub response: Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -93,7 +93,7 @@ impl AiClient {
 
     pub async fn plan(&self, prompt: &str, context: &Value) -> Result<AiAgentPlan, AiError> {
         let context_text = serde_json::to_string(context).unwrap_or_else(|_| "{}".into());
-        let system = "You plan one controlled BroSDK Dashboard action. Return JSON only with keys: summary, action, envId, expectedState, idempotencyKey, arguments. Allowed action values: none, environment.start, environment.stop, environment.sync, runtime.reconcile, proxy.diagnose, environment.diagnose. envId is required for environment actions. expectedState must match the supplied snapshot. Never say accepted means ready.";
+        let system = "You plan one controlled BroSDK Dashboard action. Return JSON only with keys: summary, action, envId, expectedState, idempotencyKey, arguments. Allowed action values: none, environment.start, environment.stop, environment.sync, runtime.reconcile, proxy.diagnose, environment.diagnose, mcp.read. mcp.read requires envId and arguments with tool=browser_state or tabs; browser_state only allows action=get, tabs only allows action=list or current. envId is required for environment actions and mcp.read. expectedState must match the supplied snapshot. Never say accepted means ready.";
         let user = format!("Dashboard snapshot:\n{context_text}\n\nUser request:\n{prompt}");
         let content = self.complete(system, &user, 0.0).await?;
         parse_plan(&content)

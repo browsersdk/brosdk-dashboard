@@ -9,12 +9,14 @@ use domain::{
     AiAgentExecuteRequest, AiAgentExecution, AiAgentPlan, AiAgentPlanRequest, AiChatRequest,
     AiChatResponse, ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot, FingerprintProfile,
     FingerprintProfileInput, HostCommand, KernelInstallInput, ManagerEvent, ManagerSettings,
-    McpPanel, OperationExecution, OperationRecord, ProxyParseResult, ProxyProfile,
-    ProxyProfileInput, RuntimeHostState, RuntimeHostStatus, SdkPanel, SmokeReport,
+    McpPanel, McpToolCallExecution, McpToolCallRequest, OperationExecution, OperationRecord,
+    ProxyParseResult, ProxyProfile, ProxyProfileInput, RuntimeHostState, RuntimeHostStatus,
+    SdkPanel, SmokeReport,
 };
 use operation::OperationQueue;
 use sdk_client::{RuntimeHost, SdkHostClient};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use store::{ManagerStore, RuntimeUpdate};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
@@ -66,6 +68,16 @@ pub enum ManagerError {
     InvalidAgentPlan(String),
     #[error("AI agent expected environment state {expected}, but current state is {actual}")]
     AgentStateMismatch { expected: String, actual: String },
+    #[error("AI agent execution for this idempotency key is incomplete or uncertain")]
+    AgentExecutionUncertain,
+    #[error("embedded MCP request failed")]
+    Mcp(#[from] mcp_client::McpClientError),
+    #[error("DLL embedded MCP is not configured; set an embedded MCP port and restart the runtime")]
+    McpNotConfigured,
+    #[error("embedded MCP tool is not allowed by Manager policy: {0}")]
+    McpToolNotAllowed(String),
+    #[error("embedded MCP tool arguments are invalid: {0}")]
+    InvalidMcpArguments(String),
 }
 
 #[derive(Clone)]
@@ -79,6 +91,7 @@ struct ManagerInner {
     runtime: Mutex<Option<RuntimeHost>>,
     sdk_init_lock: Mutex<()>,
     sdk_initialized: RwLock<bool>,
+    active_mcp_port: RwLock<Option<u16>>,
     last_runtime_status: RwLock<RuntimeHostStatus>,
     last_smoke: RwLock<Option<SmokeReport>>,
     agent_execution_lock: Mutex<()>,
@@ -108,6 +121,7 @@ impl Manager {
                 runtime: Mutex::new(None),
                 sdk_init_lock: Mutex::new(()),
                 sdk_initialized: RwLock::new(false),
+                active_mcp_port: RwLock::new(None),
                 last_runtime_status: RwLock::new(RuntimeHostStatus::default()),
                 last_smoke: RwLock::new(None),
                 agent_execution_lock: Mutex::new(()),
@@ -131,6 +145,7 @@ impl Manager {
             Ok(host) => {
                 let status = host.status();
                 *self.inner.sdk_initialized.write().await = false;
+                *self.inner.active_mcp_port.write().await = None;
                 *self.inner.last_runtime_status.write().await = status.clone();
                 self.inner.store.append_event(
                     "runtime.started",
@@ -171,6 +186,7 @@ impl Manager {
             None => RuntimeHostStatus::default(),
         };
         *self.inner.sdk_initialized.write().await = false;
+        *self.inner.active_mcp_port.write().await = None;
         *self.inner.last_runtime_status.write().await = status.clone();
         self.inner
             .store
@@ -185,6 +201,7 @@ impl Manager {
             None => RuntimeHostStatus::default(),
         };
         *self.inner.sdk_initialized.write().await = false;
+        *self.inner.active_mcp_port.write().await = None;
         *self.inner.last_runtime_status.write().await = status.clone();
         Ok(status)
     }
@@ -216,6 +233,8 @@ impl Manager {
             RuntimeHostState::Stopped => "host-stopped",
         };
         let settings = self.inner.store.settings()?;
+        let configured_mcp_port = settings.embedded_mcp_port.or_else(embedded_port);
+        let active_mcp_port = *self.inner.active_mcp_port.read().await;
         let environments = self.inner.store.list_environments()?;
         let fingerprints = self.inner.store.list_fingerprint_profiles()?;
         let proxies = self.inner.store.list_proxy_profiles()?;
@@ -251,15 +270,22 @@ impl Manager {
             mcp: McpPanel {
                 mode: "manager-routed".into(),
                 embedded_available: capabilities.embedded_mcp,
+                configured: configured_mcp_port.is_some(),
+                active: active_mcp_port.is_some(),
+                allowed_tools: vec![
+                    "browser_state:get".into(),
+                    "tabs:list".into(),
+                    "tabs:current".into(),
+                ],
                 manager_route: "Manager owns the runtime host process, envId routing and operation state; only sdk-host can enable the DLL embedded MCP port.".into(),
-                endpoint_hint: settings
-                    .embedded_mcp_port
-                    .or_else(embedded_port)
-                    .map(|port| format!("configured on 127.0.0.1:{port}; enabled during sdk_init"))
+                endpoint_hint: active_mcp_port
+                    .map(|port| format!("active on 127.0.0.1:{port}"))
+                    .or_else(|| configured_mcp_port.map(|port| format!("configured on 127.0.0.1:{port}; runtime initialization pending")))
                     .unwrap_or_else(|| "not configured; internal IPC does not require a TCP port".into()),
                 notes: vec![
                     "Dashboard communicates with Manager through Tauri commands.".into(),
                     "Manager communicates with sdk-host through a supervised named pipe/UDS.".into(),
+                    "The Manager MCP adapter allows browser_state(get) and tabs(list/current) for ready environments only.".into(),
                     "Unexpected host exit becomes degraded state and never exits the desktop UI.".into(),
                 ],
             },
@@ -312,19 +338,41 @@ impl Manager {
             .store
             .agent_execution(&request.plan.idempotency_key)?
         {
-            if previous.plan_hash != plan_hash {
-                return Err(ManagerError::InvalidAgentPlan(
-                    "idempotencyKey was already used for a different plan".into(),
-                ));
-            }
-            return Ok(AiAgentExecution {
-                replayed: true,
-                ..previous.execution
-            });
+            return replay_agent_execution(previous, &plan_hash);
         }
 
         self.validate_expected_state(&request.plan)?;
-        let execution = match request.plan.action.as_str() {
+        let reservation = AiAgentExecution {
+            action: request.plan.action.clone(),
+            operation: None,
+            response: None,
+            status_semantics: "Execution is reserved; final result is pending.".into(),
+            replayed: false,
+        };
+        if !self.inner.store.reserve_agent_execution(
+            &request.plan.idempotency_key,
+            &plan_hash,
+            &reservation,
+        )? {
+            let previous = self
+                .inner
+                .store
+                .agent_execution(&request.plan.idempotency_key)?
+                .ok_or(ManagerError::AgentExecutionUncertain)?;
+            return replay_agent_execution(previous, &plan_hash);
+        }
+        self.inner.store.append_event(
+            "ai.agent-reserved",
+            request.plan.env_id.as_deref(),
+            None,
+            &json!({
+                "action": request.plan.action,
+                "idempotencyKey": request.plan.idempotency_key,
+            }),
+        )?;
+
+        let execution_result = async {
+            let execution = match request.plan.action.as_str() {
             "none" => AiAgentExecution {
                 action: "none".into(),
                 operation: None,
@@ -394,8 +442,69 @@ impl Manager {
                     replayed: false,
                 }
             }
-            action => return Err(ManagerError::InvalidAgentPlan(format!("unsupported action {action}"))),
+            "mcp.read" => {
+                let tool = request
+                    .plan
+                    .arguments
+                    .get("tool")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        ManagerError::InvalidAgentPlan(
+                            "mcp.read requires arguments.tool".into(),
+                        )
+                    })?;
+                let arguments = request
+                    .plan
+                    .arguments
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                let result = self
+                    .call_embedded_mcp(McpToolCallRequest {
+                        env_id: required_env_id(&request.plan)?.into(),
+                        tool: tool.into(),
+                        arguments,
+                    })
+                    .await?;
+                AiAgentExecution {
+                    action: request.plan.action.clone(),
+                    operation: Some(result.operation),
+                    response: Some(result.response),
+                    status_semantics: "The read-only MCP operation completed; no browser lifecycle state was inferred from this result.".into(),
+                    replayed: false,
+                }
+            }
+                action => {
+                    return Err(ManagerError::InvalidAgentPlan(format!(
+                        "unsupported action {action}"
+                    )));
+                }
+            };
+            Ok::<AiAgentExecution, ManagerError>(execution)
+        }
+        .await;
+        let execution = match execution_result {
+            Ok(execution) => execution,
+            Err(error) => {
+                self.inner
+                    .store
+                    .mark_agent_execution_uncertain(&request.plan.idempotency_key)?;
+                let _ = self.inner.store.append_event(
+                    "ai.agent-uncertain",
+                    request.plan.env_id.as_deref(),
+                    None,
+                    &json!({
+                        "action": request.plan.action,
+                        "idempotencyKey": request.plan.idempotency_key,
+                    }),
+                );
+                return Err(error);
+            }
         };
+
+        self.inner
+            .store
+            .complete_agent_execution(&request.plan.idempotency_key, &execution)?;
 
         self.inner.store.append_event(
             "ai.agent-executed",
@@ -408,11 +517,6 @@ impl Manager {
                 "action": execution.action,
                 "idempotencyKey": request.plan.idempotency_key,
             }),
-        )?;
-        self.inner.store.save_agent_execution(
-            &request.plan.idempotency_key,
-            &plan_hash,
-            &execution,
         )?;
         Ok(execution)
     }
@@ -521,6 +625,79 @@ impl Manager {
             }
         }
         Ok(())
+    }
+
+    pub async fn call_embedded_mcp(
+        &self,
+        request: McpToolCallRequest,
+    ) -> Result<McpToolCallExecution, ManagerError> {
+        let environment = self
+            .inner
+            .store
+            .environment(&request.env_id)?
+            .ok_or(ManagerError::EnvironmentNotFound)?;
+        if environment.status != "ready" {
+            return Err(ManagerError::EnvironmentNotReady(environment.status));
+        }
+        let arguments = validate_mcp_tool_call(&request.tool, request.arguments)?;
+        let port = self
+            .inner
+            .active_mcp_port
+            .read()
+            .await
+            .ok_or(ManagerError::McpNotConfigured)?;
+        let request_summary = json!({
+            "tool": request.tool,
+            "argumentKeys": arguments
+                .as_object()
+                .map(|object| object.keys().cloned().collect::<Vec<_>>())
+                .unwrap_or_default(),
+        });
+        let operation = self.inner.operations.enqueue(
+            "mcp.tool-call",
+            Some(&request.env_id),
+            "调用 DLL 内嵌 MCP",
+            environment.generation,
+            Some(&request_summary),
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "calling embedded MCP")?;
+        let result =
+            mcp_client::call_env_tool(port, &request.env_id, &request.tool, arguments).await;
+        match result {
+            Ok(result) => {
+                let response = sanitize_mcp_response(result.result);
+                let operation = self
+                    .inner
+                    .operations
+                    .succeed(&operation.id, "embedded MCP tool completed")?;
+                self.inner.store.append_event(
+                    "mcp.tool-completed",
+                    Some(&request.env_id),
+                    Some(&operation.id),
+                    &json!({
+                        "tool": request.tool,
+                        "advertisedToolCount": result.advertised_tools.len(),
+                        "protocolVersion": result.protocol_version,
+                    }),
+                )?;
+                Ok(McpToolCallExecution {
+                    operation,
+                    tool: request.tool,
+                    protocol_version: result.protocol_version,
+                    response,
+                })
+            }
+            Err(error) => {
+                let message = mcp_error_message(&error);
+                self.inner
+                    .operations
+                    .fail(&operation.id, "MCP_TOOL_ERROR", message)?;
+                Err(error.into())
+            }
+        }
     }
 
     pub async fn sync_environments(&self) -> Result<OperationRecord, ManagerError> {
@@ -1544,6 +1721,7 @@ impl Manager {
         )
         .await?;
         *self.inner.sdk_initialized.write().await = true;
+        *self.inner.active_mcp_port.write().await = port;
         self.inner.store.append_event(
             "sdk.initialized",
             None,
@@ -1592,6 +1770,7 @@ impl Manager {
                 *inner.last_runtime_status.write().await = current.clone();
                 if current.state == RuntimeHostState::Degraded {
                     *inner.sdk_initialized.write().await = false;
+                    *inner.active_mcp_port.write().await = None;
                     let message = current
                         .last_error
                         .as_deref()
@@ -1635,6 +1814,7 @@ fn allowed_agent_actions() -> &'static [&'static str] {
         "runtime.reconcile",
         "proxy.diagnose",
         "environment.diagnose",
+        "mcp.read",
     ]
 }
 
@@ -1658,6 +1838,11 @@ fn validate_agent_plan(plan: &AiAgentPlan) -> Result<(), ManagerError> {
             "envId is required for environment actions".into(),
         ));
     }
+    if plan.action == "mcp.read" && plan.env_id.as_deref().is_none_or(str::is_empty) {
+        return Err(ManagerError::InvalidAgentPlan(
+            "envId is required for mcp.read".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -1669,13 +1854,104 @@ fn required_env_id(plan: &AiAgentPlan) -> Result<&str, ManagerError> {
 }
 
 fn agent_plan_hash(plan: &AiAgentPlan) -> Result<String, ManagerError> {
-    let value = serde_json::to_string(plan)?;
-    let mut hash = 0xcbf29ce484222325_u64;
-    for byte in value.bytes() {
-        hash ^= u64::from(byte);
-        hash = hash.wrapping_mul(0x100000001b3);
+    let serialized = serde_json::to_vec(plan)?;
+    Ok(format!("{:x}", Sha256::digest(serialized)))
+}
+
+fn replay_agent_execution(
+    previous: store::StoredAgentExecution,
+    plan_hash: &str,
+) -> Result<AiAgentExecution, ManagerError> {
+    if previous.plan_hash != plan_hash {
+        return Err(ManagerError::InvalidAgentPlan(
+            "idempotencyKey was already used for a different plan".into(),
+        ));
     }
-    Ok(format!("{hash:016x}"))
+    if previous.state != "completed" {
+        return Err(ManagerError::AgentExecutionUncertain);
+    }
+    Ok(AiAgentExecution {
+        replayed: true,
+        ..previous.execution
+    })
+}
+
+fn validate_mcp_tool_call(
+    tool: &str,
+    arguments: serde_json::Value,
+) -> Result<serde_json::Value, ManagerError> {
+    let object = arguments.as_object().ok_or_else(|| {
+        ManagerError::InvalidMcpArguments("arguments must be a JSON object".into())
+    })?;
+    let action = object.get("action").and_then(serde_json::Value::as_str);
+    match tool {
+        "browser_state" => {
+            if object.keys().any(|key| key != "action") || !matches!(action, None | Some("get")) {
+                return Err(ManagerError::InvalidMcpArguments(
+                    "browser_state only allows action=get".into(),
+                ));
+            }
+            Ok(json!({ "action": "get" }))
+        }
+        "tabs" => {
+            if object.keys().any(|key| key != "action")
+                || !matches!(action, None | Some("list") | Some("current"))
+            {
+                return Err(ManagerError::InvalidMcpArguments(
+                    "tabs only allows action=list or action=current".into(),
+                ));
+            }
+            Ok(json!({ "action": action.unwrap_or("list") }))
+        }
+        _ => Err(ManagerError::McpToolNotAllowed(tool.into())),
+    }
+}
+
+fn sanitize_mcp_response(mut value: serde_json::Value) -> serde_json::Value {
+    sdk_ffi::redact_value(&mut value);
+    sanitize_mcp_urls(&mut value);
+    value
+}
+
+fn sanitize_mcp_urls(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            for (key, child) in object {
+                if key.to_ascii_lowercase().contains("url")
+                    && let Some(url) = child.as_str()
+                    && let Ok(url) = url::Url::parse(url)
+                {
+                    *child = serde_json::Value::String(url.origin().ascii_serialization());
+                } else {
+                    sanitize_mcp_urls(child);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(sanitize_mcp_urls),
+        serde_json::Value::String(text) => {
+            if let Ok(mut nested) = serde_json::from_str::<serde_json::Value>(text) {
+                sanitize_mcp_urls(&mut nested);
+                if let Ok(serialized) = serde_json::to_string(&nested) {
+                    *text = serialized;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn mcp_error_message(error: &mcp_client::McpClientError) -> &'static str {
+    match error {
+        mcp_client::McpClientError::Endpoint(_) => "embedded MCP endpoint is invalid",
+        mcp_client::McpClientError::Http(_) => "embedded MCP request failed",
+        mcp_client::McpClientError::Status { .. } => "embedded MCP returned an HTTP error",
+        mcp_client::McpClientError::ResponseTooLarge => "embedded MCP response was too large",
+        mcp_client::McpClientError::Json(_) => "embedded MCP returned invalid JSON",
+        mcp_client::McpClientError::MissingSession => "embedded MCP session was not created",
+        mcp_client::McpClientError::ToolUnavailable(_) => "embedded MCP tool is unavailable",
+        mcp_client::McpClientError::Rpc(_) => "embedded MCP returned a JSON-RPC error",
+        mcp_client::McpClientError::ToolFailed => "embedded MCP tool failed",
+    }
 }
 
 fn copy_directory_if_exists(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
@@ -1718,6 +1994,11 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::AgentApprovalRequired => "AGENT_APPROVAL_REQUIRED",
         ManagerError::InvalidAgentPlan(_) => "INVALID_AGENT_PLAN",
         ManagerError::AgentStateMismatch { .. } => "AGENT_STATE_MISMATCH",
+        ManagerError::AgentExecutionUncertain => "AGENT_EXECUTION_UNCERTAIN",
+        ManagerError::Mcp(_) => "MCP_TOOL_ERROR",
+        ManagerError::McpNotConfigured => "MCP_NOT_CONFIGURED",
+        ManagerError::McpToolNotAllowed(_) => "MCP_TOOL_NOT_ALLOWED",
+        ManagerError::InvalidMcpArguments(_) => "INVALID_MCP_ARGUMENTS",
     }
 }
 
@@ -1779,5 +2060,81 @@ mod tests {
             validate_agent_plan(&plan),
             Err(ManagerError::InvalidAgentPlan(_))
         ));
+    }
+
+    #[test]
+    fn mcp_policy_rejects_mutating_tab_actions() {
+        assert!(matches!(
+            validate_mcp_tool_call("tabs", json!({ "action": "new" })),
+            Err(ManagerError::InvalidMcpArguments(_))
+        ));
+        assert!(matches!(
+            validate_mcp_tool_call("snapshot", json!({ "page": 1 })),
+            Err(ManagerError::McpToolNotAllowed(_))
+        ));
+    }
+
+    #[test]
+    fn mcp_response_reduces_urls_to_origins() {
+        let value = sanitize_mcp_response(json!({
+            "content": [{
+                "type": "text",
+                "text": "{\"pages\":[{\"url\":\"https://example.com/path?token=secret\"}]}"
+            }]
+        }));
+        let text = value
+            .pointer("/content/0/text")
+            .and_then(serde_json::Value::as_str)
+            .expect("text");
+        assert!(text.contains("https://example.com"));
+        assert!(!text.contains("token"));
+        assert!(!text.contains("secret"));
+    }
+
+    #[tokio::test]
+    async fn mcp_call_requires_an_active_initialized_port() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = ManagerStore::open(
+            directory.path().join("manager.sqlite3"),
+            &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
+                work_dir: "work".into(),
+                extension_dir: "extensions".into(),
+                log_dir: "logs".into(),
+                sdk_api_url: None,
+                debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: Some(9222),
+            },
+        )
+        .expect("store");
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("environment");
+        store
+            .set_environment_runtime(RuntimeUpdate {
+                env_id: "env-1",
+                generation: 0,
+                status: "ready",
+                request_id: None,
+                operation_id: None,
+                cdp: "127.0.0.1:9223",
+                last_event: "ready",
+            })
+            .expect("runtime");
+        let manager = Manager::with_store(store).expect("manager");
+        let error = manager
+            .call_embedded_mcp(McpToolCallRequest {
+                env_id: "env-1".into(),
+                tool: "tabs".into(),
+                arguments: json!({ "action": "list" }),
+            })
+            .await
+            .expect_err("inactive port must fail");
+        assert!(matches!(error, ManagerError::McpNotConfigured));
     }
 }

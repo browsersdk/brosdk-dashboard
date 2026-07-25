@@ -70,6 +70,8 @@ BROSDK_API_KEY -> sdk_get_user_sig -> userSig -> sdk_init -> sdk_info
 
 补充：当前 DLL 已自带 MCP 功能，和内嵌 HTTP/WS 服务同属 `sdk_init` 的 `port` 启用路径。新客户端首版把它标记为 `embedded_mcp` capability；需要 smoke 或后续自动化验证时，由 `sdk-host` 在隔离进程中传入端口。Manager 仍然是 Dashboard 与自动化工具的策略边界，负责 envId 路由、operation 追踪和敏感信息脱敏。
 
+阶段 9 已验证 DLL 的真实 MCP 协议路径：全局管理端点为 `/sdk/v1/mcp`，单环境自动化端点为 `/sdk/v1/mcp/env/{envId}`。Dashboard/Agent 不直接持有 MCP session；Manager adapter 负责严格 lifecycle、只读工具白名单、ready 状态校验、operation 追踪、URL 降级和响应脱敏。
+
 ## 4. 进程锁风险
 
 根据 v2 文档，SDK 的同款产品多实例限制发生在 `sdk_init` 成功拿到后端 `appId` 之后：

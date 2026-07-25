@@ -21,6 +21,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut evaluate_verified = false;
     let mut manual_close_verified = false;
     let mut embedded_mcp_reachable = false;
+    let mut embedded_mcp_tool_verified = false;
     let mut environment_count = 0;
     let requested_env_id = non_empty_env("BROSDK_E2E_ENV_ID");
     let mut target_env_id = requested_env_id.clone();
@@ -137,6 +138,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         evaluate_verified = true;
 
+        if embedded_port().is_some() {
+            let mcp = manager
+                .call_embedded_mcp(domain::McpToolCallRequest {
+                    env_id: env_id.into(),
+                    tool: "tabs".into(),
+                    arguments: json!({ "action": "list" }),
+                })
+                .await?;
+            ensure_operation_succeeded(&mcp.operation)?;
+            embedded_mcp_tool_verified = true;
+        }
+
         if env_flag("BROSDK_E2E_SIMULATE_MANUAL_CLOSE") {
             let close = manager
                 .browser_command(env_id, "Browser.close", json!({}), None)
@@ -172,6 +185,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "embeddedMcpAvailable": capabilities.embedded_mcp,
             "embeddedMcpConfigured": non_empty_env("BROSDK_EMBEDDED_PORT").is_some(),
             "embeddedMcpReachable": embedded_mcp_reachable,
+            "embeddedMcpToolVerified": embedded_mcp_tool_verified,
             "targetSelection": if requested_env_id.is_some() { "explicit" } else { "only-environment" },
         }))
     }
@@ -203,6 +217,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "runtimeEvaluateVerified": evaluate_verified,
                     "manualCloseVerified": manual_close_verified,
                     "embeddedMcpReachable": embedded_mcp_reachable,
+                    "embeddedMcpToolVerified": embedded_mcp_tool_verified,
                     "error": error.to_string(),
                 }))?
             );

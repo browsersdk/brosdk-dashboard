@@ -77,6 +77,9 @@ export interface DashboardSnapshot {
   mcp: {
     mode: string;
     embeddedAvailable: boolean;
+    configured: boolean;
+    active: boolean;
+    allowedTools: string[];
     managerRoute: string;
     endpointHint: string;
     notes: string[];
@@ -146,6 +149,13 @@ export interface AiAgentExecution {
   response: unknown | null;
   statusSemantics: string;
   replayed: boolean;
+}
+
+export interface McpToolCallExecution {
+  operation: DashboardSnapshot["operations"][number];
+  tool: string;
+  protocolVersion: string;
+  response: unknown;
 }
 
 export interface ManagerSettings {
