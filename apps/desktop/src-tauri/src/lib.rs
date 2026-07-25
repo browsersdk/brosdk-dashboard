@@ -66,6 +66,28 @@ async fn manager_reconcile_runtimes(
 }
 
 #[tauri::command]
+async fn manager_start_environment(
+    manager: tauri::State<'_, manager::Manager>,
+    env_id: String,
+) -> Result<domain::OperationRecord, String> {
+    manager
+        .start_environment(&env_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn manager_stop_environment(
+    manager: tauri::State<'_, manager::Manager>,
+    env_id: String,
+) -> Result<domain::OperationRecord, String> {
+    manager
+        .stop_environment(&env_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn manager_events_since(
     manager: tauri::State<'_, manager::Manager>,
     sequence: u64,
@@ -121,6 +143,8 @@ pub fn run() {
             runtime_host_kill,
             manager_sync_environments,
             manager_reconcile_runtimes,
+            manager_start_environment,
+            manager_stop_environment,
             manager_events_since,
             manager_update_settings,
             manager_cancel_operation,

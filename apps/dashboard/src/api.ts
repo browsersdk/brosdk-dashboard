@@ -23,6 +23,18 @@ export async function reconcileRuntimes() {
   return invoke("manager_reconcile_runtimes");
 }
 
+export async function startEnvironment(envId: string) {
+  return invoke("manager_start_environment", { envId });
+}
+
+export async function stopEnvironment(envId: string) {
+  return invoke("manager_stop_environment", { envId });
+}
+
+export function isDesktopRuntime() {
+  return isTauri();
+}
+
 export async function eventsSince(sequence: number): Promise<ManagerEvent[]> {
   return invoke<ManagerEvent[]>("manager_events_since", { sequence });
 }

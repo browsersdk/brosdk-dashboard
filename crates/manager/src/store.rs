@@ -349,12 +349,68 @@ impl ManagerStore {
             .ok_or(rusqlite::Error::QueryReturnedNoRows.into())
     }
 
-    pub fn set_operation_request_id(&self, id: &str, request_id: i32) -> Result<(), StoreError> {
-        self.connection()?.execute(
+    pub fn accept_environment_operation(
+        &self,
+        id: &str,
+        request_id: i32,
+        status: &str,
+        cdp: &str,
+        last_event: &str,
+    ) -> Result<OperationRecord, StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let operation =
+            operation_tx(&transaction, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
+        let now = timestamp();
+        transaction.execute(
             "UPDATE operations SET request_id = ?1, updated_at = ?2 WHERE id = ?3",
-            params![request_id, timestamp(), id],
+            params![request_id, now, id],
         )?;
-        Ok(())
+        if matches!(operation.status.as_str(), "queued" | "running")
+            && let Some(env_id) = operation.env_id.as_deref()
+        {
+            transaction.execute(
+                r#"UPDATE environments SET status = ?1, request_id = ?2,
+                          current_operation_id = ?3, cdp = ?4, last_event = ?5,
+                          updated_at = ?6
+                   WHERE env_id = ?7 AND generation = ?8"#,
+                params![
+                    status,
+                    request_id,
+                    id,
+                    cdp,
+                    last_event,
+                    now,
+                    env_id,
+                    operation.generation,
+                ],
+            )?;
+            transaction.execute(
+                r#"INSERT INTO runtime_snapshots(
+                    env_id, generation, request_id, state, cdp, last_event, observed_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                ON CONFLICT(env_id) DO UPDATE SET
+                    generation = excluded.generation,
+                    request_id = excluded.request_id,
+                    state = excluded.state,
+                    cdp = excluded.cdp,
+                    last_event = excluded.last_event,
+                    observed_at = excluded.observed_at"#,
+                params![
+                    env_id,
+                    operation.generation,
+                    request_id,
+                    status,
+                    cdp,
+                    last_event,
+                    now,
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        drop(connection);
+        self.operation(id)?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows.into())
     }
 
     pub fn next_generation(&self, env_id: &str) -> Result<u64, StoreError> {
@@ -906,5 +962,51 @@ mod tests {
             store.list_environments().expect("environments")[0].status,
             "stopped"
         );
+    }
+
+    #[test]
+    fn accepted_response_does_not_rollback_early_success_event() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("upsert environment");
+        let generation = store.next_generation("env-1").expect("generation");
+        let operation = store
+            .create_operation("environment.start", Some("env-1"), "启动环境", generation)
+            .expect("operation");
+        store
+            .transition_operation(&operation.id, "running", "calling SDK", None)
+            .expect("running");
+        store
+            .apply_host_event(&HostEvent {
+                sequence: 1,
+                event_type: "sdk.result".into(),
+                code: 0,
+                event_name: "browser-open-success".into(),
+                request_id: Some(42),
+                operation_id: Some(operation.id.clone()),
+                env_id: Some("env-1".into()),
+                payload: json!({}),
+                received_at: Utc::now(),
+            })
+            .expect("early success");
+        let operation = store
+            .accept_environment_operation(
+                &operation.id,
+                42,
+                "starting",
+                "-",
+                "SDK accepted request 42",
+            )
+            .expect("accepted response");
+        let environment = store.list_environments().expect("environments").remove(0);
+        assert_eq!(operation.status, "succeeded");
+        assert_eq!(operation.request_id, Some(42));
+        assert_eq!(environment.status, "ready");
     }
 }

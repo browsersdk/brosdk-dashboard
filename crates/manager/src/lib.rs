@@ -23,6 +23,8 @@ pub enum ManagerError {
     Store(#[from] store::StoreError),
     #[error("runtime host is not running")]
     RuntimeNotRunning,
+    #[error("invalid runtime host response: {0}")]
+    InvalidHostResponse(String),
 }
 
 #[derive(Clone)]
@@ -322,25 +324,22 @@ impl Manager {
         } else {
             "stopping"
         };
-        self.inner.operations.start(operation_id, status)?;
-        self.inner
-            .store
-            .set_operation_request_id(operation_id, request_id)?;
         let last_event = format!("SDK accepted request {request_id}");
-        self.inner.store.set_environment_runtime(RuntimeUpdate {
-            env_id,
-            generation: operation.generation,
+        Ok(self.inner.store.accept_environment_operation(
+            operation_id,
+            request_id,
             status,
-            request_id: Some(request_id),
-            operation_id: Some(operation_id),
-            cdp: &environment.cdp,
-            last_event: &last_event,
-        })?;
-        Ok(self
-            .inner
-            .store
-            .operation(operation_id)?
-            .ok_or(store::StoreError::Sql(rusqlite::Error::QueryReturnedNoRows))?)
+            &environment.cdp,
+            &last_event,
+        )?)
+    }
+
+    pub async fn start_environment(&self, env_id: &str) -> Result<OperationRecord, ManagerError> {
+        self.execute_environment_operation(env_id, true).await
+    }
+
+    pub async fn stop_environment(&self, env_id: &str) -> Result<OperationRecord, ManagerError> {
+        self.execute_environment_operation(env_id, false).await
     }
 
     pub fn cancel_operation(&self, operation_id: &str) -> Result<OperationRecord, ManagerError> {
@@ -400,6 +399,71 @@ impl Manager {
             return Err(ManagerError::RuntimeNotRunning);
         }
         Ok(host)
+    }
+
+    async fn execute_environment_operation(
+        &self,
+        env_id: &str,
+        start: bool,
+    ) -> Result<OperationRecord, ManagerError> {
+        let operation = self.prepare_environment_operation(env_id, start)?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner.operations.start(&operation.id, "calling SDK")?;
+        let preparing_status = if start { "preparing" } else { "stopping" };
+        self.inner.store.set_environment_runtime(RuntimeUpdate {
+            env_id,
+            generation: operation.generation,
+            status: preparing_status,
+            request_id: None,
+            operation_id: Some(&operation.id),
+            cdp: "-",
+            last_event: "calling SDK",
+        })?;
+        let result = async {
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            let command = if start {
+                HostCommand::BrowserOpen {
+                    request: json!({ "envs": [{ "envId": env_id }] }),
+                }
+            } else {
+                HostCommand::BrowserClose {
+                    request: json!({ "envs": [env_id] }),
+                }
+            };
+            let response = host.call(command, Some(operation.id.clone())).await?;
+            let request_id = response
+                .get("requestId")
+                .and_then(serde_json::Value::as_i64)
+                .and_then(|value| i32::try_from(value).ok())
+                .ok_or(ManagerError::InvalidHostResponse(
+                    "accepted browser operation did not include requestId".into(),
+                ))?;
+            self.accept_environment_operation(&operation.id, request_id)
+        }
+        .await;
+
+        match result {
+            Ok(operation) => Ok(operation),
+            Err(error) => {
+                let failed = self.inner.operations.fail(
+                    &operation.id,
+                    manager_error_code(&error),
+                    &error.to_string(),
+                )?;
+                let message = error.to_string();
+                self.inner.store.set_environment_runtime(RuntimeUpdate {
+                    env_id,
+                    generation: operation.generation,
+                    status: "failed",
+                    request_id: None,
+                    operation_id: None,
+                    cdp: "-",
+                    last_event: &message,
+                })?;
+                Ok(failed)
+            }
+        }
     }
 
     async fn ensure_sdk_initialized(&self, host: &RuntimeHost) -> Result<(), ManagerError> {
@@ -483,6 +547,7 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::SdkHost(_) => "SDK_HOST_ERROR",
         ManagerError::Store(_) => "STORE_ERROR",
         ManagerError::RuntimeNotRunning => "RUNTIME_NOT_RUNNING",
+        ManagerError::InvalidHostResponse(_) => "INVALID_HOST_RESPONSE",
     }
 }
 

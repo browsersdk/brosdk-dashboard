@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host 和阶段 3 Manager Domain 已实现：
+截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host、阶段 3 Manager Domain 和阶段 4 Dashboard MVP 已实现：
 
 ```text
 brosdk-dashboard/
@@ -65,7 +65,7 @@ brosdk-dashboard/
 
 ## 当前实施目标
 
-下一步按 [roadmap.md](roadmap.md) 推进阶段 4 Dashboard MVP，把已有 Manager API 接入完整环境生命周期交互：
+下一步按 [roadmap.md](roadmap.md) 推进阶段 5 环境 E2E，在明确的测试 envId 上验证真实生命周期：
 
 1. 启动桌面窗口。
 2. 从环境变量读取 API Key，换取 userSig。

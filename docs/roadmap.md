@@ -8,8 +8,8 @@
 | 1. DLL Smoke | P0 | 实现完成，联网验证受环境变量门禁 | Windows x64 能加载 `brosdk.dll`，完成 getUserSig/init/info/env_page |
 | 2. Runtime Host | P0 | 已完成 | DLL 被隔离在子进程，Manager 通过 pipe/UDS 调用 SDK |
 | 3. Manager Domain | P0 | 已完成 | SQLite、settings、operation、环境镜像和事件流完成 |
-| 4. Dashboard MVP | P0 | 进行中 | 总览、环境列表、启动、停止、运行详情完成 |
-| 5. 环境 E2E | P0 | 待实施 | 使用测试 API Key 完成列表、启动、ready、手动关闭对账、停止 |
+| 4. Dashboard MVP | P0 | 已完成 | 总览、环境列表、启动、停止、运行详情完成 |
+| 5. 环境 E2E | P0 | 进行中 | 使用测试 API Key 完成列表、启动、ready、手动关闭对账、停止 |
 | 6. 完整菜单 | P1 | 待实施 | 指纹、代理、内核、操作、设置菜单逐步补齐 |
 | 7. 打包发布 | P1 | 待实施 | Windows 安装/便携包、图标、签名准备、升级策略 |
 | 8. 跨平台 | P2 | 待实施 | macOS/Linux 动态库和平台 adapter 接入 |
@@ -204,9 +204,9 @@
 
 ## 12. 当前下一步
 
-阶段 0/1/2/3 已完成。当前从阶段 4 开始：
+阶段 0/1/2/3/4 已完成。当前从阶段 5 开始：
 
-1. Dashboard 环境列表接入搜索、状态筛选和真实同步。
-2. 接通启动/停止 operation，并严格区分 accepted、starting 和 ready。
-3. 增加运行详情、CDP、reqId、generation、最后事件与错误信息。
-4. 用桌面和移动视口覆盖核心交互与布局回归。
+1. 增加 `BROSDK_E2E_ENV_ID` 门禁的生命周期 runner。
+2. 拉取列表并确认 envId 属于当前账号，再启动并等待真实 ready。
+3. 执行 `Runtime.evaluate`，对账手动关闭场景，再停止并确认 stopped。
+4. 默认只允许指定环境的启动/停止；其他写操作继续要求 mutation 开关。

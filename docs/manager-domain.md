@@ -41,6 +41,8 @@ queued -> running -> succeeded
 
 因此旧启动请求的晚到 `browser-open-success` 不会把已经停止或进入新一轮启动的环境改回 ready。callback 本身仍写入 `manager_events`，便于诊断。
 
+启动/停止操作在调用 SDK 前进入 `running`，环境进入 `preparing`/`stopping`。SDK 同步返回 reqId 只会把启动环境推进到 `starting`，不会写 `ready`。如果 callback 早于同步返回，accepted reqId 与 operation/environment 更新在单一事务中检查当前 operation 状态；已经由 callback 完成的 `succeeded/ready` 不会被回退。
+
 ## 4. Snapshot 与增量事件
 
 `manager_snapshot` 返回 SDK/runtime、环境镜像、最近 100 条 operation、settings、数据库路径和 `latestEventSequence`。Dashboard 可从该 sequence 调用 `manager_events_since`，每次最多读取 500 条事件。
