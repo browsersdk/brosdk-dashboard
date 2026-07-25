@@ -23,6 +23,13 @@ function demoSnapshot(): DashboardSnapshot {
   return {
     sdk: {
       state: "browser-preview",
+      runtime: {
+        state: "stopped",
+        pid: null,
+        generation: 0,
+        endpoint: null,
+        lastError: null,
+      },
       apiKey: { source: "BROSDK_API_KEY", present: false },
       hostPath: null,
       dllPath: "libs/windows_x64/brosdk.dll",

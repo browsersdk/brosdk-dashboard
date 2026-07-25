@@ -1,17 +1,12 @@
 [package]
-name = "sdk-client"
+name = "runtime-ipc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 domain = { path = "../domain" }
-platform = { path = "../platform" }
-runtime-ipc = { path = "../runtime-ipc" }
-serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-uuid.workspace = true

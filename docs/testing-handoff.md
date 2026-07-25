@@ -59,6 +59,14 @@ load dll
 - 是否有 sdk-host 退出码；
 - 是否有 result/log callback。
 
+Runtime Host 隔离 smoke：
+
+```powershell
+npm run sdk:runtime-smoke
+```
+
+该命令先构建 `sdk-host`，再验证 health/capability、正常 shutdown 和强制 kill。预期正常路径状态为 `stopped`，强制 kill 路径状态为 `degraded`，完成后没有残留 `sdk-host.exe`。可设置 `BROSDK_IPC_TRACE=1` 输出不含 payload 的 IPC 阶段诊断。
+
 ## 4. 生命周期 E2E 预期流程
 
 前置条件：

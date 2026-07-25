@@ -122,11 +122,147 @@ pub struct ApiKeyStatus {
 #[serde(rename_all = "camelCase")]
 pub struct SdkPanel {
     pub state: String,
+    pub runtime: RuntimeHostStatus,
     pub api_key: ApiKeyStatus,
     pub host_path: Option<String>,
     pub dll_path: String,
     pub work_dir: String,
     pub last_smoke: Option<SmokeReport>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum RuntimeHostState {
+    Stopped,
+    Starting,
+    Running,
+    Degraded,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeHostStatus {
+    pub state: RuntimeHostState,
+    pub pid: Option<u32>,
+    pub generation: u64,
+    pub endpoint: Option<String>,
+    pub last_error: Option<String>,
+}
+
+impl Default for RuntimeHostStatus {
+    fn default() -> Self {
+        Self {
+            state: RuntimeHostState::Stopped,
+            pid: None,
+            generation: 0,
+            endpoint: None,
+            last_error: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(
+    tag = "method",
+    content = "params",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum HostCommand {
+    Health,
+    Capabilities,
+    Initialize {
+        work_dir: String,
+        embedded_port: Option<u16>,
+    },
+    Info,
+    EnvPage {
+        request: Value,
+    },
+    BrowserInfo,
+    BrowserOpen {
+        request: Value,
+    },
+    BrowserClose {
+        request: Value,
+    },
+    BrowserCommand {
+        request: Value,
+    },
+    BrowserSnapshot {
+        request: Value,
+    },
+    Shutdown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostRequest {
+    pub id: String,
+    pub operation_id: Option<String>,
+    pub command: HostCommand,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostError {
+    pub code: String,
+    pub message: String,
+    pub sdk_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostResponse {
+    pub id: String,
+    pub operation_id: Option<String>,
+    pub ok: bool,
+    pub result: Option<Value>,
+    pub error: Option<HostError>,
+}
+
+impl HostResponse {
+    pub fn success(request: &HostRequest, result: Value) -> Self {
+        Self {
+            id: request.id.clone(),
+            operation_id: request.operation_id.clone(),
+            ok: true,
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    pub fn failure(request: &HostRequest, error: HostError) -> Self {
+        Self {
+            id: request.id.clone(),
+            operation_id: request.operation_id.clone(),
+            ok: false,
+            result: None,
+            error: Some(error),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostEvent {
+    pub sequence: u64,
+    pub event_type: String,
+    pub code: i32,
+    pub event_name: String,
+    pub request_id: Option<i32>,
+    pub operation_id: Option<String>,
+    pub env_id: Option<String>,
+    pub payload: Value,
+    pub received_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "message", rename_all = "camelCase")]
+pub enum HostWireMessage {
+    Request(HostRequest),
+    Response(HostResponse),
+    Event(HostEvent),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

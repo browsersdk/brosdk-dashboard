@@ -51,6 +51,13 @@ export interface SmokeReport {
 export interface DashboardSnapshot {
   sdk: {
     state: string;
+    runtime: {
+      state: "stopped" | "starting" | "running" | "degraded";
+      pid: number | null;
+      generation: number;
+      endpoint: string | null;
+      lastError: string | null;
+    };
     apiKey: {
       source: string;
       present: boolean;

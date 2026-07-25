@@ -17,6 +17,8 @@ use sdk_ffi::{
 };
 use serde_json::{Value, json};
 
+mod runtime;
+
 static RESULT_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
 static LOG_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
 
@@ -88,7 +90,8 @@ unsafe extern "C" fn log_callback(_kind: i32, _data: *const c_char, _len: usize)
     LOG_CALLBACKS.fetch_add(1, Ordering::Relaxed);
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -108,11 +111,22 @@ fn main() -> Result<()> {
             let report = run_smoke();
             print_json(&report, json_output)
         }
+        "serve" => {
+            let endpoint = option_value(&args, "--endpoint")
+                .ok_or_else(|| anyhow!("serve requires --endpoint"))?;
+            runtime::serve(endpoint).await
+        }
         _ => {
-            eprintln!("Usage: sdk-host <capabilities|smoke> [--json]");
+            eprintln!("Usage: sdk-host <capabilities|smoke|serve> [--json] [--endpoint <path>]");
             Ok(())
         }
     }
+}
+
+fn option_value<'a>(args: &'a [String], option: &str) -> Option<&'a str> {
+    args.windows(2)
+        .find(|pair| pair[0] == option)
+        .map(|pair| pair[1].as_str())
 }
 
 fn print_json<T: serde::Serialize>(value: &T, _json_output: bool) -> Result<()> {

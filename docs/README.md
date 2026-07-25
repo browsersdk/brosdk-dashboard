@@ -25,7 +25,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-25，阶段 0 项目骨架和阶段 1 DLL smoke 已实现：
+截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke 和阶段 2 Runtime Host 已实现：
 
 ```text
 brosdk-dashboard/
@@ -33,6 +33,7 @@ brosdk-dashboard/
   apps/desktop/src-tauri/    Tauri 2 桌面外壳
   crates/domain/             领域与传输模型
   crates/manager/            Manager 入口
+  crates/runtime-ipc/        named pipe/UDS 与长度前缀 JSON 帧
   crates/sdk-ffi/            brosdk.dll C ABI 绑定
   crates/sdk-host/           DLL 隔离进程与 smoke CLI
   crates/sdk-client/         Manager 侧 host client
@@ -41,7 +42,7 @@ brosdk-dashboard/
   libs/windows_x64/          Windows x64 DLL 与头文件
 ```
 
-当前自动验证覆盖 workspace 编译、Rust 单元测试、Dashboard 构建、DLL 符号加载和 capability 报告。联网的 `getUserSig -> init -> info -> env_page` 只在调用进程已设置 `BROSDK_API_KEY` 时运行；未设置时 smoke 会安全跳过联网阶段并执行 `sdk_shutdown`。
+当前自动验证覆盖 workspace 编译、Rust 单元测试、Dashboard 构建、DLL 符号加载、capability 报告、runtime host 优雅停止和强制退出降级。联网的 `getUserSig -> init -> info -> env_page` 只在调用进程已设置 `BROSDK_API_KEY` 时运行；未设置时 smoke 会安全跳过联网阶段并执行 `sdk_shutdown`。
 
 ## 关键产品定位
 
@@ -63,7 +64,7 @@ brosdk-dashboard/
 
 ## 当前实施目标
 
-下一步按 [roadmap.md](roadmap.md) 推进阶段 2 Runtime Host，再逐步完成最小环境生命周期闭环：
+下一步按 [roadmap.md](roadmap.md) 推进阶段 3 Manager Domain，再逐步完成最小环境生命周期闭环：
 
 1. 启动桌面窗口。
 2. 从环境变量读取 API Key，换取 userSig。

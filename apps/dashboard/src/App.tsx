@@ -31,7 +31,10 @@ const navItems = [
 type Page = (typeof navItems)[number]["key"];
 
 const statusLabel: Record<string, string> = {
-  "host-ready": "Host 就绪",
+  "host-running": "Host 运行中",
+  "host-starting": "Host 启动中",
+  "host-degraded": "Host 异常",
+  "host-stopped": "Host 已停止",
   "dll-missing": "DLL 缺失",
   "browser-preview": "浏览器预览",
   stopped: "已停止",
@@ -188,6 +191,8 @@ function SdkPanel({ snapshot }: { snapshot: DashboardSnapshot | null }) {
   const rows = useMemo(() => [
     ["DLL", snapshot?.sdk.dllPath ?? "-"],
     ["Host", snapshot?.sdk.hostPath ?? "-"],
+    ["Runtime", snapshot?.sdk.runtime.state ?? "-"],
+    ["PID / Generation", snapshot?.sdk.runtime.pid ? `${snapshot.sdk.runtime.pid} / ${snapshot.sdk.runtime.generation}` : "-"],
     ["WorkDir", snapshot?.sdk.workDir ?? "-"],
     ["平台", capabilities?.platform ?? "-"],
     ["C ABI", capabilities?.cAbi ? "ready" : "unknown"],

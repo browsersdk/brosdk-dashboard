@@ -6,8 +6,8 @@
 | --- | --- | --- | --- |
 | 0. 项目骨架 | P0 | 已完成 | Tauri/Rust workspace、React Dashboard、基础构建跑通 |
 | 1. DLL Smoke | P0 | 实现完成，联网验证受环境变量门禁 | Windows x64 能加载 `brosdk.dll`，完成 getUserSig/init/info/env_page |
-| 2. Runtime Host | P0 | 进行中 | DLL 被隔离在子进程，Manager 通过 pipe/UDS 调用 SDK |
-| 3. Manager Domain | P0 | 待实施 | SQLite、settings、operation、环境镜像和事件流完成 |
+| 2. Runtime Host | P0 | 已完成 | DLL 被隔离在子进程，Manager 通过 pipe/UDS 调用 SDK |
+| 3. Manager Domain | P0 | 进行中 | SQLite、settings、operation、环境镜像和事件流完成 |
 | 4. Dashboard MVP | P0 | 待实施 | 总览、环境列表、启动、停止、运行详情完成 |
 | 5. 环境 E2E | P0 | 待实施 | 使用测试 API Key 完成列表、启动、ready、手动关闭对账、停止 |
 | 6. 完整菜单 | P1 | 待实施 | 指纹、代理、内核、操作、设置菜单逐步补齐 |
@@ -204,9 +204,9 @@
 
 ## 12. 当前下一步
 
-阶段 0/1 已形成基线。当前从阶段 2 开始：
+阶段 0/1/2 已完成。当前从阶段 3 开始：
 
-1. 把 `sdk-host` 从一次性 CLI 扩展为受监督的 IPC server。
-2. Windows 使用 named pipe，其他平台实现 UDS transport adapter。
-3. 注册并转发 result/log callbacks，加入 request id 与 operation id 关联。
-4. 覆盖 host kill、超时、退出和单实例初始化测试。
+1. 初始化 SQLite WAL schema 和迁移版本。
+2. 实现持久化 operation 队列、settings、环境镜像和 runtime snapshot。
+3. 把 host callback event 归并到有 sequence 的 Manager 事件流。
+4. 覆盖刷新恢复、晚到 callback 和手动关闭对账测试。

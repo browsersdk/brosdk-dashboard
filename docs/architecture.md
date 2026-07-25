@@ -162,6 +162,10 @@ stopped -> preparing -> starting -> ready -> stopping -> stopped
 }
 ```
 
+长度字段是 4 字节大端无符号整数，单帧上限 32 MiB。两侧都由专用 reader task 连续读取完整帧，再把已解析消息送入业务 channel；不能把“读取长度 + 读取 body”的 future 直接放进会被取消的 `select` 分支，否则半帧取消会让后续消息错位。
+
+Manager 侧 `RuntimeHost` actor 同时监督子进程退出、请求响应、超时和事件广播。正常 `Shutdown` 进入 `stopped`；进程被 kill、崩溃、锁冲突退出或 IPC 异常进入 `degraded`。Manager 不做无限自动重启，桌面 UI 始终留在父进程中。
+
 回调事件统一从 host 推送给 Manager：
 
 ```json
@@ -173,6 +177,8 @@ stopped -> preparing -> starting -> ready -> stopping -> stopped
   "receivedAt": "2026-07-25T00:00:00.000Z"
 }
 ```
+
+DLL callback 函数只在回调有效期内复制 `data/len` 到无界队列，不解析 JSON、不访问数据库。`sdk-host` 主任务随后完成 JSON 解析、敏感字段脱敏、递增 sequence、envId 提取，以及异步 SDK reqId 到 operation id 的映射。
 
 ## 10. 安全边界
 

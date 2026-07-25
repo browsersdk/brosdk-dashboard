@@ -36,6 +36,8 @@ libs/windows_x64/brosdk.h
 6. 使用返回的 userSig 调用 `sdk_init`。
 7. 所有 SDK 调用由 `sdk-host` 单线程串行入口接收，内部可按 SDK 语义等待异步回调。
 
+当前 `sdk-host serve --endpoint <pipe-or-socket>` 已实现上述隔离入口。Manager 不传 API Key 到 IPC；host 进程从继承的 `BROSDK_API_KEY` 环境变量读取认证信息。IPC 响应和 callback event 在发送前统一脱敏。
+
 不要让 Dashboard 或 Manager 直接持有 DLL 函数指针。
 
 ## 3. 认证与初始化链路
@@ -130,6 +132,8 @@ Manager 内部统一转换为：
   "receivedAt": "2026-07-25T00:00:00.000Z"
 }
 ```
+
+当前实现使用 host 内部 `request_operations` 映射保存异步调用返回的 reqId。callback 即使早于同步函数返回，也会先进入原始字节队列，等调用返回并建立映射后再归一化，因此不会因早到事件丢失 operation 关联。
 
 如果 SDK 事件没有明确 `envId`，Manager 要用 reqId 与 operation 映射补齐；补不齐时保留为全局事件并进入诊断日志。
 
