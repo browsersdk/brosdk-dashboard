@@ -174,12 +174,27 @@ pub enum HostCommand {
     Initialize {
         work_dir: String,
         embedded_port: Option<u16>,
+        sdk_api_url: Option<String>,
+        debug: bool,
     },
     Info,
     EnvPage {
         request: Value,
     },
+    EnvGetInfo {
+        request: Value,
+    },
     BrowserInfo,
+    NetworkDiagnostics {
+        request: Value,
+    },
+    SystemProxyDiagnostics,
+    BrowserInstall {
+        request: Value,
+    },
+    BrowserCleanup {
+        request: Value,
+    },
     BrowserOpen {
         request: Value,
     },
@@ -190,6 +205,9 @@ pub enum HostCommand {
         request: Value,
     },
     BrowserSnapshot {
+        request: Value,
+    },
+    BrowserEnvCheck {
         request: Value,
     },
     Shutdown,
@@ -283,6 +301,105 @@ pub struct EnvironmentRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct EnvironmentBindingSummary {
+    pub env_id: String,
+    pub fingerprint_profile_id: Option<String>,
+    pub proxy_profile_id: Option<String>,
+    pub remote_fingerprint: Value,
+    pub remote_proxy: Value,
+    pub remote_kernel: Value,
+    pub refreshed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FingerprintProfile {
+    pub id: String,
+    pub name: String,
+    pub source: String,
+    pub profile: Value,
+    pub bound_env_ids: Vec<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FingerprintProfileInput {
+    pub id: Option<String>,
+    pub name: String,
+    pub profile: Value,
+    #[serde(default)]
+    pub bound_env_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyProfile {
+    pub id: String,
+    pub name: String,
+    pub scheme: String,
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password_present: bool,
+    pub bound_env_ids: Vec<String>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyProfileInput {
+    pub id: Option<String>,
+    pub name: String,
+    pub url: String,
+    #[serde(default)]
+    pub bound_env_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyParseResult {
+    pub scheme: String,
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password_present: bool,
+    pub display_url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KernelRecord {
+    pub id: String,
+    pub kernel_type: String,
+    pub name: String,
+    pub major: Option<u32>,
+    pub version: Option<String>,
+    pub latest_version: Option<String>,
+    pub platform: String,
+    pub arch: String,
+    pub status: String,
+    pub install_path: Option<String>,
+    pub download_available: bool,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KernelInstallInput {
+    pub major: u32,
+    pub kernel_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationExecution {
+    pub operation: OperationRecord,
+    pub response: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct OperationRecord {
     pub id: String,
     pub kind: String,
@@ -293,6 +410,7 @@ pub struct OperationRecord {
     pub request_id: Option<i32>,
     pub generation: u64,
     pub error_code: Option<String>,
+    pub request: Option<Value>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -307,11 +425,14 @@ pub struct BrowserCommandExecution {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ManagerSettings {
+    pub data_dir: String,
     pub work_dir: String,
     pub extension_dir: String,
     pub log_dir: String,
     pub sdk_api_url: Option<String>,
     pub debug: bool,
+    pub startup_policy: String,
+    pub embedded_mcp_port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -342,6 +463,10 @@ pub struct DashboardSnapshot {
     pub capabilities: SdkCapabilities,
     pub mcp: McpPanel,
     pub environments: Vec<EnvironmentRecord>,
+    pub environment_bindings: Vec<EnvironmentBindingSummary>,
+    pub fingerprints: Vec<FingerprintProfile>,
+    pub proxies: Vec<ProxyProfile>,
+    pub kernels: Vec<KernelRecord>,
     pub operations: Vec<OperationRecord>,
     pub settings: ManagerSettings,
     pub latest_event_sequence: u64,

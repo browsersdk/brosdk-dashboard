@@ -210,7 +210,13 @@ fn run_smoke() -> SmokeReport {
         return report.finish_after_shutdown(&sdk);
     };
 
-    let init_body = init_request(user_sig, &report.work_dir, report.embedded_mcp_port);
+    let init_body = init_request(
+        user_sig,
+        &report.work_dir,
+        report.embedded_mcp_port,
+        None,
+        true,
+    );
     match timed("sdk_init", || {
         sdk.init(&init_body).map_err(|err| anyhow!(err))
     }) {

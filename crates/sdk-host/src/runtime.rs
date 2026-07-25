@@ -129,16 +129,44 @@ impl HostRuntime {
             HostCommand::Initialize {
                 work_dir,
                 embedded_port,
-            } => self.initialize(Path::new(work_dir), *embedded_port),
+                sdk_api_url,
+                debug,
+            } => self.initialize(
+                Path::new(work_dir),
+                *embedded_port,
+                sdk_api_url.as_deref(),
+                *debug,
+            ),
             HostCommand::Info => {
                 self.with_initialized("sdk_info", |sdk| sdk.info().map(|output| output.value))
             }
             HostCommand::EnvPage { request } => self.with_initialized("sdk_env_page", |sdk| {
                 sdk.env_page(request).map(|output| output.value)
             }),
+            HostCommand::EnvGetInfo { request } => self
+                .with_initialized("sdk_env_getinfo", |sdk| {
+                    sdk.env_get_info(request).map(|output| output.value)
+                }),
             HostCommand::BrowserInfo => self.with_initialized("sdk_browser_info", |sdk| {
                 sdk.browser_info().map(|output| output.value)
             }),
+            HostCommand::NetworkDiagnostics { request } => self
+                .with_initialized("sdk_network_diagnostics", |sdk| {
+                    sdk.network_diagnostics(request).map(|output| output.value)
+                }),
+            HostCommand::SystemProxyDiagnostics => self
+                .with_initialized("sdk_system_proxy_diagnostics", |sdk| {
+                    sdk.system_proxy_diagnostics().map(|output| output.value)
+                }),
+            HostCommand::BrowserInstall { request: body } => {
+                self.call_async_operation(request, "sdk_browser_install", |sdk| {
+                    sdk.browser_install(body)
+                })
+            }
+            HostCommand::BrowserCleanup { request } => self
+                .with_initialized("sdk_browser_cleanup", |sdk| {
+                    sdk.browser_cleanup(request).map(|output| output.value)
+                }),
             HostCommand::BrowserOpen { request: body } => self.call_lifecycle(
                 request,
                 body,
@@ -161,6 +189,10 @@ impl HostRuntime {
                 .with_initialized("sdk_browser_snapshot", |sdk| {
                     sdk.browser_snapshot(request).map(|output| output.value)
                 }),
+            HostCommand::BrowserEnvCheck { request } => self
+                .with_initialized("sdk_browser_env_check", |sdk| {
+                    sdk.browser_env_check(request).map(|output| output.value)
+                }),
             HostCommand::Shutdown => self.shutdown(),
         };
 
@@ -173,7 +205,13 @@ impl HostRuntime {
         }
     }
 
-    fn initialize(&mut self, work_dir: &Path, embedded_port: Option<u16>) -> HostResult<Value> {
+    fn initialize(
+        &mut self,
+        work_dir: &Path,
+        embedded_port: Option<u16>,
+        sdk_api_url: Option<&str>,
+        debug: bool,
+    ) -> HostResult<Value> {
         if self.initialized {
             return Err(host_error(
                 "HOST_ALREADY_INITIALIZED",
@@ -208,8 +246,14 @@ impl HostRuntime {
                     )
                 })?
                 .to_string();
-            sdk.init(&init_request(&user_sig, work_dir, embedded_port))
-                .map_err(sdk_error)?;
+            sdk.init(&init_request(
+                &user_sig,
+                work_dir,
+                embedded_port,
+                sdk_api_url,
+                debug,
+            ))
+            .map_err(sdk_error)?;
         }
         self.initialized = true;
 
@@ -257,6 +301,31 @@ impl HostRuntime {
                 self.pending_lifecycle
                     .insert((direction, env_id), operation_id.clone());
             }
+        }
+        Ok(json!({ "acceptedCode": accepted_code, "state": "accepted" }))
+    }
+
+    fn call_async_operation<F>(
+        &mut self,
+        request: &HostRequest,
+        _name: &'static str,
+        call: F,
+    ) -> HostResult<Value>
+    where
+        F: FnOnce(&BroSdk) -> Result<i32, SdkFfiError>,
+    {
+        if !self.initialized {
+            return Err(host_error(
+                "HOST_NOT_INITIALIZED",
+                "SDK must be initialized before this call",
+            ));
+        }
+        let accepted_code = call(self.sdk()?).map_err(sdk_error)?;
+        if accepted_code > 0
+            && let Some(operation_id) = request.operation_id.as_ref()
+        {
+            self.request_operations
+                .insert(accepted_code, operation_id.clone());
         }
         Ok(json!({ "acceptedCode": accepted_code, "state": "accepted" }))
     }
@@ -575,7 +644,7 @@ mod tests {
             pending_lifecycle: HashMap::new(),
         };
         let error = runtime
-            .initialize(Path::new("unused"), None)
+            .initialize(Path::new("unused"), None, None, false)
             .expect_err("second init must fail");
         assert_eq!(error.code, "HOST_ALREADY_INITIALIZED");
     }

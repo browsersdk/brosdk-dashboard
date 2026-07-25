@@ -10,7 +10,7 @@
 | 3. Manager Domain | P0 | 已完成 | SQLite、settings、operation、环境镜像和事件流完成 |
 | 4. Dashboard MVP | P0 | 已完成 | 总览、环境列表、启动、停止、运行详情完成 |
 | 5. 环境 E2E | P0 | 已完成 | 使用测试 API Key 完成列表、启动、ready、CDP command、手动关闭对账入口、停止 |
-| 6. 完整菜单 | P1 | 待实施 | 指纹、代理、内核、操作、设置菜单逐步补齐 |
+| 6. 完整菜单 | P1 | 已完成 | 指纹、代理、内核、操作、设置菜单与 Manager API 已补齐 |
 | 7. 打包发布 | P1 | 待实施 | Windows 安装/便携包、图标、签名准备、升级策略 |
 | 8. 跨平台 | P2 | 待实施 | macOS/Linux 动态库和平台 adapter 接入 |
 | 9. AI Agent | P2 | 待实施 | Chat 只读、Agent 受控操作、MCP 自动化工具 |
@@ -159,6 +159,15 @@
 - 内核列表不知道最新版本时显示“未知”，不能误报可更新。
 - 代理和扩展路径使用系统选择器，保留高级手输入口。
 
+实现结果：
+
+- 指纹支持本地 JSON profile 新建、编辑、导入、导出、删除和环境绑定；远端详情通过 `sdk_env_getinfo` 缓存为脱敏摘要，运行环境可打开 DLL 内置指纹检查页。
+- 代理支持 HTTP/HTTPS/SOCKS5/SOCKS5H URL 解析；密码在 Windows 通过 DPAPI 保存为文件密文，SQLite 只保存 `secret_ref`；接通 DLL 网络与系统代理诊断。
+- 内核合并 SDK catalog 和 `<workDir>/**/cores/**/.core.json` 本地扫描结果；接通安装、缓存清理和受运行状态保护的本地卸载。缺失下载 URL 或最新版本时显示“未知”。
+- operation 保存脱敏 request snapshot，页面支持状态/类型/文本筛选、详情、取消和受支持类型重试。
+- 设置支持数据/SDK/扩展/日志目录、启动策略、Debug 与 DLL MCP 端口；使用原生目录选择器，数据目录迁移通过 SQLite 在线备份并在重启后生效；可导出不含密钥、Cookie 和代理密码的诊断包。
+- 自动验证覆盖 Rust 单元测试、workspace clippy、Dashboard production build，以及 1440x900 与 390x844 浏览器截图/交互检查。
+
 ## 9. 阶段 7：Windows 发布
 
 目标：让普通用户可以安装和运行。
@@ -214,9 +223,9 @@
 
 ## 12. 当前下一步
 
-阶段 0/1/2/3/4/5 已完成。当前从阶段 6 开始：
+阶段 0/1/2/3/4/5/6 已完成。当前从阶段 7 开始：
 
-1. 补齐指纹、代理、内核、操作和设置菜单的数据模型与 Manager API。
-2. 优先实现只读列表、详情和诊断，再逐项开放受 operation 保护的写操作。
-3. 为代理 URL 解析、路径校验、操作筛选/重试和核心未知版本状态增加自动化覆盖。
-4. 保持 Dashboard 不直接访问 DLL、SQLite 或 CDP。
+1. 配置 Tauri bundle、Windows 安装器和便携目录。
+2. 将 `sdk-host.exe` 与 `brosdk.dll` 作为发布资源打包，并让运行时从安装目录发现它们。
+3. 增加 WebView2 检查、版本/签名清单、升级与回滚文档。
+4. 在打包产物上验证启动、卸载与用户数据保留策略。

@@ -1,9 +1,15 @@
-use std::sync::Arc;
+use std::{
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use domain::{
-    ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot, HostCommand, ManagerEvent,
-    ManagerSettings, McpPanel, OperationRecord, RuntimeHostState, RuntimeHostStatus, SdkPanel,
-    SmokeReport,
+    ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot, FingerprintProfile,
+    FingerprintProfileInput, HostCommand, KernelInstallInput, ManagerEvent, ManagerSettings,
+    McpPanel, OperationExecution, OperationRecord, ProxyParseResult, ProxyProfile,
+    ProxyProfileInput, RuntimeHostState, RuntimeHostStatus, SdkPanel, SmokeReport,
 };
 use operation::OperationQueue;
 use sdk_client::{RuntimeHost, SdkHostClient};
@@ -14,6 +20,7 @@ use tokio::sync::{Mutex, RwLock};
 
 mod mirror;
 mod operation;
+mod profiles;
 mod store;
 
 #[derive(Debug, Error)]
@@ -32,6 +39,24 @@ pub enum ManagerError {
     EnvironmentNotReady(String),
     #[error("browser command method must not be empty")]
     InvalidBrowserCommand,
+    #[error("{0}")]
+    Profile(#[from] profiles::ProfileError),
+    #[error("{0}")]
+    Platform(#[from] platform::PlatformError),
+    #[error("local file operation failed: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("diagnostic archive failed: {0}")]
+    Zip(#[from] zip::result::ZipError),
+    #[error("JSON serialization failed: {0}")]
+    Json(#[from] serde_json::Error),
+    #[error("operation cannot be retried from its current state")]
+    OperationNotRetryable,
+    #[error("kernel is not known to the local manager")]
+    KernelNotFound,
+    #[error("installed kernels cannot be removed while an environment is running")]
+    KernelBusy,
+    #[error("kernel install path is outside the SDK work directory")]
+    UnsafeKernelPath,
 }
 
 #[derive(Clone)]
@@ -121,6 +146,13 @@ impl Manager {
         }
     }
 
+    pub async fn apply_startup_policy(&self) -> Result<(), ManagerError> {
+        if self.inner.store.settings()?.startup_policy == "reconcile" {
+            let _ = self.reconcile_runtimes().await?;
+        }
+        Ok(())
+    }
+
     pub async fn stop_runtime(&self) -> Result<RuntimeHostStatus, ManagerError> {
         let host = self.inner.runtime.lock().await.take();
         let status = match host {
@@ -173,6 +205,24 @@ impl Manager {
             RuntimeHostState::Stopped => "host-stopped",
         };
         let settings = self.inner.store.settings()?;
+        let environments = self.inner.store.list_environments()?;
+        let fingerprints = self.inner.store.list_fingerprint_profiles()?;
+        let proxies = self.inner.store.list_proxy_profiles()?;
+        let bindings = profiles::environment_bindings(
+            &environments
+                .iter()
+                .map(|environment| environment.env_id.clone())
+                .collect::<Vec<_>>(),
+            &self.inner.store.environment_details()?,
+            &fingerprints
+                .iter()
+                .map(|profile| (profile.id.clone(), profile.bound_env_ids.clone()))
+                .collect::<Vec<_>>(),
+            &proxies
+                .iter()
+                .map(|profile| (profile.id.clone(), profile.bound_env_ids.clone()))
+                .collect::<Vec<_>>(),
+        );
         Ok(DashboardSnapshot {
             sdk: SdkPanel {
                 state: state.into(),
@@ -191,8 +241,9 @@ impl Manager {
                 mode: "manager-routed".into(),
                 embedded_available: capabilities.embedded_mcp,
                 manager_route: "Manager owns the runtime host process, envId routing and operation state; only sdk-host can enable the DLL embedded MCP port.".into(),
-                endpoint_hint: std::env::var("BROSDK_EMBEDDED_PORT")
-                    .ok()
+                endpoint_hint: settings
+                    .embedded_mcp_port
+                    .or_else(embedded_port)
                     .map(|port| format!("configured on 127.0.0.1:{port}; enabled during sdk_init"))
                     .unwrap_or_else(|| "not configured; internal IPC does not require a TCP port".into()),
                 notes: vec![
@@ -201,7 +252,11 @@ impl Manager {
                     "Unexpected host exit becomes degraded state and never exits the desktop UI.".into(),
                 ],
             },
-            environments: self.inner.store.list_environments()?,
+            environments,
+            environment_bindings: bindings,
+            fingerprints,
+            proxies,
+            kernels: self.inner.store.list_kernel_records()?,
             operations: self.inner.store.list_operations(100)?,
             settings,
             latest_event_sequence: self.inner.store.latest_event_sequence()?,
@@ -213,7 +268,7 @@ impl Manager {
         let operation =
             self.inner
                 .operations
-                .enqueue("environment.sync", None, "同步远端环境", 0)?;
+                .enqueue("environment.sync", None, "同步远端环境", 0, None)?;
         let _execution = self.inner.operations.acquire().await;
         self.inner
             .operations
@@ -259,7 +314,7 @@ impl Manager {
         let operation =
             self.inner
                 .operations
-                .enqueue("runtime.reconcile", None, "对账运行环境", 0)?;
+                .enqueue("runtime.reconcile", None, "对账运行环境", 0, None)?;
         let _execution = self.inner.operations.acquire().await;
         self.inner
             .operations
@@ -305,7 +360,7 @@ impl Manager {
         Ok(self
             .inner
             .operations
-            .enqueue(kind, Some(env_id), label, generation)?)
+            .enqueue(kind, Some(env_id), label, generation, None)?)
     }
 
     pub fn accept_environment_operation(
@@ -377,6 +432,7 @@ impl Manager {
             Some(env_id),
             "执行浏览器命令",
             environment.generation,
+            None,
         )?;
         let _execution = self.inner.operations.acquire().await;
         self.inner
@@ -421,6 +477,565 @@ impl Manager {
         }
     }
 
+    pub async fn refresh_environment_details(&self) -> Result<OperationRecord, ManagerError> {
+        let operation = self.inner.operations.enqueue(
+            "environment.details.refresh",
+            None,
+            "刷新环境详情",
+            0,
+            None,
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "reading sdk_env_getinfo")?;
+        let result = async {
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            let environments = self.inner.store.list_environments()?;
+            for environment in &environments {
+                let detail = host
+                    .call(
+                        HostCommand::EnvGetInfo {
+                            request: json!({ "envId": environment.env_id }),
+                        },
+                        Some(operation.id.clone()),
+                    )
+                    .await?;
+                self.inner.store.save_environment_detail(
+                    &environment.env_id,
+                    &profiles::safe_environment_detail(&detail),
+                )?;
+            }
+            Ok::<usize, ManagerError>(environments.len())
+        }
+        .await;
+        match result {
+            Ok(count) => Ok(self.inner.operations.succeed(
+                &operation.id,
+                &format!("refreshed {count} environment details"),
+            )?),
+            Err(error) => Ok(self.inner.operations.fail(
+                &operation.id,
+                manager_error_code(&error),
+                &error.to_string(),
+            )?),
+        }
+    }
+
+    pub fn parse_proxy_url(&self, url: &str) -> Result<ProxyParseResult, ManagerError> {
+        Ok(profiles::parse_proxy_url(url)?.summary)
+    }
+
+    pub fn save_proxy_profile(
+        &self,
+        input: ProxyProfileInput,
+    ) -> Result<ProxyProfile, ManagerError> {
+        let parsed = profiles::parse_proxy_url(&input.url)?;
+        let id = input.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let data_dir = PathBuf::from(self.inner.store.settings()?.data_dir);
+        let current_secret_ref = self.inner.store.proxy_secret_ref(&id)?;
+        let secret_ref = match parsed.password.as_deref() {
+            Some(password) => {
+                if let Some(reference) = current_secret_ref.as_deref() {
+                    let _ = platform::delete_secret(&data_dir, reference);
+                }
+                Some(platform::store_secret(
+                    &data_dir,
+                    &format!("proxy-{id}"),
+                    password.as_bytes(),
+                )?)
+            }
+            None => current_secret_ref,
+        };
+        let profile = self.inner.store.upsert_proxy_profile(
+            &id,
+            input.name.trim(),
+            &parsed.summary.scheme,
+            &parsed.summary.host,
+            parsed.summary.port,
+            parsed.summary.username.as_deref(),
+            secret_ref.as_deref(),
+            &input.bound_env_ids,
+        )?;
+        self.inner.store.append_event(
+            "proxy.updated",
+            None,
+            None,
+            &json!({
+                "profileId": profile.id,
+                "passwordPresent": profile.password_present,
+                "boundEnvIds": profile.bound_env_ids,
+            }),
+        )?;
+        Ok(profile)
+    }
+
+    pub fn delete_proxy_profile(&self, id: &str) -> Result<(), ManagerError> {
+        let data_dir = PathBuf::from(self.inner.store.settings()?.data_dir);
+        if let Some(reference) = self.inner.store.delete_proxy_profile(id)? {
+            platform::delete_secret(&data_dir, &reference)?;
+        }
+        self.inner
+            .store
+            .append_event("proxy.deleted", None, None, &json!({ "profileId": id }))?;
+        Ok(())
+    }
+
+    pub async fn diagnose_proxy(
+        &self,
+        profile_id: Option<&str>,
+        url: &str,
+    ) -> Result<OperationExecution, ManagerError> {
+        let request = json!({ "profileId": profile_id, "url": url });
+        let operation = self.inner.operations.enqueue(
+            "proxy.diagnose",
+            None,
+            "代理网络诊断",
+            0,
+            Some(&request),
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "calling sdk_network_diagnostics")?;
+        let result = async {
+            let proxy = match profile_id {
+                Some(profile_id) => Some(self.proxy_url_for_diagnostics(profile_id)?),
+                None => None,
+            };
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            Ok::<serde_json::Value, ManagerError>(
+                host.call(
+                    HostCommand::NetworkDiagnostics {
+                        request: json!({
+                            "proxy": proxy.unwrap_or_default(),
+                            "bridgeProxy": "",
+                            "url": url,
+                        }),
+                    },
+                    Some(operation.id.clone()),
+                )
+                .await?,
+            )
+        }
+        .await;
+        match result {
+            Ok(response) => Ok(OperationExecution {
+                operation: self
+                    .inner
+                    .operations
+                    .succeed(&operation.id, "proxy diagnostics completed")?,
+                response,
+            }),
+            Err(error) => {
+                self.inner.operations.fail(
+                    &operation.id,
+                    manager_error_code(&error),
+                    &error.to_string(),
+                )?;
+                Err(error)
+            }
+        }
+    }
+
+    pub async fn system_proxy_diagnostics(&self) -> Result<OperationExecution, ManagerError> {
+        let operation = self.inner.operations.enqueue(
+            "proxy.system-diagnose",
+            None,
+            "系统代理诊断",
+            0,
+            None,
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "calling sdk_system_proxy_diagnostics")?;
+        let result = async {
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            Ok::<serde_json::Value, ManagerError>(
+                host.call(
+                    HostCommand::SystemProxyDiagnostics,
+                    Some(operation.id.clone()),
+                )
+                .await?,
+            )
+        }
+        .await;
+        match result {
+            Ok(response) => Ok(OperationExecution {
+                operation: self
+                    .inner
+                    .operations
+                    .succeed(&operation.id, "system proxy diagnostics completed")?,
+                response,
+            }),
+            Err(error) => {
+                self.inner.operations.fail(
+                    &operation.id,
+                    manager_error_code(&error),
+                    &error.to_string(),
+                )?;
+                Err(error)
+            }
+        }
+    }
+
+    pub fn save_fingerprint_profile(
+        &self,
+        input: FingerprintProfileInput,
+    ) -> Result<FingerprintProfile, ManagerError> {
+        let id = input.id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        let profile = self.inner.store.upsert_fingerprint_profile(
+            &id,
+            input.name.trim(),
+            "local",
+            &profiles::object_without_secrets(&input.profile),
+            &input.bound_env_ids,
+        )?;
+        self.inner.store.append_event(
+            "fingerprint.updated",
+            None,
+            None,
+            &json!({ "profileId": profile.id, "boundEnvIds": profile.bound_env_ids }),
+        )?;
+        Ok(profile)
+    }
+
+    pub fn import_fingerprint_profile(
+        &self,
+        path: &str,
+    ) -> Result<FingerprintProfile, ManagerError> {
+        let text = fs::read_to_string(path)?;
+        let (name, profile) = profiles::parse_profile_document(&text)?;
+        self.save_fingerprint_profile(FingerprintProfileInput {
+            id: None,
+            name,
+            profile,
+            bound_env_ids: Vec::new(),
+        })
+    }
+
+    pub fn export_fingerprint_profile(&self, id: &str, path: &str) -> Result<(), ManagerError> {
+        let profile = self
+            .inner
+            .store
+            .list_fingerprint_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == id)
+            .ok_or(ManagerError::EnvironmentNotFound)?;
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(&json!({
+                "format": "brosdk-dashboard.fingerprint.v1",
+                "name": profile.name,
+                "profile": profile.profile,
+            }))?,
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_fingerprint_profile(&self, id: &str) -> Result<(), ManagerError> {
+        self.inner.store.delete_fingerprint_profile(id)?;
+        self.inner.store.append_event(
+            "fingerprint.deleted",
+            None,
+            None,
+            &json!({ "profileId": id }),
+        )?;
+        Ok(())
+    }
+
+    pub async fn open_fingerprint_check(
+        &self,
+        env_id: &str,
+    ) -> Result<OperationExecution, ManagerError> {
+        let environment = self
+            .inner
+            .store
+            .environment(env_id)?
+            .ok_or(ManagerError::EnvironmentNotFound)?;
+        if environment.status != "ready" {
+            return Err(ManagerError::EnvironmentNotReady(environment.status));
+        }
+        self.execute_sync_host_operation(
+            "fingerprint.check",
+            Some(env_id),
+            "打开指纹检查页",
+            json!({ "envId": env_id }),
+            |request| HostCommand::BrowserEnvCheck { request },
+        )
+        .await
+    }
+
+    pub async fn refresh_kernels(&self) -> Result<OperationRecord, ManagerError> {
+        let operation =
+            self.inner
+                .operations
+                .enqueue("kernel.refresh", None, "刷新内核列表", 0, None)?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "reading local cores and SDK catalog")?;
+        let result = async {
+            let settings = self.inner.store.settings()?;
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            let info = host
+                .call(HostCommand::Info, Some(operation.id.clone()))
+                .await?;
+            let records = profiles::scan_kernels(Path::new(&settings.work_dir), Some(&info));
+            self.inner.store.replace_kernel_records(&records)?;
+            Ok::<usize, ManagerError>(records.len())
+        }
+        .await;
+        match result {
+            Ok(count) => Ok(self
+                .inner
+                .operations
+                .succeed(&operation.id, &format!("refreshed {count} kernel records"))?),
+            Err(error) => Ok(self.inner.operations.fail(
+                &operation.id,
+                manager_error_code(&error),
+                &error.to_string(),
+            )?),
+        }
+    }
+
+    pub async fn install_kernel(
+        &self,
+        input: KernelInstallInput,
+    ) -> Result<OperationRecord, ManagerError> {
+        let request = json!({
+            "cores": [{ "major": input.major, "type": input.kernel_type }]
+        });
+        let operation = self.inner.operations.enqueue(
+            "kernel.install",
+            None,
+            "安装或更新内核",
+            0,
+            Some(&request),
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "calling sdk_browser_install")?;
+        let result = async {
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            host.call(
+                HostCommand::BrowserInstall { request },
+                Some(operation.id.clone()),
+            )
+            .await
+            .map_err(ManagerError::from)
+        }
+        .await;
+        match result {
+            Ok(response) => {
+                let request_id = accepted_code(&response);
+                Ok(self.inner.store.update_operation_progress(
+                    &operation.id,
+                    request_id,
+                    "SDK accepted install; awaiting progress callback",
+                )?)
+            }
+            Err(error) => Ok(self.inner.operations.fail(
+                &operation.id,
+                manager_error_code(&error),
+                &error.to_string(),
+            )?),
+        }
+    }
+
+    pub async fn cleanup_kernel_cache(
+        &self,
+        major: Option<u32>,
+    ) -> Result<OperationExecution, ManagerError> {
+        let request = json!({
+            "cores": major.map(|major| vec![json!({ "major": major })]).unwrap_or_default()
+        });
+        self.execute_sync_host_operation(
+            "kernel.cache-cleanup",
+            None,
+            "清理内核缓存",
+            request,
+            |request| HostCommand::BrowserCleanup { request },
+        )
+        .await
+    }
+
+    pub fn uninstall_kernel(&self, id: &str) -> Result<OperationRecord, ManagerError> {
+        if self
+            .inner
+            .store
+            .list_environments()?
+            .iter()
+            .any(|environment| {
+                matches!(
+                    environment.status.as_str(),
+                    "preparing" | "starting" | "ready" | "stopping"
+                )
+            })
+        {
+            return Err(ManagerError::KernelBusy);
+        }
+        let kernel = self
+            .inner
+            .store
+            .list_kernel_records()?
+            .into_iter()
+            .find(|kernel| kernel.id == id)
+            .ok_or(ManagerError::KernelNotFound)?;
+        let operation = self.inner.operations.enqueue(
+            "kernel.uninstall",
+            None,
+            "卸载本地内核",
+            0,
+            Some(&json!({ "kernelId": id })),
+        )?;
+        self.inner
+            .operations
+            .start(&operation.id, "removing local core")?;
+        let result = (|| {
+            let install_path = kernel
+                .install_path
+                .as_deref()
+                .ok_or(ManagerError::KernelNotFound)?;
+            let settings = self.inner.store.settings()?;
+            let path = fs::canonicalize(install_path)?;
+            let work_dir = fs::canonicalize(settings.work_dir)?;
+            if !path.starts_with(&work_dir) {
+                return Err(ManagerError::UnsafeKernelPath);
+            }
+            fs::remove_dir_all(path)?;
+            self.inner.store.delete_kernel_record(id)?;
+            Ok::<(), ManagerError>(())
+        })();
+        match result {
+            Ok(()) => Ok(self
+                .inner
+                .operations
+                .succeed(&operation.id, "local core removed")?),
+            Err(error) => Ok(self.inner.operations.fail(
+                &operation.id,
+                manager_error_code(&error),
+                &error.to_string(),
+            )?),
+        }
+    }
+
+    pub async fn retry_operation(
+        &self,
+        operation_id: &str,
+    ) -> Result<OperationRecord, ManagerError> {
+        let operation = self
+            .inner
+            .store
+            .operation(operation_id)?
+            .ok_or(ManagerError::OperationNotRetryable)?;
+        if !matches!(operation.status.as_str(), "failed" | "cancelled") {
+            return Err(ManagerError::OperationNotRetryable);
+        }
+        match operation.kind.as_str() {
+            "environment.sync" => self.sync_environments().await,
+            "runtime.reconcile" => self.reconcile_runtimes().await,
+            "environment.start" => {
+                self.start_environment(
+                    operation
+                        .env_id
+                        .as_deref()
+                        .ok_or(ManagerError::OperationNotRetryable)?,
+                )
+                .await
+            }
+            "environment.stop" => {
+                self.stop_environment(
+                    operation
+                        .env_id
+                        .as_deref()
+                        .ok_or(ManagerError::OperationNotRetryable)?,
+                )
+                .await
+            }
+            "kernel.install" => {
+                let request = operation
+                    .request
+                    .ok_or(ManagerError::OperationNotRetryable)?;
+                let core = request
+                    .pointer("/cores/0")
+                    .ok_or(ManagerError::OperationNotRetryable)?;
+                self.install_kernel(KernelInstallInput {
+                    major: core
+                        .get("major")
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|value| value.try_into().ok())
+                        .ok_or(ManagerError::OperationNotRetryable)?,
+                    kernel_type: core
+                        .get("type")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                })
+                .await
+            }
+            _ => Err(ManagerError::OperationNotRetryable),
+        }
+    }
+
+    pub fn create_diagnostic_bundle(
+        &self,
+        output_path: &str,
+    ) -> Result<OperationRecord, ManagerError> {
+        let operation =
+            self.inner
+                .operations
+                .enqueue("diagnostics.bundle", None, "生成诊断包", 0, None)?;
+        self.inner
+            .operations
+            .start(&operation.id, "collecting diagnostics")?;
+        let result = (|| {
+            let file = fs::File::create(output_path)?;
+            let mut archive = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            let settings = self.inner.store.settings()?;
+            let summary = json!({
+                "generatedAt": chrono::Utc::now(),
+                "databasePath": self.inner.store.path().display().to_string(),
+                "settings": {
+                    "dataDir": settings.data_dir,
+                    "workDir": settings.work_dir,
+                    "extensionDir": settings.extension_dir,
+                    "logDir": settings.log_dir,
+                    "sdkApiUrlConfigured": settings.sdk_api_url.is_some(),
+                    "debug": settings.debug,
+                    "startupPolicy": settings.startup_policy,
+                    "embeddedMcpPort": settings.embedded_mcp_port,
+                },
+                "environments": self.inner.store.list_environments()?,
+                "operations": self.inner.store.list_operations(200)?,
+                "kernels": self.inner.store.list_kernel_records()?,
+            });
+            archive.start_file("summary.json", options)?;
+            archive.write_all(&serde_json::to_vec_pretty(&summary)?)?;
+            archive.finish()?;
+            Ok::<(), ManagerError>(())
+        })();
+        match result {
+            Ok(()) => Ok(self
+                .inner
+                .operations
+                .succeed(&operation.id, "diagnostic bundle created")?),
+            Err(error) => Ok(self.inner.operations.fail(
+                &operation.id,
+                manager_error_code(&error),
+                &error.to_string(),
+            )?),
+        }
+    }
+
     pub fn cancel_operation(&self, operation_id: &str) -> Result<OperationRecord, ManagerError> {
         Ok(self
             .inner
@@ -433,6 +1048,40 @@ impl Manager {
     }
 
     pub fn update_settings(&self, settings: ManagerSettings) -> Result<(), ManagerError> {
+        for path in [
+            &settings.data_dir,
+            &settings.work_dir,
+            &settings.extension_dir,
+            &settings.log_dir,
+        ] {
+            if path.trim().is_empty() {
+                return Err(ManagerError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "configured directories must not be empty",
+                )));
+            }
+            fs::create_dir_all(path)?;
+        }
+        if !matches!(
+            settings.startup_policy.as_str(),
+            "restore-none" | "reconcile"
+        ) {
+            return Err(ManagerError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "unsupported startup policy",
+            )));
+        }
+        let current = self.inner.store.settings()?;
+        let data_dir_changed = current.data_dir != settings.data_dir;
+        if data_dir_changed {
+            let destination = Path::new(&settings.data_dir).join("manager.sqlite3");
+            self.inner.store.backup_to(&destination)?;
+            copy_directory_if_exists(
+                &platform::secrets_dir(Path::new(&current.data_dir)),
+                &platform::secrets_dir(Path::new(&settings.data_dir)),
+            )?;
+            platform::set_configured_data_dir(Path::new(&settings.data_dir))?;
+        }
         self.inner.store.update_settings(&settings)?;
         self.inner.store.append_event(
             "settings.updated",
@@ -440,10 +1089,14 @@ impl Manager {
             None,
             &json!({
                 "workDir": settings.work_dir,
+                "dataDir": settings.data_dir,
                 "extensionDir": settings.extension_dir,
                 "logDir": settings.log_dir,
                 "sdkApiUrlConfigured": settings.sdk_api_url.is_some(),
                 "debug": settings.debug,
+                "startupPolicy": settings.startup_policy,
+                "embeddedMcpPort": settings.embedded_mcp_port,
+                "restartRequired": data_dir_changed,
             }),
         )?;
         Ok(())
@@ -478,6 +1131,78 @@ impl Manager {
             return Err(ManagerError::RuntimeNotRunning);
         }
         Ok(host)
+    }
+
+    fn proxy_url_for_diagnostics(&self, profile_id: &str) -> Result<String, ManagerError> {
+        let profile = self
+            .inner
+            .store
+            .list_proxy_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == profile_id)
+            .ok_or(ManagerError::EnvironmentNotFound)?;
+        let settings = self.inner.store.settings()?;
+        let password = self
+            .inner
+            .store
+            .proxy_secret_ref(profile_id)?
+            .map(|reference| {
+                platform::read_secret(Path::new(&settings.data_dir), &reference)
+                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+            })
+            .transpose()?;
+        Ok(profiles::proxy_url(
+            &profile.scheme,
+            &profile.host,
+            profile.port,
+            profile.username.as_deref(),
+            password.as_deref(),
+        ))
+    }
+
+    async fn execute_sync_host_operation<F>(
+        &self,
+        kind: &str,
+        env_id: Option<&str>,
+        label: &str,
+        request: serde_json::Value,
+        command: F,
+    ) -> Result<OperationExecution, ManagerError>
+    where
+        F: FnOnce(serde_json::Value) -> HostCommand,
+    {
+        let operation = self
+            .inner
+            .operations
+            .enqueue(kind, env_id, label, 0, Some(&request))?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner.operations.start(&operation.id, "calling SDK")?;
+        let result = async {
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            Ok::<serde_json::Value, ManagerError>(
+                host.call(command(request), Some(operation.id.clone()))
+                    .await?,
+            )
+        }
+        .await;
+        match result {
+            Ok(response) => Ok(OperationExecution {
+                operation: self
+                    .inner
+                    .operations
+                    .succeed(&operation.id, "SDK call completed")?,
+                response,
+            }),
+            Err(error) => {
+                self.inner.operations.fail(
+                    &operation.id,
+                    manager_error_code(&error),
+                    &error.to_string(),
+                )?;
+                Err(error)
+            }
+        }
     }
 
     async fn execute_environment_operation(
@@ -551,13 +1276,20 @@ impl Manager {
             return Ok(());
         }
         let settings = self.inner.store.settings()?;
-        host.initialize(settings.work_dir, embedded_port()).await?;
+        let port = settings.embedded_mcp_port.or_else(embedded_port);
+        host.initialize(
+            settings.work_dir,
+            port,
+            settings.sdk_api_url,
+            settings.debug,
+        )
+        .await?;
         *self.inner.sdk_initialized.write().await = true;
         self.inner.store.append_event(
             "sdk.initialized",
             None,
             None,
-            &json!({ "embeddedPort": embedded_port() }),
+            &json!({ "embeddedPort": port }),
         )?;
         Ok(())
     }
@@ -618,6 +1350,31 @@ fn embedded_port() -> Option<u16> {
         .and_then(|value| value.parse::<u16>().ok())
 }
 
+fn accepted_code(value: &serde_json::Value) -> Option<i32> {
+    value
+        .get("acceptedCode")
+        .and_then(serde_json::Value::as_i64)
+        .and_then(|value| i32::try_from(value).ok())
+}
+
+fn copy_directory_if_exists(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+    if !source.exists() {
+        return Ok(());
+    }
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_directory_if_exists(&source_path, &destination_path)?;
+        } else {
+            fs::copy(source_path, destination_path)?;
+        }
+    }
+    Ok(())
+}
+
 fn manager_error_code(error: &ManagerError) -> &'static str {
     match error {
         ManagerError::SdkHost(_) => "SDK_HOST_ERROR",
@@ -627,6 +1384,15 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::EnvironmentNotFound => "ENVIRONMENT_NOT_FOUND",
         ManagerError::EnvironmentNotReady(_) => "ENVIRONMENT_NOT_READY",
         ManagerError::InvalidBrowserCommand => "INVALID_BROWSER_COMMAND",
+        ManagerError::Profile(_) => "PROFILE_ERROR",
+        ManagerError::Platform(_) => "PLATFORM_ERROR",
+        ManagerError::Io(_) => "IO_ERROR",
+        ManagerError::Zip(_) => "ZIP_ERROR",
+        ManagerError::Json(_) => "JSON_ERROR",
+        ManagerError::OperationNotRetryable => "OPERATION_NOT_RETRYABLE",
+        ManagerError::KernelNotFound => "KERNEL_NOT_FOUND",
+        ManagerError::KernelBusy => "KERNEL_BUSY",
+        ManagerError::UnsafeKernelPath => "UNSAFE_KERNEL_PATH",
     }
 }
 
@@ -640,11 +1406,14 @@ mod tests {
         let store = ManagerStore::open(
             directory.path().join("manager.sqlite3"),
             &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
                 work_dir: "work".into(),
                 extension_dir: "extensions".into(),
                 log_dir: "logs".into(),
                 sdk_api_url: None,
                 debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: None,
             },
         )
         .expect("store");

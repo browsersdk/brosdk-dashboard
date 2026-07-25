@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use domain::OperationRecord;
+use serde_json::Value;
 use tokio::sync::{Mutex, OwnedMutexGuard};
 
 use crate::store::{ManagerStore, StoreError};
@@ -25,8 +26,10 @@ impl OperationQueue {
         env_id: Option<&str>,
         label: &str,
         generation: u64,
+        request: Option<&Value>,
     ) -> Result<OperationRecord, StoreError> {
-        self.store.create_operation(kind, env_id, label, generation)
+        self.store
+            .create_operation(kind, env_id, label, generation, request)
     }
 
     pub async fn acquire(&self) -> OwnedMutexGuard<()> {

@@ -88,6 +88,10 @@ export interface DashboardSnapshot {
     currentOperationId: string | null;
     updatedAt: string;
   }>;
+  environmentBindings: EnvironmentBindingSummary[];
+  fingerprints: FingerprintProfile[];
+  proxies: ProxyProfile[];
+  kernels: KernelRecord[];
   operations: Array<{
     id: string;
     kind: string;
@@ -98,6 +102,7 @@ export interface DashboardSnapshot {
     requestId: number | null;
     generation: number;
     errorCode: string | null;
+    request: unknown | null;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -107,11 +112,88 @@ export interface DashboardSnapshot {
 }
 
 export interface ManagerSettings {
+  dataDir: string;
   workDir: string;
   extensionDir: string;
   logDir: string;
   sdkApiUrl: string | null;
   debug: boolean;
+  startupPolicy: string;
+  embeddedMcpPort: number | null;
+}
+
+export interface EnvironmentBindingSummary {
+  envId: string;
+  fingerprintProfileId: string | null;
+  proxyProfileId: string | null;
+  remoteFingerprint: unknown;
+  remoteProxy: unknown;
+  remoteKernel: unknown;
+  refreshedAt: string | null;
+}
+
+export interface FingerprintProfile {
+  id: string;
+  name: string;
+  source: string;
+  profile: Record<string, unknown>;
+  boundEnvIds: string[];
+  updatedAt: string;
+}
+
+export interface FingerprintProfileInput {
+  id?: string | null;
+  name: string;
+  profile: Record<string, unknown>;
+  boundEnvIds: string[];
+}
+
+export interface ProxyProfile {
+  id: string;
+  name: string;
+  scheme: string;
+  host: string;
+  port: number;
+  username: string | null;
+  passwordPresent: boolean;
+  boundEnvIds: string[];
+  updatedAt: string;
+}
+
+export interface ProxyProfileInput {
+  id?: string | null;
+  name: string;
+  url: string;
+  boundEnvIds: string[];
+}
+
+export interface ProxyParseResult {
+  scheme: string;
+  host: string;
+  port: number;
+  username: string | null;
+  passwordPresent: boolean;
+  displayUrl: string;
+}
+
+export interface KernelRecord {
+  id: string;
+  kernelType: string;
+  name: string;
+  major: number | null;
+  version: string | null;
+  latestVersion: string | null;
+  platform: string;
+  arch: string;
+  status: string;
+  installPath: string | null;
+  downloadAvailable: boolean;
+  updatedAt: string;
+}
+
+export interface OperationExecution {
+  operation: DashboardSnapshot["operations"][number];
+  response: unknown;
 }
 
 export interface ManagerEvent {

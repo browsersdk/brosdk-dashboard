@@ -6,32 +6,69 @@ import {
   CheckCircle2,
   CircleAlert,
   CircleDot,
+  Copy,
   Database,
+  Download,
+  FileJson,
   Fingerprint,
+  FolderOpen,
+  Gauge,
+  Globe2,
+  HardDriveDownload,
+  KeyRound,
   LoaderCircle,
+  Network,
   Play,
   RefreshCw,
+  RotateCcw,
   ServerCog,
   Settings,
   ShieldCheck,
   Square,
+  Trash2,
   Search,
   SlidersHorizontal,
+  Upload,
   X,
   TerminalSquare,
 } from "lucide-react";
 import {
+  cancelOperation,
+  cleanupKernelCache,
+  createDiagnosticBundle,
+  deleteFingerprintProfile,
+  deleteProxyProfile,
+  diagnoseProxy,
   eventsSince,
+  exportFingerprintProfile,
   getSnapshot,
+  importFingerprintProfile,
+  installKernel,
   isDesktopRuntime,
+  openFingerprintCheck,
+  parseProxyUrl,
+  pickDirectory,
+  pickJsonFile,
   reconcileRuntimes,
+  refreshEnvironmentDetails,
+  refreshKernels,
+  retryOperation,
   runSmoke,
+  saveFile,
+  saveFingerprintProfile,
+  saveProxyProfile,
   startEnvironment,
   stopEnvironment,
   syncEnvironments,
+  systemProxyDiagnostics,
+  uninstallKernel,
+  updateSettings,
 } from "./api";
 import type {
   DashboardSnapshot,
+  FingerprintProfile,
+  ManagerSettings,
+  ProxyProfile,
   SmokeReport,
   SmokeStage,
   SmokeStageStatus,
@@ -40,6 +77,9 @@ import type {
 const navItems = [
   { key: "overview", label: "总览", icon: Activity },
   { key: "environments", label: "环境", icon: Boxes },
+  { key: "fingerprints", label: "指纹", icon: Fingerprint },
+  { key: "proxies", label: "代理", icon: Network },
+  { key: "kernels", label: "内核", icon: HardDriveDownload },
   { key: "mcp", label: "MCP", icon: Bot },
   { key: "operations", label: "操作", icon: TerminalSquare },
   { key: "settings", label: "设置", icon: Settings },
@@ -209,9 +249,12 @@ export default function App() {
             onError={(message) => setError(message)}
           />
         )}
+        {page === "fingerprints" && <FingerprintPage snapshot={snapshot} onRefresh={load} onError={setError} />}
+        {page === "proxies" && <ProxyPage snapshot={snapshot} onRefresh={load} onError={setError} />}
+        {page === "kernels" && <KernelPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "mcp" && <McpPage snapshot={snapshot} />}
-        {page === "operations" && <OperationsPage snapshot={snapshot} />}
-        {page === "settings" && <SettingsPage snapshot={snapshot} />}
+        {page === "operations" && <OperationsPage snapshot={snapshot} onRefresh={load} onError={setError} />}
+        {page === "settings" && <SettingsPage snapshot={snapshot} onRefresh={load} onError={setError} />}
       </main>
     </div>
   );
@@ -426,6 +469,266 @@ function EnvironmentDetail({ environment, onClose }: {
   );
 }
 
+function FingerprintPage({ snapshot, onRefresh, onError }: {
+  snapshot: DashboardSnapshot | null;
+  onRefresh: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [profileText, setProfileText] = useState("{}");
+  const [boundEnvId, setBoundEnvId] = useState("");
+  const [busy, setBusy] = useState("");
+  const selected = snapshot?.fingerprints.find((profile) => profile.id === selectedId) ?? null;
+  const binding = snapshot?.environmentBindings.find((item) => item.envId === boundEnvId) ?? null;
+
+  useEffect(() => {
+    if (!selected) return;
+    setName(selected.name);
+    setProfileText(JSON.stringify(selected.profile, null, 2));
+    setBoundEnvId(selected.boundEnvIds[0] ?? "");
+  }, [selected]);
+
+  async function run(action: string, callback: () => Promise<unknown>) {
+    setBusy(action);
+    onError("");
+    try {
+      await callback();
+      await onRefresh();
+    } catch (requestError) {
+      onError(errorMessage(requestError, "指纹操作失败"));
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function importProfile() {
+    const path = await pickJsonFile();
+    if (path) await run("import", () => importFingerprintProfile(path));
+  }
+
+  async function exportProfile(profile: FingerprintProfile) {
+    const path = await saveFile(`${profile.name}.json`, "json");
+    if (path) await run(`export:${profile.id}`, () => exportFingerprintProfile(profile.id, path));
+  }
+
+  async function saveProfile() {
+    let profile: Record<string, unknown>;
+    try {
+      const value: unknown = JSON.parse(profileText);
+      if (!value || Array.isArray(value) || typeof value !== "object") throw new Error();
+      profile = value as Record<string, unknown>;
+    } catch {
+      onError("指纹 JSON 必须是对象");
+      return;
+    }
+    await run("save", () => saveFingerprintProfile({
+      id: selected?.id,
+      name: name.trim() || "未命名指纹",
+      profile,
+      boundEnvIds: boundEnvId ? [boundEnvId] : [],
+    }));
+    setSelectedId(null);
+    setName("");
+    setProfileText("{}");
+    setBoundEnvId("");
+  }
+
+  return (
+    <section className="module-workspace resource-workspace">
+      <div className="module-toolbar">
+        <div className="toolbar-group"><span className="toolbar-title">指纹档案</span></div>
+        <div className="toolbar-group actions">
+          <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("refresh", refreshEnvironmentDetails)}>
+            <RefreshCw className={busy === "refresh" ? "spin" : ""} size={14} />刷新绑定
+          </button>
+          <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void importProfile()}>
+            <Upload size={14} />导入
+          </button>
+          <button className="button primary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => { setSelectedId(null); setName(""); setProfileText("{}"); setBoundEnvId(""); }}>
+            <FileJson size={14} />新建
+          </button>
+        </div>
+      </div>
+      <div className="resource-body">
+        <div className="table-wrap">
+          <table className="module-table">
+            <thead><tr><th>档案</th><th>来源</th><th>绑定环境</th><th>更新时间</th><th aria-label="操作" /></tr></thead>
+            <tbody>
+              {(snapshot?.fingerprints ?? []).map((profile) => (
+                <tr key={profile.id} className={selectedId === profile.id ? "selected" : ""} onClick={() => setSelectedId(profile.id)}>
+                  <td><div className="resource-name"><span className="resource-icon"><Fingerprint size={16} /></span><div><strong>{profile.name}</strong><small>{profile.id}</small></div></div></td>
+                  <td>{profile.source}</td>
+                  <td>{profile.boundEnvIds.length ? profile.boundEnvIds.join(", ") : "未绑定"}</td>
+                  <td>{formatTime(profile.updatedAt)}</td>
+                  <td className="row-actions inline-actions">
+                    <button className="icon-button" type="button" title="导出" aria-label={`导出 ${profile.name}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void exportProfile(profile); }}><Download size={15} /></button>
+                    <button className="icon-button danger" type="button" title="删除" aria-label={`删除 ${profile.name}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void run(`delete:${profile.id}`, () => deleteFingerprintProfile(profile.id)); }}><Trash2 size={15} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {(snapshot?.fingerprints.length ?? 0) === 0 && <div className="environment-empty"><Fingerprint size={18} /><span>暂无指纹档案</span></div>}
+        </div>
+        <aside className="resource-editor">
+          <div className="panel-heading"><SlidersHorizontal size={17} /><h2>{selected ? "编辑指纹" : "新建指纹"}</h2></div>
+          <label className="field"><span>名称</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label className="field"><span>绑定环境</span><select value={boundEnvId} onChange={(event) => setBoundEnvId(event.target.value)}><option value="">不绑定</option>{snapshot?.environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.localLabel || environment.name}</option>)}</select></label>
+          <label className="field"><span>Profile JSON</span><textarea rows={12} spellCheck={false} value={profileText} onChange={(event) => setProfileText(event.target.value)} /></label>
+          <div className="form-actions"><button className="button primary" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void saveProfile()}><CheckCircle2 size={15} />保存</button></div>
+          {binding && <JsonPreview label="远端指纹摘要" value={binding.remoteFingerprint} />}
+          {boundEnvId && snapshot?.environments.find((environment) => environment.envId === boundEnvId)?.status === "ready" && (
+            <button className="button secondary full-width" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("check", () => openFingerprintCheck(boundEnvId))}><Globe2 size={15} />打开检查页</button>
+          )}
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function ProxyPage({ snapshot, onRefresh, onError }: {
+  snapshot: DashboardSnapshot | null;
+  onRefresh: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [boundEnvId, setBoundEnvId] = useState("");
+  const [targetUrl, setTargetUrl] = useState("https://www.baidu.com");
+  const [parseSummary, setParseSummary] = useState("");
+  const [diagnostic, setDiagnostic] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+  const selected = snapshot?.proxies.find((profile) => profile.id === selectedId) ?? null;
+
+  useEffect(() => {
+    if (!selected) return;
+    setName(selected.name);
+    setUrl(proxyDisplayUrl(selected));
+    setBoundEnvId(selected.boundEnvIds[0] ?? "");
+    setParseSummary("");
+  }, [selected]);
+
+  async function run(action: string, callback: () => Promise<unknown>, capture = false) {
+    setBusy(action);
+    onError("");
+    try {
+      const result = await callback();
+      if (capture) setDiagnostic(result);
+      await onRefresh();
+      return result;
+    } catch (requestError) {
+      onError(errorMessage(requestError, "代理操作失败"));
+      return null;
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function preview() {
+    const parsed = await run("parse", () => parseProxyUrl(url));
+    if (parsed) setParseSummary((parsed as Awaited<ReturnType<typeof parseProxyUrl>>).displayUrl);
+  }
+
+  async function save() {
+    await run("save", () => saveProxyProfile({
+      id: selected?.id,
+      name: name.trim() || "未命名代理",
+      url,
+      boundEnvIds: boundEnvId ? [boundEnvId] : [],
+    }));
+    setSelectedId(null);
+    setName("");
+    setUrl("");
+    setBoundEnvId("");
+    setParseSummary("");
+  }
+
+  return (
+    <section className="module-workspace resource-workspace">
+      <div className="module-toolbar">
+        <div className="toolbar-group"><span className="toolbar-title">代理档案</span></div>
+        <div className="toolbar-group actions">
+          <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("system", systemProxyDiagnostics, true)}><Gauge size={14} />系统代理</button>
+          <button className="button primary compact" type="button" disabled={Boolean(busy)} onClick={() => { setSelectedId(null); setName(""); setUrl(""); setBoundEnvId(""); }}><Network size={14} />新建</button>
+        </div>
+      </div>
+      <div className="resource-body">
+        <div className="table-wrap">
+          <table className="module-table">
+            <thead><tr><th>代理</th><th>协议</th><th>地址</th><th>凭据</th><th>绑定</th><th aria-label="操作" /></tr></thead>
+            <tbody>{(snapshot?.proxies ?? []).map((profile) => (
+              <tr key={profile.id} className={selectedId === profile.id ? "selected" : ""} onClick={() => setSelectedId(profile.id)}>
+                <td><div className="resource-name"><span className="resource-icon"><Network size={16} /></span><div><strong>{profile.name}</strong><small>{profile.id}</small></div></div></td>
+                <td>{profile.scheme.toUpperCase()}</td><td><code>{profile.host}:{profile.port}</code></td>
+                <td>{profile.passwordPresent ? <span className="credential-state"><KeyRound size={13} />已保护</span> : "无"}</td>
+                <td>{profile.boundEnvIds.length ? profile.boundEnvIds.join(", ") : "-"}</td>
+                <td className="row-actions"><button className="icon-button danger" type="button" title="删除" aria-label={`删除 ${profile.name}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void run(`delete:${profile.id}`, () => deleteProxyProfile(profile.id)); }}><Trash2 size={15} /></button></td>
+              </tr>
+            ))}</tbody>
+          </table>
+          {(snapshot?.proxies.length ?? 0) === 0 && <div className="environment-empty"><Network size={18} /><span>暂无代理档案</span></div>}
+        </div>
+        <aside className="resource-editor">
+          <div className="panel-heading"><Network size={17} /><h2>{selected ? "编辑代理" : "新建代理"}</h2></div>
+          <label className="field"><span>名称</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label className="field"><span>代理 URL</span><input placeholder="socks5://user:pass@host:1080" value={url} onChange={(event) => { setUrl(event.target.value); setParseSummary(""); }} /></label>
+          <div className="inline-form-actions"><button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || !url || Boolean(busy)} onClick={() => void preview()}><Search size={14} />解析</button>{parseSummary && <code>{parseSummary}</code>}</div>
+          <label className="field"><span>绑定环境</span><select value={boundEnvId} onChange={(event) => setBoundEnvId(event.target.value)}><option value="">不绑定</option>{snapshot?.environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.localLabel || environment.name}</option>)}</select></label>
+          <div className="form-actions"><button className="button primary" type="button" disabled={!isDesktopRuntime() || !url || Boolean(busy)} onClick={() => void save()}><CheckCircle2 size={15} />保存</button></div>
+          <div className="divider" />
+          <label className="field"><span>诊断 URL</span><input value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} /></label>
+          <button className="button secondary full-width" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("diagnose", () => diagnoseProxy(selectedId, targetUrl), true)}>{busy === "diagnose" ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}运行诊断</button>
+          {diagnostic !== null && <JsonPreview label="诊断结果" value={diagnostic} />}
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function KernelPage({ snapshot, onRefresh, onError }: {
+  snapshot: DashboardSnapshot | null;
+  onRefresh: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState("");
+  async function run(action: string, callback: () => Promise<unknown>) {
+    setBusy(action); onError("");
+    try { await callback(); await onRefresh(); }
+    catch (requestError) { onError(errorMessage(requestError, "内核操作失败")); }
+    finally { setBusy(""); }
+  }
+  return (
+    <section className="module-workspace">
+      <div className="module-toolbar">
+        <div className="toolbar-group"><span className="toolbar-title">内核与缓存</span></div>
+        <div className="toolbar-group actions">
+          <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("cleanup", () => cleanupKernelCache(null))}><Trash2 size={14} />清理缓存</button>
+          <button className="button primary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("refresh", refreshKernels)}><RefreshCw className={busy === "refresh" ? "spin" : ""} size={14} />刷新</button>
+        </div>
+      </div>
+      <div className="table-wrap">
+        <table className="module-table kernel-table">
+          <thead><tr><th>内核</th><th>主版本</th><th>本地版本</th><th>最新版本</th><th>平台</th><th>状态</th><th>下载源</th><th aria-label="操作" /></tr></thead>
+          <tbody>{(snapshot?.kernels ?? []).map((kernel) => (
+            <tr key={kernel.id}>
+              <td><div className="resource-name"><span className="resource-icon"><HardDriveDownload size={16} /></span><div><strong>{kernel.name}</strong><small>{kernel.kernelType}</small></div></div></td>
+              <td>{kernel.major ?? "未知"}</td><td>{kernel.version ?? "未知"}</td><td>{kernel.latestVersion ?? "未知"}</td><td>{kernel.platform} / {kernel.arch}</td>
+              <td><span className={`status-badge ${kernel.status}`}>{kernelStatus(kernel.status)}</span></td><td>{kernel.downloadAvailable ? "可用" : "未知"}</td>
+              <td className="row-actions inline-actions">
+                {kernel.major !== null && <button className="icon-button" type="button" title="安装或更新" aria-label={`安装 ${kernel.name}`} disabled={!isDesktopRuntime() || !kernel.downloadAvailable || Boolean(busy)} onClick={() => void run(`install:${kernel.id}`, () => installKernel(kernel.major!, kernel.kernelType))}><HardDriveDownload size={15} /></button>}
+                {kernel.installPath && <button className="icon-button danger" type="button" title="卸载" aria-label={`卸载 ${kernel.name}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run(`uninstall:${kernel.id}`, () => uninstallKernel(kernel.id))}><Trash2 size={15} /></button>}
+              </td>
+            </tr>
+          ))}</tbody>
+        </table>
+        {(snapshot?.kernels.length ?? 0) === 0 && <div className="environment-empty"><HardDriveDownload size={18} /><span>尚未扫描内核</span></div>}
+      </div>
+    </section>
+  );
+}
+
 function McpPage({ snapshot }: { snapshot: DashboardSnapshot | null }) {
   return (
     <section className="workspace single-panel">
@@ -453,45 +756,141 @@ function McpPage({ snapshot }: { snapshot: DashboardSnapshot | null }) {
   );
 }
 
-function OperationsPage({ snapshot }: { snapshot: DashboardSnapshot | null }) {
+function OperationsPage({ snapshot, onRefresh, onError }: {
+  snapshot: DashboardSnapshot | null;
+  onRefresh: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [status, setStatus] = useState("all");
+  const [kind, setKind] = useState("all");
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [busy, setBusy] = useState("");
+  const kinds = useMemo(() => Array.from(new Set((snapshot?.operations ?? []).map((operation) => operation.kind))), [snapshot?.operations]);
+  const operations = useMemo(() => (snapshot?.operations ?? []).filter((operation) => {
+    const matchesStatus = status === "all" || operation.status === status;
+    const matchesKind = kind === "all" || operation.kind === kind;
+    const needle = query.trim().toLocaleLowerCase();
+    const matchesQuery = !needle || `${operation.label} ${operation.message} ${operation.id} ${operation.envId ?? ""}`.toLocaleLowerCase().includes(needle);
+    return matchesStatus && matchesKind && matchesQuery;
+  }), [snapshot?.operations, status, kind, query]);
+  const selected = snapshot?.operations.find((operation) => operation.id === selectedId) ?? null;
+
+  async function run(action: string, callback: () => Promise<unknown>) {
+    setBusy(action); onError("");
+    try { await callback(); await onRefresh(); }
+    catch (requestError) { onError(errorMessage(requestError, "操作处理失败")); }
+    finally { setBusy(""); }
+  }
+
   return (
-    <section className="module-workspace">
+    <section className={`module-workspace operation-workspace ${selected ? "with-detail" : ""}`}>
+      <div className="module-toolbar">
+        <div className="toolbar-group">
+          <label className="search-control"><Search size={14} /><input aria-label="搜索操作" placeholder="搜索操作、环境或 ID" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
+          <label className="select-control"><SlidersHorizontal size={14} /><select aria-label="状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">全部状态</option><option value="queued">排队中</option><option value="running">执行中</option><option value="succeeded">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option></select></label>
+          <label className="select-control"><TerminalSquare size={14} /><select aria-label="类型筛选" value={kind} onChange={(event) => setKind(event.target.value)}><option value="all">全部类型</option>{kinds.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        </div>
+      </div>
+      <div className="operation-body">
       <div className="table-wrap">
         <table className="module-table">
-          <thead><tr><th>操作</th><th>状态</th><th>信息</th><th>更新时间</th></tr></thead>
+          <thead><tr><th>操作</th><th>类型</th><th>状态</th><th>信息</th><th>更新时间</th><th aria-label="操作" /></tr></thead>
           <tbody>
-            {(snapshot?.operations ?? []).map((operation) => (
-              <tr key={operation.id}>
+            {operations.map((operation) => (
+              <tr key={operation.id} className={selectedId === operation.id ? "selected" : ""} onClick={() => setSelectedId(operation.id)}>
                 <td>{operation.label}</td>
+                <td><code>{operation.kind}</code></td>
                 <td><span className={`status-badge ${operation.status}`}>{statusLabel[operation.status] ?? operation.status}</span></td>
                 <td>{operation.message}</td>
                 <td>{new Date(operation.updatedAt).toLocaleString("zh-CN")}</td>
+                <td className="row-actions inline-actions">
+                  {matchesActiveOperation(operation.status) && <button className="icon-button danger" type="button" title="取消" aria-label={`取消 ${operation.label}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void run(`cancel:${operation.id}`, () => cancelOperation(operation.id)); }}><Square size={14} /></button>}
+                  {matchesRetryableOperation(operation.status) && <button className="icon-button" type="button" title="重试" aria-label={`重试 ${operation.label}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void run(`retry:${operation.id}`, () => retryOperation(operation.id)); }}><RotateCcw size={14} /></button>}
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
+        {operations.length === 0 && <div className="environment-empty"><TerminalSquare size={18} /><span>没有匹配操作</span></div>}
+      </div>
+      {selected && <aside className="environment-detail operation-detail"><div className="detail-heading"><div><small>操作日志</small><h2>{selected.label}</h2></div><button className="icon-button" type="button" title="关闭详情" aria-label="关闭详情" onClick={() => setSelectedId(null)}><X size={16} /></button></div><dl className="detail-list compact"><DetailRow label="Operation ID" value={selected.id} /><DetailRow label="Kind" value={selected.kind} /><DetailRow label="Environment" value={selected.envId ?? "-"} /><DetailRow label="ReqId" value={selected.requestId === null ? "-" : String(selected.requestId)} /><DetailRow label="Generation" value={String(selected.generation)} /><DetailRow label="错误码" value={selected.errorCode ?? "-"} /><DetailRow label="创建时间" value={formatTime(selected.createdAt)} /><DetailRow label="更新时间" value={formatTime(selected.updatedAt)} /></dl><JsonPreview label="请求快照" value={selected.request} /></aside>}
       </div>
     </section>
   );
 }
 
-function SettingsPage({ snapshot }: { snapshot: DashboardSnapshot | null }) {
+function SettingsPage({ snapshot, onRefresh, onError }: {
+  snapshot: DashboardSnapshot | null;
+  onRefresh: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const [settings, setSettings] = useState<ManagerSettings | null>(snapshot?.settings ?? null);
+  const [busy, setBusy] = useState("");
+  useEffect(() => { if (snapshot?.settings) setSettings(snapshot.settings); }, [snapshot?.settings]);
+  if (!settings) return <section className="module-workspace"><div className="empty-state"><LoaderCircle className="spin" size={18} />读取设置</div></section>;
+
+  async function run(action: string, callback: () => Promise<unknown>) {
+    setBusy(action); onError("");
+    try { await callback(); await onRefresh(); }
+    catch (requestError) { onError(errorMessage(requestError, "设置操作失败")); }
+    finally { setBusy(""); }
+  }
+
+  async function choose(key: "dataDir" | "workDir" | "extensionDir" | "logDir") {
+    const currentSettings = settings;
+    if (!currentSettings) return;
+    const selected = await pickDirectory(currentSettings[key]);
+    if (selected) setSettings((current) => current ? { ...current, [key]: selected } : current);
+  }
+
+  async function exportDiagnostics() {
+    const path = await saveFile("brosdk-diagnostics.zip", "zip");
+    if (path) await run("diagnostics", () => createDiagnosticBundle(path));
+  }
+
   return (
-    <section className="workspace single-panel">
-      <div className="panel">
-        <div className="panel-heading"><Settings size={17} /><h2>设置</h2></div>
+    <section className="settings-layout">
+      <div className="settings-section">
+        <div className="section-heading"><div><Settings size={17} /><h2>目录与运行</h2></div><button className="button primary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("save", () => updateSettings(settings))}><CheckCircle2 size={14} />保存设置</button></div>
+        <div className="settings-form">
+          <DirectoryField label="数据目录" value={settings.dataDir} onChange={(value) => setSettings({ ...settings, dataDir: value })} onPick={() => void choose("dataDir")} />
+          <DirectoryField label="SDK WorkDir" value={settings.workDir} onChange={(value) => setSettings({ ...settings, workDir: value })} onPick={() => void choose("workDir")} />
+          <DirectoryField label="扩展目录" value={settings.extensionDir} onChange={(value) => setSettings({ ...settings, extensionDir: value })} onPick={() => void choose("extensionDir")} />
+          <DirectoryField label="日志目录" value={settings.logDir} onChange={(value) => setSettings({ ...settings, logDir: value })} onPick={() => void choose("logDir")} />
+          <label className="field"><span>SDK API URL</span><input placeholder="使用 DLL 默认地址" value={settings.sdkApiUrl ?? ""} onChange={(event) => setSettings({ ...settings, sdkApiUrl: event.target.value || null })} /></label>
+          <label className="field"><span>启动策略</span><select value={settings.startupPolicy} onChange={(event) => setSettings({ ...settings, startupPolicy: event.target.value })}><option value="restore-none">不恢复环境</option><option value="reconcile">启动后对账</option></select></label>
+          <label className="field"><span>DLL MCP 端口</span><input inputMode="numeric" placeholder="留空则关闭" value={settings.embeddedMcpPort ?? ""} onChange={(event) => setSettings({ ...settings, embeddedMcpPort: event.target.value ? Number(event.target.value) : null })} /></label>
+          <label className="toggle-field"><span><strong>Debug 日志</strong><small>增加 SDK 与 Manager 诊断信息</small></span><input type="checkbox" checked={settings.debug} onChange={(event) => setSettings({ ...settings, debug: event.target.checked })} /></label>
+        </div>
+        <p className="section-note">数据目录变更会迁移 SQLite 与受保护凭据，并在下次启动生效。</p>
+      </div>
+      <div className="settings-section">
+        <div className="section-heading"><div><ShieldCheck size={17} /><h2>安全与诊断</h2></div></div>
         <dl className="detail-list">
-          <div><dt>API Key 来源</dt><dd>{snapshot?.sdk.apiKey.source ?? "BROSDK_API_KEY"}</dd></div>
-          <div><dt>API Key 状态</dt><dd>{snapshot?.sdk.apiKey.present ? "present" : "missing"}</dd></div>
-          <div><dt>SDK WorkDir</dt><dd>{snapshot?.sdk.workDir ?? "-"}</dd></div>
-          <div><dt>扩展目录</dt><dd>{snapshot?.settings.extensionDir ?? "-"}</dd></div>
-          <div><dt>日志目录</dt><dd>{snapshot?.settings.logDir ?? "-"}</dd></div>
-          <div><dt>SDK API URL</dt><dd>{snapshot?.settings.sdkApiUrl ?? "默认"}</dd></div>
-          <div><dt>Debug</dt><dd>{snapshot?.settings.debug ? "enabled" : "disabled"}</dd></div>
-          <div><dt>SQLite</dt><dd>{snapshot?.databasePath ?? "-"}</dd></div>
-          <div><dt>DLL</dt><dd>{snapshot?.sdk.dllPath ?? "-"}</dd></div>
+          <div><dt>API Key 来源</dt><dd>{snapshot?.sdk.apiKey.source ?? "BROSDK_API_KEY"}</dd></div><div><dt>API Key 状态</dt><dd>{snapshot?.sdk.apiKey.present ? "present" : "missing"}</dd></div><div><dt>SQLite</dt><dd>{snapshot?.databasePath ?? "-"}</dd></div><div><dt>DLL</dt><dd>{snapshot?.sdk.dllPath ?? "-"}</dd></div><div><dt>Host</dt><dd>{snapshot?.sdk.hostPath ?? "-"}</dd></div>
         </dl>
+        <button className="button secondary full-width diagnostic-button" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void exportDiagnostics()}>{busy === "diagnostics" ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}导出脱敏诊断包</button>
       </div>
     </section>
   );
 }
+
+function DirectoryField({ label, value, onChange, onPick }: { label: string; value: string; onChange: (value: string) => void; onPick: () => void }) {
+  return <label className="field directory-field"><span>{label}</span><div><input value={value} onChange={(event) => onChange(event.target.value)} /><button className="icon-button" type="button" title={`选择${label}`} aria-label={`选择${label}`} disabled={!isDesktopRuntime()} onClick={onPick}><FolderOpen size={15} /></button></div></label>;
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return <div><dt>{label}</dt><dd title={value}>{value}</dd></div>;
+}
+
+function JsonPreview({ label, value }: { label: string; value: unknown }) {
+  return <div className="json-preview"><div><strong>{label}</strong><button className="icon-button" type="button" title="复制 JSON" aria-label={`复制${label}`} onClick={() => void navigator.clipboard?.writeText(JSON.stringify(value, null, 2))}><Copy size={14} /></button></div><pre>{JSON.stringify(value ?? null, null, 2)}</pre></div>;
+}
+
+function errorMessage(error: unknown, fallback: string) { return error instanceof Error ? error.message : fallback; }
+function formatTime(value: string) { return new Date(value).toLocaleString("zh-CN"); }
+function proxyDisplayUrl(profile: ProxyProfile) { return `${profile.scheme}://${profile.username ? `${profile.username}@` : ""}${profile.host}:${profile.port}`; }
+function matchesActiveOperation(status: string) { return status === "queued" || status === "running"; }
+function matchesRetryableOperation(status: string) { return status === "failed" || status === "cancelled"; }
+function kernelStatus(status: string) { return ({ installed: "已安装", available: "可安装", "update-available": "可更新", unknown: "未知" } as Record<string, string>)[status] ?? status; }

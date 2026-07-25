@@ -5,13 +5,16 @@ use std::{
 };
 
 use chrono::{DateTime, Utc};
-use domain::{EnvironmentRecord, HostEvent, ManagerEvent, ManagerSettings, OperationRecord};
+use domain::{
+    EnvironmentRecord, FingerprintProfile, HostEvent, KernelRecord, ManagerEvent, ManagerSettings,
+    OperationRecord, ProxyProfile,
+};
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -47,11 +50,14 @@ impl ManagerStore {
     pub fn open_default() -> Result<Self, StoreError> {
         let data_dir = platform::default_data_dir();
         let defaults = ManagerSettings {
+            data_dir: data_dir.display().to_string(),
             work_dir: platform::default_sdk_work_dir().display().to_string(),
             extension_dir: platform::default_extension_dir().display().to_string(),
             log_dir: platform::default_log_dir().display().to_string(),
             sdk_api_url: None,
             debug: false,
+            startup_policy: "restore-none".into(),
+            embedded_mcp_port: None,
         };
         Self::open(data_dir.join("manager.sqlite3"), &defaults)
     }
@@ -77,11 +83,14 @@ impl ManagerStore {
 
             CREATE TABLE IF NOT EXISTS settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                data_dir TEXT NOT NULL DEFAULT '',
                 work_dir TEXT NOT NULL,
                 extension_dir TEXT NOT NULL,
                 log_dir TEXT NOT NULL,
                 sdk_api_url TEXT,
                 debug INTEGER NOT NULL,
+                startup_policy TEXT NOT NULL DEFAULT 'restore-none',
+                embedded_mcp_port INTEGER,
                 updated_at TEXT NOT NULL
             );
 
@@ -110,6 +119,7 @@ impl ManagerStore {
                 request_id INTEGER,
                 generation INTEGER NOT NULL DEFAULT 0,
                 error_code TEXT,
+                request_json TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -134,13 +144,38 @@ impl ManagerStore {
                 port INTEGER NOT NULL,
                 username TEXT,
                 secret_ref TEXT,
+                bound_env_ids_json TEXT NOT NULL DEFAULT '[]',
                 updated_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS fingerprint_profiles (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'local',
                 profile_json TEXT NOT NULL,
+                bound_env_ids_json TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS environment_details (
+                env_id TEXT PRIMARY KEY,
+                detail_json TEXT NOT NULL,
+                refreshed_at TEXT NOT NULL,
+                FOREIGN KEY(env_id) REFERENCES environments(env_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS kernel_records (
+                id TEXT PRIMARY KEY,
+                kernel_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                major INTEGER,
+                version TEXT,
+                latest_version TEXT,
+                platform TEXT NOT NULL,
+                arch TEXT NOT NULL,
+                status TEXT NOT NULL,
+                install_path TEXT,
+                download_available INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL
             );
 
@@ -154,6 +189,38 @@ impl ManagerStore {
             );
             "#,
         )?;
+        ensure_column(
+            &connection,
+            "settings",
+            "data_dir",
+            "TEXT NOT NULL DEFAULT ''",
+        )?;
+        ensure_column(
+            &connection,
+            "settings",
+            "startup_policy",
+            "TEXT NOT NULL DEFAULT 'restore-none'",
+        )?;
+        ensure_column(&connection, "settings", "embedded_mcp_port", "INTEGER")?;
+        ensure_column(&connection, "operations", "request_json", "TEXT")?;
+        ensure_column(
+            &connection,
+            "proxy_profiles",
+            "bound_env_ids_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
+        ensure_column(
+            &connection,
+            "fingerprint_profiles",
+            "source",
+            "TEXT NOT NULL DEFAULT 'local'",
+        )?;
+        ensure_column(
+            &connection,
+            "fingerprint_profiles",
+            "bound_env_ids_json",
+            "TEXT NOT NULL DEFAULT '[]'",
+        )?;
         let now = timestamp();
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?1, ?2)",
@@ -161,16 +228,24 @@ impl ManagerStore {
         )?;
         connection.execute(
             r#"INSERT OR IGNORE INTO settings(
-                id, work_dir, extension_dir, log_dir, sdk_api_url, debug, updated_at
-            ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)"#,
+                id, data_dir, work_dir, extension_dir, log_dir, sdk_api_url, debug,
+                startup_policy, embedded_mcp_port, updated_at
+            ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"#,
             params![
+                defaults.data_dir,
                 defaults.work_dir,
                 defaults.extension_dir,
                 defaults.log_dir,
                 defaults.sdk_api_url,
                 defaults.debug,
+                defaults.startup_policy,
+                defaults.embedded_mcp_port,
                 now,
             ],
+        )?;
+        connection.execute(
+            "UPDATE settings SET data_dir = ?1 WHERE id = 1 AND data_dir = ''",
+            [defaults.data_dir.as_str()],
         )?;
         Ok(Self {
             path: Arc::new(path),
@@ -182,34 +257,58 @@ impl ManagerStore {
         self.path.as_path()
     }
 
+    pub fn backup_to(&self, path: &Path) -> Result<(), StoreError> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                StoreError::Sql(rusqlite::Error::ToSqlConversionFailure(Box::new(error)))
+            })?;
+        }
+        let source = self.connection()?;
+        let mut destination = Connection::open(path)?;
+        let backup = rusqlite::backup::Backup::new(&source, &mut destination)?;
+        backup.run_to_completion(32, std::time::Duration::from_millis(20), None)?;
+        Ok(())
+    }
+
     pub fn settings(&self) -> Result<ManagerSettings, StoreError> {
-        self.connection()?.query_row(
-            "SELECT work_dir, extension_dir, log_dir, sdk_api_url, debug FROM settings WHERE id = 1",
-            [],
-            |row| {
-                Ok(ManagerSettings {
-                    work_dir: row.get(0)?,
-                    extension_dir: row.get(1)?,
-                    log_dir: row.get(2)?,
-                    sdk_api_url: row.get(3)?,
-                    debug: row.get(4)?,
-                })
-            },
-        ).map_err(Into::into)
+        self.connection()?
+            .query_row(
+                r#"SELECT data_dir, work_dir, extension_dir, log_dir, sdk_api_url, debug,
+                      startup_policy, embedded_mcp_port
+               FROM settings WHERE id = 1"#,
+                [],
+                |row| {
+                    Ok(ManagerSettings {
+                        data_dir: row.get(0)?,
+                        work_dir: row.get(1)?,
+                        extension_dir: row.get(2)?,
+                        log_dir: row.get(3)?,
+                        sdk_api_url: row.get(4)?,
+                        debug: row.get(5)?,
+                        startup_policy: row.get(6)?,
+                        embedded_mcp_port: row.get(7)?,
+                    })
+                },
+            )
+            .map_err(Into::into)
     }
 
     pub fn update_settings(&self, settings: &ManagerSettings) -> Result<(), StoreError> {
         self.connection()?.execute(
             r#"UPDATE settings SET
-                work_dir = ?1, extension_dir = ?2, log_dir = ?3,
-                sdk_api_url = ?4, debug = ?5, updated_at = ?6
+                data_dir = ?1, work_dir = ?2, extension_dir = ?3, log_dir = ?4,
+                sdk_api_url = ?5, debug = ?6, startup_policy = ?7,
+                embedded_mcp_port = ?8, updated_at = ?9
             WHERE id = 1"#,
             params![
+                settings.data_dir,
                 settings.work_dir,
                 settings.extension_dir,
                 settings.log_dir,
                 settings.sdk_api_url,
                 settings.debug,
+                settings.startup_policy,
+                settings.embedded_mcp_port,
                 timestamp(),
             ],
         )?;
@@ -263,12 +362,286 @@ impl ManagerStore {
         Ok(())
     }
 
+    pub fn save_environment_detail(&self, env_id: &str, detail: &Value) -> Result<(), StoreError> {
+        self.connection()?.execute(
+            r#"INSERT INTO environment_details(env_id, detail_json, refreshed_at)
+               VALUES (?1, ?2, ?3)
+               ON CONFLICT(env_id) DO UPDATE SET
+                   detail_json = excluded.detail_json,
+                   refreshed_at = excluded.refreshed_at"#,
+            params![env_id, serde_json::to_string(detail)?, timestamp()],
+        )?;
+        Ok(())
+    }
+
+    pub fn environment_details(&self) -> Result<Vec<(String, Value, DateTime<Utc>)>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT env_id, detail_json, refreshed_at FROM environment_details ORDER BY env_id",
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .map(|row| {
+                let (env_id, detail, refreshed_at) = row?;
+                Ok((
+                    env_id,
+                    serde_json::from_str(&detail)?,
+                    parse_time(&refreshed_at)?,
+                ))
+            })
+            .collect()
+    }
+
+    pub fn list_fingerprint_profiles(&self) -> Result<Vec<FingerprintProfile>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            r#"SELECT id, name, source, profile_json, bound_env_ids_json, updated_at
+               FROM fingerprint_profiles ORDER BY name, id"#,
+        )?;
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                ))
+            })?
+            .map(|row| {
+                let (id, name, source, profile, bound_env_ids, updated_at) = row?;
+                Ok(FingerprintProfile {
+                    id,
+                    name,
+                    source,
+                    profile: serde_json::from_str(&profile)?,
+                    bound_env_ids: serde_json::from_str(&bound_env_ids)?,
+                    updated_at: parse_time(&updated_at)?,
+                })
+            })
+            .collect()
+    }
+
+    pub fn upsert_fingerprint_profile(
+        &self,
+        id: &str,
+        name: &str,
+        source: &str,
+        profile: &Value,
+        bound_env_ids: &[String],
+    ) -> Result<FingerprintProfile, StoreError> {
+        self.connection()?.execute(
+            r#"INSERT INTO fingerprint_profiles(
+                   id, name, source, profile_json, bound_env_ids_json, updated_at
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+               ON CONFLICT(id) DO UPDATE SET
+                   name = excluded.name,
+                   source = excluded.source,
+                   profile_json = excluded.profile_json,
+                   bound_env_ids_json = excluded.bound_env_ids_json,
+                   updated_at = excluded.updated_at"#,
+            params![
+                id,
+                name,
+                source,
+                serde_json::to_string(profile)?,
+                serde_json::to_string(bound_env_ids)?,
+                timestamp(),
+            ],
+        )?;
+        self.list_fingerprint_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == id)
+            .ok_or(rusqlite::Error::QueryReturnedNoRows.into())
+    }
+
+    pub fn delete_fingerprint_profile(&self, id: &str) -> Result<(), StoreError> {
+        self.connection()?
+            .execute("DELETE FROM fingerprint_profiles WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn list_proxy_profiles(&self) -> Result<Vec<ProxyProfile>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            r#"SELECT id, name, scheme, host, port, username, secret_ref,
+                      bound_env_ids_json, updated_at
+               FROM proxy_profiles ORDER BY name, id"#,
+        )?;
+        statement
+            .query_map([], |row| {
+                let bound_env_ids: String = row.get(7)?;
+                let updated_at: String = row.get(8)?;
+                Ok(ProxyProfile {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    scheme: row.get(2)?,
+                    host: row.get(3)?,
+                    port: row.get::<_, i64>(4)? as u16,
+                    username: row.get(5)?,
+                    password_present: row.get::<_, Option<String>>(6)?.is_some(),
+                    bound_env_ids: serde_json::from_str(&bound_env_ids).unwrap_or_default(),
+                    updated_at: parse_time(&updated_at).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            8,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_proxy_profile(
+        &self,
+        id: &str,
+        name: &str,
+        scheme: &str,
+        host: &str,
+        port: u16,
+        username: Option<&str>,
+        secret_ref: Option<&str>,
+        bound_env_ids: &[String],
+    ) -> Result<ProxyProfile, StoreError> {
+        self.connection()?.execute(
+            r#"INSERT INTO proxy_profiles(
+                   id, name, scheme, host, port, username, secret_ref,
+                   bound_env_ids_json, updated_at
+               ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+               ON CONFLICT(id) DO UPDATE SET
+                   name = excluded.name,
+                   scheme = excluded.scheme,
+                   host = excluded.host,
+                   port = excluded.port,
+                   username = excluded.username,
+                   secret_ref = excluded.secret_ref,
+                   bound_env_ids_json = excluded.bound_env_ids_json,
+                   updated_at = excluded.updated_at"#,
+            params![
+                id,
+                name,
+                scheme,
+                host,
+                port,
+                username,
+                secret_ref,
+                serde_json::to_string(bound_env_ids)?,
+                timestamp(),
+            ],
+        )?;
+        self.list_proxy_profiles()?
+            .into_iter()
+            .find(|profile| profile.id == id)
+            .ok_or(rusqlite::Error::QueryReturnedNoRows.into())
+    }
+
+    pub fn proxy_secret_ref(&self, id: &str) -> Result<Option<String>, StoreError> {
+        self.connection()?
+            .query_row(
+                "SELECT secret_ref FROM proxy_profiles WHERE id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(|value| value.flatten())
+            .map_err(Into::into)
+    }
+
+    pub fn delete_proxy_profile(&self, id: &str) -> Result<Option<String>, StoreError> {
+        let reference = self.proxy_secret_ref(id)?;
+        self.connection()?
+            .execute("DELETE FROM proxy_profiles WHERE id = ?1", [id])?;
+        Ok(reference)
+    }
+
+    pub fn replace_kernel_records(&self, records: &[KernelRecord]) -> Result<(), StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute("DELETE FROM kernel_records", [])?;
+        for record in records {
+            transaction.execute(
+                r#"INSERT INTO kernel_records(
+                       id, kernel_type, name, major, version, latest_version, platform,
+                       arch, status, install_path, download_available, updated_at
+                   ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"#,
+                params![
+                    record.id,
+                    record.kernel_type,
+                    record.name,
+                    record.major,
+                    record.version,
+                    record.latest_version,
+                    record.platform,
+                    record.arch,
+                    record.status,
+                    record.install_path,
+                    record.download_available,
+                    record.updated_at.to_rfc3339(),
+                ],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn list_kernel_records(&self) -> Result<Vec<KernelRecord>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            r#"SELECT id, kernel_type, name, major, version, latest_version, platform,
+                      arch, status, install_path, download_available, updated_at
+               FROM kernel_records ORDER BY major DESC, kernel_type, id"#,
+        )?;
+        statement
+            .query_map([], |row| {
+                let updated_at: String = row.get(11)?;
+                Ok(KernelRecord {
+                    id: row.get(0)?,
+                    kernel_type: row.get(1)?,
+                    name: row.get(2)?,
+                    major: row.get(3)?,
+                    version: row.get(4)?,
+                    latest_version: row.get(5)?,
+                    platform: row.get(6)?,
+                    arch: row.get(7)?,
+                    status: row.get(8)?,
+                    install_path: row.get(9)?,
+                    download_available: row.get(10)?,
+                    updated_at: parse_time(&updated_at).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            11,
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(Into::into)
+    }
+
+    pub fn delete_kernel_record(&self, id: &str) -> Result<(), StoreError> {
+        self.connection()?
+            .execute("DELETE FROM kernel_records WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
     pub fn create_operation(
         &self,
         kind: &str,
         env_id: Option<&str>,
         label: &str,
         generation: u64,
+        request: Option<&Value>,
     ) -> Result<OperationRecord, StoreError> {
         let id = Uuid::new_v4().to_string();
         let now = Utc::now();
@@ -276,9 +649,18 @@ impl ManagerStore {
         let transaction = connection.transaction()?;
         transaction.execute(
             r#"INSERT INTO operations(
-                id, kind, env_id, label, status, message, generation, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, 'queued', 'queued', ?5, ?6, ?6)"#,
-            params![id, kind, env_id, label, generation, now.to_rfc3339()],
+                id, kind, env_id, label, status, message, generation, request_json,
+                created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, 'queued', 'queued', ?5, ?6, ?7, ?7)"#,
+            params![
+                id,
+                kind,
+                env_id,
+                label,
+                generation,
+                request.map(serde_json::to_string).transpose()?,
+                now.to_rfc3339(),
+            ],
         )?;
         append_event_tx(
             &transaction,
@@ -301,7 +683,7 @@ impl ManagerStore {
         self.connection()?
             .query_row(
                 r#"SELECT id, kind, env_id, label, status, message, request_id,
-                          generation, error_code, created_at, updated_at
+                          generation, error_code, request_json, created_at, updated_at
                    FROM operations WHERE id = ?1"#,
                 [id],
                 operation_from_row,
@@ -314,7 +696,7 @@ impl ManagerStore {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
             r#"SELECT id, kind, env_id, label, status, message, request_id,
-                      generation, error_code, created_at, updated_at
+                      generation, error_code, request_json, created_at, updated_at
                FROM operations ORDER BY updated_at DESC LIMIT ?1"#,
         )?;
         let rows = statement.query_map([limit as i64], operation_from_row)?;
@@ -358,6 +740,22 @@ impl ManagerStore {
         )?;
         transaction.commit()?;
         drop(connection);
+        self.operation(id)?
+            .ok_or(rusqlite::Error::QueryReturnedNoRows.into())
+    }
+
+    pub fn update_operation_progress(
+        &self,
+        id: &str,
+        request_id: Option<i32>,
+        message: &str,
+    ) -> Result<OperationRecord, StoreError> {
+        self.connection()?.execute(
+            r#"UPDATE operations SET request_id = COALESCE(?1, request_id),
+                      message = ?2, updated_at = ?3
+               WHERE id = ?4 AND status = 'running'"#,
+            params![request_id, message, timestamp(), id],
+        )?;
         self.operation(id)?
             .ok_or(rusqlite::Error::QueryReturnedNoRows.into())
     }
@@ -612,6 +1010,7 @@ impl ManagerStore {
                     apply_lifecycle_event(&transaction, env_id, &operation, event)?;
                 }
             }
+            apply_async_operation_event(&transaction, &operation, event)?;
         }
 
         transaction.commit()?;
@@ -719,6 +1118,39 @@ impl ManagerStore {
     fn connection(&self) -> Result<MutexGuard<'_, Connection>, StoreError> {
         self.connection.lock().map_err(|_| StoreError::Poisoned)
     }
+}
+
+fn apply_async_operation_event(
+    transaction: &Transaction<'_>,
+    operation: &OperationRecord,
+    event: &HostEvent,
+) -> Result<(), StoreError> {
+    if operation.kind != "kernel.install" {
+        return Ok(());
+    }
+    let event_name = event.event_name.to_ascii_lowercase();
+    let status = if event_name.contains("install-success") {
+        "succeeded"
+    } else if event_name.contains("install-fail") || event_name.contains("error") || event.code < 0
+    {
+        "failed"
+    } else {
+        return Ok(());
+    };
+    transaction.execute(
+        r#"UPDATE operations SET status = ?1, message = ?2,
+                  request_id = COALESCE(request_id, ?3),
+                  error_code = CASE WHEN ?1 = 'failed' THEN 'SDK_EVENT_FAILED' ELSE NULL END,
+                  updated_at = ?4 WHERE id = ?5 AND status = 'running'"#,
+        params![
+            status,
+            event.event_name,
+            event.request_id,
+            timestamp(),
+            operation.id,
+        ],
+    )?;
+    Ok(())
 }
 
 fn append_event_tx(
@@ -843,7 +1275,7 @@ fn operation_tx(
     transaction
         .query_row(
             r#"SELECT id, kind, env_id, label, status, message, request_id,
-                      generation, error_code, created_at, updated_at
+                      generation, error_code, request_json, created_at, updated_at
                FROM operations WHERE id = ?1"#,
             [id],
             operation_from_row,
@@ -877,8 +1309,9 @@ fn environment_from_row(row: &Row<'_>) -> rusqlite::Result<EnvironmentRecord> {
 }
 
 fn operation_from_row(row: &Row<'_>) -> rusqlite::Result<OperationRecord> {
-    let created_at: String = row.get(9)?;
-    let updated_at: String = row.get(10)?;
+    let request: Option<String> = row.get(9)?;
+    let created_at: String = row.get(10)?;
+    let updated_at: String = row.get(11)?;
     Ok(OperationRecord {
         id: row.get(0)?,
         kind: row.get(1)?,
@@ -889,16 +1322,17 @@ fn operation_from_row(row: &Row<'_>) -> rusqlite::Result<OperationRecord> {
         request_id: row.get(6)?,
         generation: row.get::<_, i64>(7)? as u64,
         error_code: row.get(8)?,
+        request: request.and_then(|value| serde_json::from_str(&value).ok()),
         created_at: parse_time(&created_at).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                9,
+                10,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )
         })?,
         updated_at: parse_time(&updated_at).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                10,
+                11,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )
@@ -913,6 +1347,26 @@ fn valid_transition(from: &str, to: &str) -> bool {
             ("queued", "running" | "cancelled" | "failed")
                 | ("running", "succeeded" | "failed" | "cancelled")
         )
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), StoreError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let exists = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?
+        .iter()
+        .any(|name| name == column);
+    if !exists {
+        connection.execute_batch(&format!(
+            "ALTER TABLE {table} ADD COLUMN {column} {definition};"
+        ))?;
+    }
+    Ok(())
 }
 
 fn timestamp() -> String {
@@ -933,11 +1387,14 @@ mod tests {
         ManagerStore::open(
             directory.path().join("manager.sqlite3"),
             &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
                 work_dir: "work".into(),
                 extension_dir: "extensions".into(),
                 log_dir: "logs".into(),
                 sdk_api_url: None,
                 debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: None,
             },
         )
         .expect("open store")
@@ -952,7 +1409,7 @@ mod tests {
         settings.debug = true;
         store.update_settings(&settings).expect("update settings");
         let operation = store
-            .create_operation("environment.sync", None, "同步环境", 0)
+            .create_operation("environment.sync", None, "同步环境", 0, None)
             .expect("create operation");
         store
             .transition_operation(&operation.id, "running", "running", None)
@@ -962,11 +1419,14 @@ mod tests {
         let reopened = ManagerStore::open(
             path,
             &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
                 work_dir: "unused".into(),
                 extension_dir: "unused".into(),
                 log_dir: "unused".into(),
                 sdk_api_url: None,
                 debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: None,
             },
         )
         .expect("reopen store");
@@ -979,6 +1439,53 @@ mod tests {
                 .status,
             "running"
         );
+        assert_eq!(
+            reopened.settings().expect("settings").startup_policy,
+            "restore-none"
+        );
+    }
+
+    #[test]
+    fn profiles_and_operation_requests_round_trip() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        let fingerprint = store
+            .upsert_fingerprint_profile(
+                "fp-1",
+                "Desktop",
+                "local",
+                &json!({ "platform": "Win32" }),
+                &["env-1".into()],
+            )
+            .expect("fingerprint");
+        assert_eq!(fingerprint.bound_env_ids, vec!["env-1"]);
+
+        let proxy = store
+            .upsert_proxy_profile(
+                "proxy-1",
+                "Local",
+                "socks5",
+                "127.0.0.1",
+                1080,
+                Some("alice"),
+                Some("proxy-1.bin"),
+                &["env-1".into()],
+            )
+            .expect("proxy");
+        assert!(proxy.password_present);
+        assert_eq!(
+            store
+                .proxy_secret_ref("proxy-1")
+                .expect("secret ref")
+                .as_deref(),
+            Some("proxy-1.bin")
+        );
+
+        let request = json!({ "cores": [{ "major": 141, "type": "yun" }] });
+        let operation = store
+            .create_operation("kernel.install", None, "安装内核", 0, Some(&request))
+            .expect("operation");
+        assert_eq!(operation.request, Some(request));
     }
 
     #[test]
@@ -994,7 +1501,13 @@ mod tests {
             .expect("upsert environment");
         let generation = store.next_generation("env-1").expect("generation 1");
         let operation = store
-            .create_operation("environment.start", Some("env-1"), "启动环境", generation)
+            .create_operation(
+                "environment.start",
+                Some("env-1"),
+                "启动环境",
+                generation,
+                None,
+            )
             .expect("operation");
         store
             .transition_operation(&operation.id, "running", "starting", None)
@@ -1097,7 +1610,13 @@ mod tests {
             .expect("upsert environment");
         let generation = store.next_generation("env-1").expect("generation");
         let operation = store
-            .create_operation("environment.start", Some("env-1"), "启动环境", generation)
+            .create_operation(
+                "environment.start",
+                Some("env-1"),
+                "启动环境",
+                generation,
+                None,
+            )
             .expect("operation");
         store
             .transition_operation(&operation.id, "running", "calling SDK", None)

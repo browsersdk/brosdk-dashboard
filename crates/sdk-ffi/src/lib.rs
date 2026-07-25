@@ -68,9 +68,15 @@ pub struct BroSdk {
     init: InitCall,
     info: InfoCall,
     env_page: JsonOutCall,
+    env_get_info: JsonOutCall,
+    network_diagnostics: JsonOutCall,
+    system_proxy_diagnostics: InfoCall,
+    browser_install: AsyncJsonCall,
+    browser_cleanup: JsonOutCall,
     browser_info: InfoCall,
     browser_command: JsonOutCall,
     browser_snapshot: JsonOutCall,
+    browser_env_check: JsonOutCall,
     browser_open: AsyncJsonCall,
     browser_close: AsyncJsonCall,
     shutdown: ShutdownCall,
@@ -102,9 +108,15 @@ impl BroSdk {
                 init: required(&library, b"sdk_init\0")?,
                 info: required(&library, b"sdk_info\0")?,
                 env_page: required(&library, b"sdk_env_page\0")?,
+                env_get_info: required(&library, b"sdk_env_getinfo\0")?,
+                network_diagnostics: required(&library, b"sdk_network_diagnostics\0")?,
+                system_proxy_diagnostics: required(&library, b"sdk_system_proxy_diagnostics\0")?,
+                browser_install: required(&library, b"sdk_browser_install\0")?,
+                browser_cleanup: required(&library, b"sdk_browser_cleanup\0")?,
                 browser_info: required(&library, b"sdk_browser_info\0")?,
                 browser_command: required(&library, b"sdk_browser_command\0")?,
                 browser_snapshot: required(&library, b"sdk_browser_snapshot\0")?,
+                browser_env_check: required(&library, b"sdk_browser_env_check\0")?,
                 browser_open: required(&library, b"sdk_browser_open\0")?,
                 browser_close: required(&library, b"sdk_browser_close\0")?,
                 shutdown: required(&library, b"sdk_shutdown\0")?,
@@ -177,6 +189,29 @@ impl BroSdk {
         self.call_json_out("sdk_env_page", self.env_page, request)
     }
 
+    pub fn env_get_info(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
+        self.call_json_out("sdk_env_getinfo", self.env_get_info, request)
+    }
+
+    pub fn network_diagnostics(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
+        self.call_json_out("sdk_network_diagnostics", self.network_diagnostics, request)
+    }
+
+    pub fn system_proxy_diagnostics(&self) -> Result<SdkCallOutput, SdkFfiError> {
+        self.call_info(
+            "sdk_system_proxy_diagnostics",
+            self.system_proxy_diagnostics,
+        )
+    }
+
+    pub fn browser_install(&self, request: &Value) -> Result<i32, SdkFfiError> {
+        self.call_async_json("sdk_browser_install", self.browser_install, request)
+    }
+
+    pub fn browser_cleanup(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
+        self.call_json_out("sdk_browser_cleanup", self.browser_cleanup, request)
+    }
+
     pub fn browser_info(&self) -> Result<SdkCallOutput, SdkFfiError> {
         self.call_info("sdk_browser_info", self.browser_info)
     }
@@ -187,6 +222,10 @@ impl BroSdk {
 
     pub fn browser_snapshot(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
         self.call_json_out("sdk_browser_snapshot", self.browser_snapshot, request)
+    }
+
+    pub fn browser_env_check(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
+        self.call_json_out("sdk_browser_env_check", self.browser_env_check, request)
     }
 
     pub fn browser_open(&self, request: &Value) -> Result<i32, SdkFfiError> {
@@ -345,14 +384,23 @@ pub fn get_user_sig_request(api_key: &str) -> Value {
     })
 }
 
-pub fn init_request(user_sig: &str, work_dir: &Path, embedded_port: Option<u16>) -> Value {
+pub fn init_request(
+    user_sig: &str,
+    work_dir: &Path,
+    embedded_port: Option<u16>,
+    sdk_api_url: Option<&str>,
+    debug: bool,
+) -> Value {
     let mut value = json!({
         "userSig": user_sig,
         "workDir": work_dir.display().to_string(),
-        "debug": true
+        "debug": debug
     });
     if let Some(port) = embedded_port {
         value["port"] = json!(port);
+    }
+    if let Some(sdk_api_url) = sdk_api_url.filter(|value| !value.trim().is_empty()) {
+        value["sdkApiUrl"] = json!(sdk_api_url);
     }
     value
 }
@@ -387,10 +435,13 @@ pub fn redact_value(value: &mut Value) {
                 redact_value(item);
             }
         }
-        Value::String(text) if looks_like_sensitive_text(text) => {
-            *text = "[redacted]".into();
+        Value::String(text) => {
+            if looks_like_sensitive_text(text) {
+                *text = "[redacted]".into();
+            } else if let Some(redacted) = redact_url_credentials(text) {
+                *text = redacted;
+            }
         }
-        Value::String(_) => {}
         _ => {}
     }
 }
@@ -433,6 +484,27 @@ fn is_sensitive_key(key: &str) -> bool {
 
 fn looks_like_sensitive_text(text: &str) -> bool {
     text.starts_with("sk-") || text.contains("Bearer ") || text.len() > 120 && text.contains('.')
+}
+
+fn redact_url_credentials(text: &str) -> Option<String> {
+    let scheme_end = text.find("://")?;
+    let authority_start = scheme_end + 3;
+    let authority_end = text[authority_start..]
+        .find(['/', '?', '#'])
+        .map(|index| authority_start + index)
+        .unwrap_or(text.len());
+    let authority = &text[authority_start..authority_end];
+    let at = authority.rfind('@')?;
+    let credentials = &authority[..at];
+    let colon = credentials.find(':')?;
+    let username = &credentials[..colon];
+    Some(format!(
+        "{}{}:***@{}{}",
+        &text[..authority_start],
+        username,
+        &authority[at + 1..],
+        &text[authority_end..]
+    ))
 }
 
 unsafe fn required<T: Copy>(library: &Library, name: &'static [u8]) -> Result<T, SdkFfiError> {
@@ -480,5 +552,12 @@ mod tests {
         redact_value(&mut value);
         assert_eq!(value["data"]["userSig"], "[redacted]");
         assert_eq!(value["data"]["nested"][0]["proxyPassword"], "[redacted]");
+    }
+
+    #[test]
+    fn redacts_password_embedded_in_proxy_url() {
+        let mut value = json!({ "proxy": "socks5://alice:secret@127.0.0.1:1080" });
+        redact_value(&mut value);
+        assert_eq!(value["proxy"], "socks5://alice:***@127.0.0.1:1080");
     }
 }

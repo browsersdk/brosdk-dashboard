@@ -226,11 +226,15 @@ impl RuntimeHost {
         &self,
         work_dir: String,
         embedded_port: Option<u16>,
+        sdk_api_url: Option<String>,
+        debug: bool,
     ) -> Result<serde_json::Value, SdkClientError> {
         self.call(
             HostCommand::Initialize {
                 work_dir,
                 embedded_port,
+                sdk_api_url,
+                debug,
             },
             None,
         )

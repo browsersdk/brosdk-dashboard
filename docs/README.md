@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host、阶段 3 Manager Domain、阶段 4 Dashboard MVP 和阶段 5 环境 E2E 已实现：
+截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host、阶段 3 Manager Domain、阶段 4 Dashboard MVP、阶段 5 环境 E2E 和阶段 6 完整菜单已实现：
 
 ```text
 brosdk-dashboard/
@@ -63,14 +63,15 @@ brosdk-dashboard/
 - Dashboard 不直接加载 DLL，不直接读写本地数据库，不直接访问 CDP。所有操作进入本地 Manager/operation 队列。
 - 动态端口只用于必要的本地 HTTP/MCP 入口。客户端内部优先用 named pipe/UDS 或 Tauri command/event，减少端口占用和启动失败点。
 
+阶段 6 已补齐指纹、代理、内核、操作和设置菜单。代理密码在 Windows 使用 DPAPI 保护；目录、导入/导出和诊断包使用系统文件选择器；内核没有可靠 catalog URL 时显示“未知”，不会误报可更新。
+
 ## 当前实施目标
 
-下一步按 [roadmap.md](roadmap.md) 推进阶段 6 完整菜单：
+下一步按 [roadmap.md](roadmap.md) 推进阶段 7 Windows 发布：
 
-1. 指纹读取、预览、导入/导出和绑定摘要。
-2. 代理配置、URL 解析、凭据保护和网络诊断。
-3. 内核列表、安装/更新/卸载状态与缓存管理。
-4. 操作筛选、重试、取消和日志详情。
-5. 设置目录选择、启动策略和诊断包。
+1. 启用 Tauri Windows 安装包与便携包构建。
+2. 打包 `sdk-host.exe`、`brosdk.dll` 和所需资源。
+3. 增加 WebView2 检查、版本清单与升级/回滚说明。
+4. 验证安装后数据目录、图标和无空白页启动。
 
 阶段 5 已用真实账号完成 `getUserSig(role=user) -> init -> env_page -> browser_open -> browser-open-success -> Runtime.evaluate -> browser_close -> browser-close-success`。DLL 自带 MCP capability 已验证可用；只有设置 `BROSDK_EMBEDDED_PORT` 时才在 runtime host 初始化中启用端口。
