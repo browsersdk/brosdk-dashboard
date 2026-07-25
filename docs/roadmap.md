@@ -326,9 +326,59 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - ready 环境能发现并调用允许的单环境只读工具；非 ready 环境和未批准的 mutation 被 Manager 拒绝。
 - `npm run check`、`npm test`、`npm run build`、真实 SDK/MCP E2E 和 1440x900/390x844 浏览器验收通过。
 
-## 14. 当前状态
+## 14. 阶段 12：首次初始化与环境工作台
 
-阶段 0-11 的仓库内规划已完成。阶段 11 已按“远端缓存语义 -> MCP 双层路由 -> Dashboard/真实 E2E”完成，每一部分均独立执行自动测试、更新文档并提交。
+目标：让未配置客户端从 API Key 激活开始形成完整闭环，并把 Dashboard 重构为面向多环境日常操作的工作台。
+
+产品原则：
+
+- 首次启动只要求 API Key。客户端调用 `sdk_get_user_sig` 时固定 `role=user`；`userSig` 只存在于隔离 Host/DLL 生命周期中，不保存、不展示。
+- API Key 使用平台安全存储：Windows 为 DPAPI，macOS/Linux 为系统 keyring。SQLite、前端 snapshot、operation、事件、诊断包和日志都不得包含密钥、摘要或尾号。
+- 环境变量 `BROSDK_API_KEY` 只作为自动化测试和受管部署覆盖项；普通桌面用户使用安全存储。
+- 初始化必须完成“验证 API Key -> 启动隔离 Host -> DLL 初始化 -> 全量同步环境”后才能进入主工作区。失败保持在初始化页，并返回脱敏、可重试的错误。
+- 更换或移除 API Key 前先停止 Host；账号边界变化时清空远端环境缓存、环境详情和运行态，防止显示上一账号的数据。
+- `/api/v2/browser/*` 是 API Key 认证的环境管理接口；`/api/v2/sdk/*` 是 DLL 持有 userSig 后使用的内部接口。Dashboard 不直接调用 `sdk/*` HTTP 接口。
+- 服务端环境是指纹、代理和内核配置的事实来源。本地可保存脱敏详情缓存以支持离线只读，但不得覆盖服务端配置。
+
+已核对能力矩阵：
+
+| 用户任务 | browser API | DLL C ABI | Dashboard 目标 |
+| --- | --- | --- | --- |
+| 首次认证 | `getUserSig` | `sdk_get_user_sig`、`sdk_init` | API Key 初始化页、安全存储、重试/更换 |
+| 环境列表 | `page` | `sdk_env_page` | 全量同步、搜索、状态筛选、缓存新鲜度 |
+| 环境创建 | `create` | `sdk_env_create` | 只选择代理和内核版本 |
+| 环境详情/指纹 | `info` | `sdk_env_getinfo` | 按单环境读取并结构化展示，不再以本地 JSON 档案为主 |
+| 环境元数据/指纹更新 | `updateEnv`、`update` | `sdk_env_update` | 后续专家操作；普通工作流不暴露完整 DTO |
+| 环境删除 | `destroy` | `sdk_env_destroy` | 停止态二次确认、同步缓存 |
+| 浏览器启停 | - | `sdk_browser_open`、`sdk_browser_close` | 行级与详情区操作、callback ready 语义 |
+| 运行状态 | - | `sdk_browser_info` | 对账、CDP/进程状态 |
+| 指纹验证 | - | `sdk_browser_env_check` | ready 环境打开内置检查页 |
+| 页面取证 | - | `sdk_browser_snapshot` | 诊断入口，不混入普通启动流程 |
+| 本地缓存清理 | - | `sdk_browser_cleanup` | 停止态环境清理与内核下载缓存清理 |
+| 网络诊断 | - | `sdk_network_diagnostics`、`sdk_system_proxy_diagnostics` | 代理页与环境故障诊断 |
+| Cookie/Storage | DLL 内部走 `sdk/getCookie|getStorage|upCookie|upStorage` | callback、`sdk_env_get_cookies` | 默认由 DLL 生命周期管理，不在首轮暴露原始敏感数据 |
+| MCP | - | DLL 内置全局/单环境 MCP | Manager 只读白名单与显式 envId 路由 |
+
+子阶段：
+
+1. 安全初始化：新增 API Key 配置、验证、删除命令；Host 仅通过子进程环境接收密钥；无凭据时不自动启动 Host。
+2. 环境工作台：统一初始化状态、列表、选中环境详情、启停、删除、同步和对账；浏览器预览态只用于 UI QA，并明确不可执行本机动作。
+3. 远端指纹查看器：按选中环境读取 `sdk_env_getinfo`，展示平台、内核、UA、语言/时区、屏幕、Canvas/WebGL/WebRTC 等脱敏结构；ready 时提供检查页入口。
+4. 运维动作：补充单环境详情刷新、本地环境缓存清理和页面快照诊断；高风险更新与 Cookie/Storage 原始数据继续留在受控后续阶段。
+5. E2E：使用临时注入的 API Key 验证首次初始化、重启后安全存储读取、环境同步、详情/指纹、启动 ready、检查页、停止与缓存隔离。
+
+验收：
+
+- 全新数据目录启动时只显示初始化页；API Key 不合法时不能进入主界面，合法时完成同步并进入环境页。
+- 重启客户端无需再次输入 API Key，磁盘扫描和 SQLite 检查找不到明文密钥；snapshot 只返回 `present/source`。
+- 移除或更换 API Key 后 Host 已停止，上一账号的环境列表、详情、CDP 和 operation 运行态不再显示。
+- 用户能从环境列表启动/停止环境、查看服务端指纹摘要，并在 ready 后打开 DLL 指纹检查页。
+- `npm run check`、`npm test`、`npm run build` 和 Rust workspace 测试通过。
+- 真实 E2E 通过；1440x900 与 390x844 首次初始化、环境和指纹页面无重叠、无横向溢出、无应用控制台错误。
+
+## 15. 当前状态
+
+阶段 0-11 的仓库内规划已完成。阶段 12 已完成契约审计并进入实施；按“安全初始化 -> 环境/远端指纹工作台 -> 运维动作 -> 真实 E2E”拆分，每一部分独立执行自动测试、更新文档并提交。
 
 阶段 11 远端缓存子阶段完成（2026-07-26）：
 
