@@ -216,7 +216,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-10 已完成，阶段 11 实施中；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-11 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 所有 API Key 只从环境变量读取，不写入仓库、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -249,3 +249,5 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 2026-07-26 远端缓存子阶段结果：Manager 35 个测试通过，覆盖多页合并、重复 envId、空列表、缺少 total、总数变化、重复页无进展、条数上限、原子替换、远端删除、双重脱敏、失败保留和 v5 迁移。`npm run check`、`npm test`、`npm run build` 均通过；真实 Manager smoke 在独立临时数据目录完成首次自动刷新和显式刷新，operation 为 succeeded、缓存为 `sdk-server/fresh/1`，runtime 正常停止，临时数据库已清理。环境页在 1440x900 与 390x844 下无重叠、无页面级横向溢出，控制台无应用 warning/error。MCP 全局/单环境验收留给下一子阶段。
 
 2026-07-26 Manager MCP 子阶段结果：MCP client 4 个测试和 Manager 40 个测试（含二进制测试）通过，覆盖全局/环境 endpoint、session lifecycle、工具元数据解析、参数归一化、mutation 拒绝和未激活端口。真实隔离 smoke 通过 `getUserSig(role=user)` 初始化 DLL，发现 16 个全局工具、Manager 放行 9 个，协议为 `2025-11-25`；`sdk.health`、`env.list`、`mcp.endpoint` 均成功，未输出环境 ID 或工具正文，runtime 正常停止，临时数据库和端口已清理。单环境扩展读取与 Dashboard 视觉验收留给下一子阶段。
+
+2026-07-26 Dashboard/单环境 MCP 子阶段结果：新增 5 个 MCP 组件测试，Dashboard 共 10 个测试通过；真实生命周期 E2E 发现 18 个单环境工具、Manager 放行 7 个，并完成 `tabs(list)`、从脱敏响应提取 page id、`read(page)` 和 SDK close，报告不包含 envId、页面正文或 URL。Browser 插件完成 DOM/交互/console 检查；因当前截图 API 不可用，截图和几何测量使用本机 Chrome Playwright，1440x900 与 390x844 均无 framework overlay、应用 warning/error、页面级或 MCP 控件横向溢出。测试数据目录和 MCP 端口均已清理。

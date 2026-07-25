@@ -1200,14 +1200,179 @@ h2 {
   gap: 12px;
 }
 
-.mcp-workspace {
-  grid-template-columns: minmax(300px, .8fr) minmax(420px, 1.2fr);
+.mcp-console {
+  min-height: 560px;
+}
+
+.mcp-toolbar {
+  justify-content: space-between;
+}
+
+.mcp-toolbar-status {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 9px;
+  color: #667286;
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.mcp-toolbar-status .service-dot {
+  flex: 0 0 8px;
+}
+
+.mcp-toolbar-status .button {
+  margin-left: 6px;
+}
+
+.mcp-console-body {
+  display: grid;
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
+  min-height: 506px;
+}
+
+.mcp-builder,
+.mcp-output {
+  min-width: 0;
+  padding: 18px;
+}
+
+.mcp-builder {
+  border-right: 1px solid #e3e7ec;
+  background: #fbfcfd;
+}
+
+.mcp-section-heading,
+.mcp-output-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 34px;
+  margin-bottom: 14px;
+  gap: 12px;
+}
+
+.mcp-section-heading > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #566174;
+}
+
+.mcp-section-heading > span,
+.mcp-output-toolbar > small {
+  color: #8993a2;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.mcp-parameter-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.mcp-toggle {
+  min-height: 42px;
+  margin: 2px 0 14px;
+  padding: 0 10px;
+  border: 1px solid #e2e6eb;
+  border-radius: 5px;
+  background: #ffffff;
+}
+
+.mcp-run-button {
+  margin-top: 3px;
+}
+
+.mcp-output {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #ffffff;
+}
+
+.mcp-output-toolbar .segmented-control {
+  grid-template-columns: repeat(2, minmax(84px, 1fr));
+}
+
+.mcp-tool-list {
+  align-self: start;
+  border: 1px solid #e3e7ec;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.mcp-tool-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 48px;
+  padding: 6px 10px;
+  gap: 9px;
+  border-bottom: 1px solid #edf0f3;
+}
+
+.mcp-tool-row:last-child {
+  border-bottom: 0;
+}
+
+.mcp-tool-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 5px;
+}
+
+.mcp-tool-row.allowed .mcp-tool-icon {
+  color: #167452;
+  background: #e9f6ef;
+}
+
+.mcp-tool-row.blocked .mcp-tool-icon {
+  color: #7c6570;
+  background: #f3eef0;
+}
+
+.mcp-tool-row > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.mcp-tool-row strong,
+.mcp-tool-row code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-tool-row strong {
+  color: #303b4d;
+  font-size: 12px;
+}
+
+.mcp-tool-row code {
+  color: #8993a2;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
+}
+
+.mcp-tool-row > span:last-child {
+  color: #687386;
+  font-size: 10px;
+  white-space: nowrap;
 }
 
 .mcp-result {
   display: grid;
-  margin-top: 14px;
+  align-self: start;
   gap: 10px;
+}
+
+.mcp-result .json-preview {
+  margin-top: 0;
 }
 
 .operation-inline {
@@ -1242,9 +1407,13 @@ h2 {
 }
 
 .segmented-control button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   height: 30px;
   border: 0;
   border-radius: 4px;
+  gap: 6px;
   color: #697486;
   background: transparent;
   font: inherit;
@@ -1256,6 +1425,11 @@ h2 {
   color: #2454b9;
   background: #fff;
   box-shadow: 0 1px 2px rgb(32 45 65 / 12%);
+}
+
+.segmented-control button:disabled {
+  cursor: not-allowed;
+  opacity: .45;
 }
 
 .ai-provider-status {
@@ -1418,8 +1592,13 @@ h2 {
 
 @media (max-width: 900px) {
   .ai-grid,
-  .mcp-workspace {
+  .mcp-console-body {
     grid-template-columns: 1fr;
+  }
+
+  .mcp-builder {
+    border-right: 0;
+    border-bottom: 1px solid #e3e7ec;
   }
 
   .ai-toolbar {
@@ -1560,6 +1739,25 @@ h2 {
   .toolbar-group {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .mcp-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .mcp-toolbar .segmented-control,
+  .mcp-toolbar-status {
+    width: 100%;
+  }
+
+  .mcp-toolbar-status .button {
+    margin-left: auto;
+  }
+
+  .mcp-builder,
+  .mcp-output {
+    padding: 14px 12px;
   }
 
   .module-toolbar {

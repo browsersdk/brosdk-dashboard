@@ -157,14 +157,32 @@ export interface AiAgentExecution {
   replayed: boolean;
 }
 
+export type McpToolScope = "global" | "environment";
+
 export interface McpToolCallExecution {
   operation: DashboardSnapshot["operations"][number];
-  scope: "global" | "environment";
+  scope: McpToolScope;
   envId: string | null;
   tool: string;
   protocolVersion: string;
   advertisedTools: string[];
   response: unknown;
+}
+
+export interface McpToolSummary {
+  name: string;
+  description: string | null;
+  readOnlyHint: boolean | null;
+  destructiveHint: boolean | null;
+}
+
+export interface McpToolDiscovery {
+  operation: DashboardSnapshot["operations"][number];
+  scope: McpToolScope;
+  envId: string | null;
+  protocolVersion: string;
+  advertisedTools: McpToolSummary[];
+  allowedTools: string[];
 }
 
 export interface ManagerSettings {

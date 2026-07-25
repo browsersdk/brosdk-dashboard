@@ -15,7 +15,7 @@
 | 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
 | 9. AI Agent | P2 | 已完成 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、持久化幂等、DLL MCP 只读 adapter |
 | 10. 环境创建交互收敛 | P0 | 已完成 | 创建环境只要求选择代理和内核版本，真实 DLL 创建/删除及镜像对账通过 |
-| 11. 远端事实源与 MCP 双层路由 | P0 | 缓存与 Manager MCP 完成，Dashboard 实施中 | 环境配置以 SDK 服务端为准，本地仅保留可丢弃缓存；补齐 DLL 全局与单环境 MCP 路由 |
+| 11. 远端事实源与 MCP 双层路由 | P0 | 已完成 | 环境配置以 SDK 服务端为准，本地仅保留可丢弃缓存；DLL 全局与单环境 MCP 已接通并通过真实验收 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -328,7 +328,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 ## 14. 当前状态
 
-阶段 0-10 的仓库内规划已完成。阶段 11 的远端缓存语义和 Manager MCP 双层路由已完成，正推进 Dashboard 动态工具交互与单环境真实 E2E；每一部分独立执行自动测试、更新文档并提交。
+阶段 0-11 的仓库内规划已完成。阶段 11 已按“远端缓存语义 -> MCP 双层路由 -> Dashboard/真实 E2E”完成，每一部分均独立执行自动测试、更新文档并提交。
 
 阶段 11 远端缓存子阶段完成（2026-07-26）：
 
@@ -344,6 +344,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - Manager API 使用显式 `global`/`environment` scope；全局允许 `sdk.health/info`、`env.list/resolve/get`、`browser.status`、`task.list/get`、`mcp.endpoint`，环境级允许 7 个带参数上限的只读工具。
 - 单环境发现/调用要求缓存中的环境为 ready；全局 mutation、页面导航/交互/脚本/文件工具、全页截图和越界参数均在建立 MCP session 前拒绝。每次发现和调用都有独立 operation，响应继续脱敏并把 URL 降为 origin。
 - domain、MCP client、Manager 和 Tauri command 已接通动态发现；定向测试通过。真实隔离 smoke 发现 DLL 广告 16 个全局工具、Manager 放行 9 个，协议为 `2025-11-25`，并成功调用 `sdk.health`、`env.list`、`mcp.endpoint`；临时数据库与端口均已清理。
+
+阶段 11 Dashboard 与单环境 E2E 子阶段完成（2026-07-26）：
+
+- MCP 页面从固定 `tabs/browser_state` 表单升级为“全局/单环境”分段作用域；全局读取可直接使用，单环境只列出 ready 环境。
+- 工具发现展示 DLL advertised tools 与 Manager 白名单交集，mutation 明确标为策略保护；工具选择只生成健康、分页、环境、任务、页面、搜索和截图所需的最小参数，不提供任意 JSON 输入。
+- 新增 5 个 MCP 组件测试，覆盖作用域切换、动态发现交集、全局 envId 参数、环境 grep 参数和非 ready 禁用；Dashboard 当前共 10 个组件测试。
+- 真实环境 E2E 使用唯一账号环境完成 callback ready、CDP evaluate、单环境工具发现、`tabs(list)`、`read(page)` 和 SDK close；DLL 广告 18 个环境工具、Manager 放行 7 个，临时数据库与端口已清理。
+- Browser 插件完成页面身份、DOM、作用域切换和 console 检查；其截图 API 不可用，截图与几何测量回退到本机 Chrome Playwright。1440x900 与 390x844 均无框架 overlay、应用 warning/error、页面级或 MCP 控件横向溢出，移动工具行稳定为 48px。
 
 阶段 7 实现结果：
 

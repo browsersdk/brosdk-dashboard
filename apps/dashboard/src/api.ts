@@ -10,6 +10,8 @@ import type {
   ManagerEvent,
   ManagerSettings,
   McpToolCallExecution,
+  McpToolDiscovery,
+  McpToolScope,
   OperationExecution,
   OperationRecord,
   ProxyParseResult,
@@ -149,12 +151,22 @@ export async function aiExecuteAgent(plan: AiAgentPlan): Promise<AiAgentExecutio
 }
 
 export async function callEmbeddedMcp(
-  envId: string,
-  tool: "browser_state" | "tabs",
-  action: "get" | "list" | "current",
+  scope: McpToolScope,
+  envId: string | null,
+  tool: string,
+  arguments_: Record<string, unknown>,
 ): Promise<McpToolCallExecution> {
   return invoke<McpToolCallExecution>("manager_call_embedded_mcp", {
-    request: { scope: "environment", envId, tool, arguments: { action } },
+    request: { scope, envId, tool, arguments: arguments_ },
+  });
+}
+
+export async function discoverEmbeddedMcpTools(
+  scope: McpToolScope,
+  envId: string | null,
+): Promise<McpToolDiscovery> {
+  return invoke<McpToolDiscovery>("manager_discover_embedded_mcp_tools", {
+    request: { scope, envId },
   });
 }
 
@@ -226,7 +238,24 @@ function demoSnapshot(): DashboardSnapshot {
       embeddedAvailable: true,
       configured: false,
       active: false,
-      allowedTools: ["browser_state:get", "tabs:list", "tabs:current"],
+      allowedTools: [
+        "global:sdk.health",
+        "global:sdk.info",
+        "global:env.list",
+        "global:env.resolve",
+        "global:env.get",
+        "global:browser.status",
+        "global:task.list",
+        "global:task.get",
+        "global:mcp.endpoint",
+        "environment:browser_state",
+        "environment:tabs",
+        "environment:snapshot",
+        "environment:diff",
+        "environment:read",
+        "environment:grep",
+        "environment:screenshot",
+      ],
       managerRoute: "Manager routes envId and operation state; DLL embedded MCP remains a capability.",
       endpointHint: "not enabled",
       notes: ["Browser preview mode"],

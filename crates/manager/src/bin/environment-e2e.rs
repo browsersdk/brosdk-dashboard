@@ -22,6 +22,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut manual_close_verified = false;
     let mut embedded_mcp_reachable = false;
     let mut embedded_mcp_tool_verified = false;
+    let mut embedded_mcp_read_verified = false;
+    let mut embedded_mcp_advertised_tool_count = 0;
+    let mut embedded_mcp_allowed_tool_count = 0;
     let mut environment_count = 0;
     let requested_env_id = non_empty_env("BROSDK_E2E_ENV_ID");
     let mut target_env_id = requested_env_id.clone();
@@ -139,7 +142,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
         evaluate_verified = true;
 
         if embedded_port().is_some() {
-            let mcp = manager
+            let discovery = manager
+                .discover_embedded_mcp_tools(domain::McpToolDiscoveryRequest {
+                    scope: domain::McpToolScope::Environment,
+                    env_id: Some(env_id.into()),
+                })
+                .await?;
+            ensure_operation_succeeded(&discovery.operation)?;
+            embedded_mcp_advertised_tool_count = discovery.advertised_tools.len();
+            embedded_mcp_allowed_tool_count = discovery.allowed_tools.len();
+            if !discovery.allowed_tools.iter().any(|tool| tool == "tabs")
+                || !discovery.allowed_tools.iter().any(|tool| tool == "read")
+            {
+                return Err("environment MCP discovery did not allow tabs and read".into());
+            }
+            let tabs = manager
                 .call_embedded_mcp(domain::McpToolCallRequest {
                     scope: domain::McpToolScope::Environment,
                     env_id: Some(env_id.into()),
@@ -147,8 +164,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     arguments: json!({ "action": "list" }),
                 })
                 .await?;
-            ensure_operation_succeeded(&mcp.operation)?;
+            ensure_operation_succeeded(&tabs.operation)?;
             embedded_mcp_tool_verified = true;
+            let page = find_mcp_page_id(&tabs.response)
+                .ok_or("environment MCP tabs response did not contain a page id")?;
+            let read = manager
+                .call_embedded_mcp(domain::McpToolCallRequest {
+                    scope: domain::McpToolScope::Environment,
+                    env_id: Some(env_id.into()),
+                    tool: "read".into(),
+                    arguments: json!({ "page": page }),
+                })
+                .await?;
+            ensure_operation_succeeded(&read.operation)?;
+            embedded_mcp_read_verified = true;
         }
 
         if env_flag("BROSDK_E2E_SIMULATE_MANUAL_CLOSE") {
@@ -187,6 +216,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "embeddedMcpConfigured": non_empty_env("BROSDK_EMBEDDED_PORT").is_some(),
             "embeddedMcpReachable": embedded_mcp_reachable,
             "embeddedMcpToolVerified": embedded_mcp_tool_verified,
+            "embeddedMcpReadVerified": embedded_mcp_read_verified,
+            "embeddedMcpAdvertisedToolCount": embedded_mcp_advertised_tool_count,
+            "embeddedMcpAllowedToolCount": embedded_mcp_allowed_tool_count,
             "targetSelection": if requested_env_id.is_some() { "explicit" } else { "only-environment" },
         }))
     }
@@ -219,6 +251,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "manualCloseVerified": manual_close_verified,
                     "embeddedMcpReachable": embedded_mcp_reachable,
                     "embeddedMcpToolVerified": embedded_mcp_tool_verified,
+                    "embeddedMcpReadVerified": embedded_mcp_read_verified,
+                    "embeddedMcpAdvertisedToolCount": embedded_mcp_advertised_tool_count,
+                    "embeddedMcpAllowedToolCount": embedded_mcp_allowed_tool_count,
                     "error": error.to_string(),
                 }))?
             );
@@ -364,6 +399,22 @@ fn find_string_key(value: &Value, key: &str) -> Option<String> {
     }
 }
 
+fn find_mcp_page_id(value: &Value) -> Option<u64> {
+    match value {
+        Value::Object(map) => map
+            .get("page")
+            .and_then(Value::as_u64)
+            .filter(|page| *page > 0)
+            .or_else(|| map.values().find_map(find_mcp_page_id)),
+        Value::Array(values) => values.iter().find_map(find_mcp_page_id),
+        Value::String(text) => serde_json::from_str::<Value>(text)
+            .ok()
+            .as_ref()
+            .and_then(find_mcp_page_id),
+        _ => None,
+    }
+}
+
 fn manual_close_timeout() -> Option<Duration> {
     non_empty_env("BROSDK_E2E_MANUAL_CLOSE_TIMEOUT_SECS")
         .and_then(|value| value.parse::<u64>().ok())
@@ -429,6 +480,16 @@ mod tests {
         assert_eq!(
             find_string_key(&value, "sessionId").as_deref(),
             Some("session-1")
+        );
+    }
+
+    #[test]
+    fn finds_mcp_page_id_inside_text_content() {
+        assert_eq!(
+            find_mcp_page_id(&json!({
+                "content": [{ "type": "text", "text": "{\"pages\":[{\"page\":7}]}" }]
+            })),
+            Some(7)
         );
     }
 }
