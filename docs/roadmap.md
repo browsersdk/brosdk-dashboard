@@ -14,7 +14,7 @@
 | 7. 打包发布 | P1 | 已完成（安装器需本机工具链） | Windows 便携包、Tauri 资源、图标、WebView2、签名准备、升级策略 |
 | 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
 | 9. AI Agent | P2 | 已完成 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、持久化幂等、DLL MCP 只读 adapter |
-| 10. 环境创建交互收敛 | P0 | 实施中 | 创建环境只要求选择代理和内核版本，其余参数由 Manager 与 SDK 默认策略补齐 |
+| 10. 环境创建交互收敛 | P0 | 已完成 | 创建环境只要求选择代理和内核版本，真实 DLL 创建/删除及镜像对账通过 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -278,9 +278,16 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 新增 Vitest + Testing Library，覆盖双字段边界、默认排序、代理/内核 ID 提交、无内核跳转、按钮与 Esc 取消。
 - Browser 插件在 1440x900 与 390x844 完成交互和视觉验收；两种视口均无页面级横向溢出，浏览器控制台无 warning/error。
 
+真实 E2E 子阶段完成（2026-07-26）：
+
+- 新增 `npm run e2e:environment-create`；缺少 API Key 或 `BROSDK_E2E_ALLOW_MUTATION=1` 时安全跳过。
+- PowerShell 包装脚本使用唯一的系统临时 Manager 数据目录，复用现有 SDK workDir，并在退出时清理本地测试数据。
+- E2E 自动选择最新可用本地内核，以本机网络创建环境，确认 operation 只保存两个 ID 字段，并验证创建结果进入本地镜像。
+- 真实 DLL 验收使用 `chrome-134-windows-x86_64` 通过；创建后立即删除，再执行 `env_page`，测试前后账号环境数均为 1，补偿清理成功。
+
 ## 13. 当前状态
 
-阶段 0-9 的仓库内规划已完成。阶段 10 已批准并进入实施，按“Manager 创建链路 -> Dashboard 交互 -> 真实 E2E/视觉验收”的顺序推进；每一部分独立执行自动测试、更新文档并提交。
+阶段 0-10 的仓库内规划已完成。阶段 10 已按“Manager 创建链路 -> Dashboard 交互 -> 真实 E2E/视觉验收”完成，每一部分均独立执行自动测试、更新文档并提交。
 
 阶段 7 实现结果：
 

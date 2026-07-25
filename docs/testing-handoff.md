@@ -216,7 +216,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-9 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-10 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 所有 API Key 只从环境变量读取，不写入仓库、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -229,7 +229,10 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 - 不存在的 proxy profile、未知内核、缺少 major version 和非当前平台内核都必须在调用 DLL 前失败。
 - Dashboard 自动测试覆盖打开创建面板、选择代理、选择内核、禁用态和取消，不在普通浏览器 mock 环境执行真实 mutation。
 - 真实创建 E2E 必须同时设置 `BROSDK_API_KEY` 与 `BROSDK_E2E_ALLOW_MUTATION=1`，测试创建成功后立即删除测试环境并再次 `env_page` 对账。
+- 真实创建 E2E 命令为 `npm run e2e:environment-create`；包装脚本使用唯一临时 Manager 数据目录并在退出时清理，不能在命令或仓库文件中硬编码 API Key。
 
 2026-07-26 Manager 子阶段结果：28 个 Manager 测试、6 个 sdk-ffi 测试、4 个 sdk-host 测试及 environment-e2e 辅助测试通过；workspace all-targets 编译通过。新增覆盖包括 `role=user`、最小 DTO、无代理省略、不可用内核拒绝、业务码检查、错误脱敏、字符串/数字 envId 和本地删除清理。
 
 Dashboard 子阶段结果：5 个环境创建组件测试通过；production build 通过。Browser 插件实测打开创建带、切换代理、按钮取消和 Esc 取消；1440x900、390x844 下 `documentElement.scrollWidth === clientWidth`，无控制台 warning/error。普通浏览器预览仅验证交互，提交按钮保持禁用，不触发远端 mutation。
+
+真实 E2E 子阶段结果：门禁辅助测试 2 项通过；无 API Key 时命令以 `skipped` 退出。设置 mutation 门禁后，真实 DLL 使用 `chrome-134-windows-x86_64` 和本机网络完成创建、镜像确认、删除、`env_page` 再对账；`cleanupAttempted=true`、`cleanupSucceeded=true`，测试前后账号环境数均为 1。
