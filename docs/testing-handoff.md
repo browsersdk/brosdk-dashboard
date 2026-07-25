@@ -220,3 +220,12 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 6. 所有 API Key 只从环境变量读取，不写入仓库、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
+
+## 11. 阶段 10 环境创建验收
+
+- 单元测试验证最小输入只包含 `proxyProfileId` 和 `kernelId`，Manager 构造的 SDK 请求包含自动生成的 `customerId`、`envName`、`finger.kernel` 与 `finger.kernelVersion`。
+- 代理测试使用受保护 secret round trip；断言 operation request、事件和错误文本均不包含代理密码或完整代理 URL。
+- 无代理创建必须覆盖，确认请求省略 `proxy` 而不是发送伪造占位值。
+- 不存在的 proxy profile、未知内核、缺少 major version 和非当前平台内核都必须在调用 DLL 前失败。
+- Dashboard 自动测试覆盖打开创建面板、选择代理、选择内核、禁用态和取消，不在普通浏览器 mock 环境执行真实 mutation。
+- 真实创建 E2E 必须同时设置 `BROSDK_API_KEY` 与 `BROSDK_E2E_ALLOW_MUTATION=1`，测试创建成功后立即删除测试环境并再次 `env_page` 对账。

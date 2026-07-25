@@ -123,6 +123,17 @@ GET  /api/v1/events
 
 mutation 都返回 operation，不等待浏览器完全 ready。事件必须有递增 sequence，便于 Dashboard 刷新后恢复。
 
+阶段 10 将创建输入固定为最小产品契约：
+
+```text
+EnvironmentCreateInput {
+  proxyProfileId?: string
+  kernelId: string
+}
+```
+
+Manager 根据 `kernelId` 生成后端要求的 `finger.kernel` 和 `finger.kernelVersion`，根据 `proxyProfileId` 从系统密钥库临时恢复完整代理 URL，并自动生成 `customerId` 与 `envName`。Dashboard 不接触代理密码，也不允许透传任意创建 JSON。语言、时区、UA、Canvas、WebGL 等指纹细项由后端根据代理 IP 和 SDK 默认策略生成。
+
 `brosdk.dll` 本身已经包含内嵌 MCP / HTTP 能力。新客户端把它作为 `sdk-host` 的 platform capability 暴露：当 Manager 明确配置端口时，由 `sdk_init` 的 `port` 字段启用 DLL 内嵌端点；Dashboard 不直接依赖该端点，仍通过 Manager 统一处理 envId 路由、operation 状态、安全策略和未来审批。
 
 阶段 9 的 Manager MCP adapter 使用 DLL 的 Streamable HTTP 单环境端点 `/sdk/v1/mcp/env/{envId}`，严格执行 `initialize -> notifications/initialized -> tools/list/tools/call -> DELETE`。当前只允许 ready 环境调用 `browser_state(action=get)` 与 `tabs(action=list|current)`；每次调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。设置端口只代表下次 init 的配置，只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。

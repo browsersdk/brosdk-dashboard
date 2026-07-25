@@ -14,6 +14,7 @@
 | 7. 打包发布 | P1 | 已完成（安装器需本机工具链） | Windows 便携包、Tauri 资源、图标、WebView2、签名准备、升级策略 |
 | 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
 | 9. AI Agent | P2 | 已完成 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、持久化幂等、DLL MCP 只读 adapter |
+| 10. 环境创建交互收敛 | P0 | 实施中 | 创建环境只要求选择代理和内核版本，其余参数由 Manager 与 SDK 默认策略补齐 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -221,9 +222,49 @@
 - Agent 不能把 accepted 说成 ready。
 - Agent 操作都有 operation id 和可追溯事件。
 
-## 12. 当前状态
+## 12. 阶段 10：环境创建交互收敛
 
-阶段 0-9 的仓库内规划已完成。当前没有已批准的阶段 10；后续新增需求应先在本文件补充阶段目标、任务、风险和验收标准，再按“实现 -> 自动测试 -> 文档 -> Git 提交”的循环推进。
+目标：补齐远端环境创建能力，并把普通用户的创建流程收敛为“选择代理 + 选择内核版本”。
+
+产品原则：
+
+- 代理可选；不选择时使用本机网络。
+- 内核版本必选；默认预选最新的本地可用版本。
+- `customerId`、环境名称和指纹细项不由普通用户填写。
+- 环境名称由 Manager 自动生成，保证列表中可识别且不要求用户先命名。
+- 语言、时区、UA、Canvas、WebGL 等指纹参数不在创建界面暴露，由后端根据代理 IP 和 SDK 默认策略生成。
+- 高级指纹编辑继续保留在独立“指纹”模块，不混入环境创建主流程。
+
+任务：
+
+- 为 `sdk_env_create` 补齐 FFI、runtime host、Manager operation 和 Tauri command 链路。
+- 定义 `EnvironmentCreateInput`，只接受 `proxyProfileId` 和 `kernelId`。
+- Manager 从受保护的代理 profile 恢复完整代理 URL，仅在调用 DLL 的瞬间使用；operation、事件和错误日志只记录 profile id 与脱敏摘要。
+- Manager 校验内核存在且可用于当前平台，构造 `finger.kernel` 与 `finger.kernelVersion`。
+- Manager 自动生成 `customerId` 和 `envName`，调用成功后立即同步环境镜像。
+- Dashboard 环境页增加紧凑创建面板；主表单只展示代理与内核两个选择控件。
+- 无本地可用内核时明确引导到内核页，不提交不完整请求。
+
+风险：
+
+- `sdk_env_create` 是远端写操作，自动测试必须受 `BROSDK_E2E_ALLOW_MUTATION=1` 门禁。
+- 代理密码必须经过系统密钥库读取，不能进入 SQLite operation request、Manager event、前端 snapshot 或日志。
+- DLL 返回成功不等于本地镜像已更新；创建结果必须再执行 `env_page` 同步并对账。
+- 后端可能调整默认字段要求；Manager 应保留稳定的最小请求构造测试，并把后端错误作为脱敏失败 operation 展示。
+
+验收：
+
+- 普通创建界面只有代理和内核版本两个业务参数。
+- 不选择代理也能提交；没有可用内核时不能提交。
+- operation request 不含代理 URL、密码、API Key、userSig 或完整后端响应。
+- 创建成功后环境出现在列表中，并产生可追踪的 `environment.create` operation。
+- `npm run check`、`npm test`、`npm run build` 通过。
+- 1440x900 与 390x844 下创建面板无重叠、无横向溢出，键盘焦点和错误状态可用。
+- 真实创建/删除验证只在 mutation 门禁开启时运行，并在测试后清理创建的环境。
+
+## 13. 当前状态
+
+阶段 0-9 的仓库内规划已完成。阶段 10 已批准并进入实施，按“Manager 创建链路 -> Dashboard 交互 -> 真实 E2E/视觉验收”的顺序推进；每一部分独立执行自动测试、更新文档并提交。
 
 阶段 7 实现结果：
 

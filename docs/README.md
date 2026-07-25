@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host、阶段 3 Manager Domain、阶段 4 Dashboard MVP、阶段 5 环境 E2E、阶段 6 完整菜单、阶段 7 Windows 便携发布和阶段 8 跨平台 adapter 基础已实现：
+截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host、阶段 3 Manager Domain、阶段 4 Dashboard MVP、阶段 5 环境 E2E、阶段 6 完整菜单、阶段 7 Windows 便携发布、阶段 8 跨平台 adapter 基础和阶段 9 AI/MCP 已实现。阶段 10 环境创建交互收敛正在实施：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,9 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-9 的仓库内规划已全部实施并通过当前平台验收。后续工作不再自动扩展阶段编号；新增产品范围应先补充路线图、风险和验收标准，再进入实现。
+[roadmap.md](roadmap.md) 中阶段 0-9 的仓库内规划已全部实施并通过当前平台验收。阶段 10 已新增并进入实施，目标是补齐 `sdk_env_create` 完整链路，同时把创建环境的普通用户界面收敛为只选择代理和内核版本。
+
+阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 已知 catalog/本地扫描；`customerId` 与环境名称由 Manager 自动生成；语言、时区、UA、Canvas、WebGL 等指纹细项交给后端按代理 IP 和 SDK 默认策略生成。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 
 阶段 5 已用真实账号完成 `getUserSig(role=user) -> init -> env_page -> browser_open -> browser-open-success -> Runtime.evaluate -> browser_close -> browser-close-success`。DLL 自带 MCP capability 已验证可用；只有设置 `BROSDK_EMBEDDED_PORT` 时才在 runtime host 初始化中启用端口。
 
