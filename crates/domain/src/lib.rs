@@ -1,0 +1,234 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SdkCapabilities {
+    pub platform: String,
+    pub c_abi: bool,
+    pub embedded_web_api: bool,
+    pub embedded_mcp: bool,
+    pub supports_init_port: bool,
+    pub callbacks: Vec<String>,
+    pub sync_calls: Vec<String>,
+    pub async_calls: Vec<String>,
+    pub cdp_calls: Vec<String>,
+    pub dll_path: Option<String>,
+    pub dll_exists: bool,
+}
+
+impl Default for SdkCapabilities {
+    fn default() -> Self {
+        Self {
+            platform: std::env::consts::OS.to_string(),
+            c_abi: true,
+            embedded_web_api: true,
+            embedded_mcp: true,
+            supports_init_port: true,
+            callbacks: vec![
+                "result".into(),
+                "log".into(),
+                "cookies-storage".into(),
+                "security-decision".into(),
+            ],
+            sync_calls: vec![
+                "sdk_get_user_sig".into(),
+                "sdk_init".into(),
+                "sdk_info".into(),
+                "sdk_env_page".into(),
+                "sdk_browser_info".into(),
+                "sdk_browser_command".into(),
+                "sdk_browser_snapshot".into(),
+                "sdk_shutdown".into(),
+            ],
+            async_calls: vec![
+                "sdk_browser_open".into(),
+                "sdk_browser_close".into(),
+                "sdk_browser_install".into(),
+                "sdk_token_update".into(),
+            ],
+            cdp_calls: vec![
+                "sdk_browser_command".into(),
+                "sdk_browser_env_check".into(),
+                "sdk_browser_snapshot".into(),
+            ],
+            dll_path: None,
+            dll_exists: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallbackCounts {
+    pub result: usize,
+    pub log: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SmokeStageStatus {
+    Passed,
+    Failed,
+    Skipped,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmokeStage {
+    pub name: String,
+    pub status: SmokeStageStatus,
+    pub code: Option<i32>,
+    pub message: String,
+    pub duration_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JsonSummary {
+    pub kind: String,
+    pub keys: Vec<String>,
+    pub item_count: Option<usize>,
+    pub total: Option<u64>,
+    pub page: Option<u64>,
+    pub page_size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SmokeReport {
+    pub skipped: bool,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: DateTime<Utc>,
+    pub dll_path: String,
+    pub work_dir: Option<String>,
+    pub embedded_mcp_port: Option<u16>,
+    pub capabilities: SdkCapabilities,
+    pub stages: Vec<SmokeStage>,
+    pub callbacks: CallbackCounts,
+    pub sdk_info: Option<JsonSummary>,
+    pub env_page: Option<JsonSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeyStatus {
+    pub source: String,
+    pub present: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SdkPanel {
+    pub state: String,
+    pub api_key: ApiKeyStatus,
+    pub host_path: Option<String>,
+    pub dll_path: String,
+    pub work_dir: String,
+    pub last_smoke: Option<SmokeReport>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentRecord {
+    pub env_id: String,
+    pub name: String,
+    pub status: String,
+    pub cdp: String,
+    pub last_event: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OperationRecord {
+    pub id: String,
+    pub label: String,
+    pub status: String,
+    pub message: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpPanel {
+    pub mode: String,
+    pub embedded_available: bool,
+    pub manager_route: String,
+    pub endpoint_hint: String,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DashboardSnapshot {
+    pub sdk: SdkPanel,
+    pub capabilities: SdkCapabilities,
+    pub mcp: McpPanel,
+    pub environments: Vec<EnvironmentRecord>,
+    pub operations: Vec<OperationRecord>,
+}
+
+pub fn summarize_json(value: &Value) -> JsonSummary {
+    match value {
+        Value::Array(items) => JsonSummary {
+            kind: "array".into(),
+            keys: Vec::new(),
+            item_count: Some(items.len()),
+            total: None,
+            page: None,
+            page_size: None,
+        },
+        Value::Object(map) => {
+            let data = map.get("data");
+            let item_count = data.and_then(find_list_len);
+            JsonSummary {
+                kind: "object".into(),
+                keys: map.keys().cloned().collect(),
+                item_count,
+                total: find_u64(value, &["total", "totalCount", "count"]),
+                page: find_u64(value, &["page", "pageIndex", "pageNo", "currentPage"]),
+                page_size: find_u64(value, &["pageSize", "size", "limit"]),
+            }
+        }
+        _ => JsonSummary {
+            kind: "scalar".into(),
+            keys: Vec::new(),
+            item_count: None,
+            total: None,
+            page: None,
+            page_size: None,
+        },
+    }
+}
+
+fn find_list_len(value: &Value) -> Option<usize> {
+    match value {
+        Value::Array(items) => Some(items.len()),
+        Value::Object(map) => ["list", "items", "records", "rows"]
+            .iter()
+            .find_map(|key| map.get(*key).and_then(Value::as_array).map(Vec::len)),
+        _ => None,
+    }
+}
+
+fn find_u64(value: &Value, keys: &[&str]) -> Option<u64> {
+    match value {
+        Value::Object(map) => {
+            for key in keys {
+                if let Some(number) = map.get(*key).and_then(Value::as_u64) {
+                    return Some(number);
+                }
+            }
+            if let Some(data) = map.get("data").and_then(Value::as_object) {
+                for key in keys {
+                    if let Some(number) = data.get(*key).and_then(Value::as_u64) {
+                        return Some(number);
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}

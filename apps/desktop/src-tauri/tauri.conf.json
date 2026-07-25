@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "BroSDK Dashboard",
+  "version": "0.1.0",
+  "identifier": "com.brosdk.dashboard",
+  "build": {
+    "beforeDevCommand": "npm run dev --prefix ../../dashboard -- --host 127.0.0.1 --port 1420",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build --prefix ../../dashboard",
+    "frontendDist": "../../dashboard/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "BroSDK Dashboard",
+        "width": 1280,
+        "height": 820,
+        "minWidth": 960,
+        "minHeight": 640
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all"
+  }
+}

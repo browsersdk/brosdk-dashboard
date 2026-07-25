@@ -1,0 +1,24 @@
+[package]
+name = "brosdk-desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "brosdk_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "brosdk-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+domain = { path = "../../../crates/domain" }
+manager = { path = "../../../crates/manager" }
+sdk-client = { path = "../../../crates/sdk-client" }
+serde_json.workspace = true
+tauri.workspace = true
