@@ -241,8 +241,6 @@ function demoSnapshot(): DashboardSnapshot {
       {
         envId: "env-demo-01",
         name: "Marketing CN",
-        localLabel: "",
-        tags: [],
         status: "stopped",
         cdp: "-",
         lastEvent: "browser-close-success",
@@ -252,6 +250,14 @@ function demoSnapshot(): DashboardSnapshot {
         updatedAt: new Date(0).toISOString(),
       },
     ],
+    environmentCache: {
+      source: "sdk-server",
+      state: "fresh",
+      count: 1,
+      lastSuccessAt: new Date().toISOString(),
+      lastAttemptAt: new Date().toISOString(),
+      lastError: null,
+    },
     environmentBindings: [{
       envId: "env-demo-01",
       fingerprintProfileId: "fp-demo",

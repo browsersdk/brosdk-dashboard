@@ -11,12 +11,13 @@ Manager 使用 `runtime/data/manager.sqlite3` 持久化设置、operation、本�
 - 任一分页失败时不写入部分结果，保留上一份缓存并标记 stale。
 - generation、reqId、CDP、ready/stopped 属于当前设备运行态，可与缓存一起保存，但不能覆盖远端环境配置。
 
-当前 schema version 为 4：
+当前 schema version 为 5：
 
 | 表 | 用途 |
 | --- | --- |
 | `settings` | dataDir、workDir、extensionDir、logDir、sdkApiUrl、debug、startupPolicy、embeddedMcpPort |
 | `environments` | SDK 服务端环境的可丢弃脱敏缓存，以及当前设备 generation、状态和 CDP |
+| `environment_cache_status` | 缓存 fresh/stale/empty、条数、最后成功/尝试时间和脱敏错误 |
 | `operations` | queued/running/succeeded/failed/cancelled 状态机与脱敏 request snapshot |
 | `runtime_snapshots` | 每个 envId 最近一次运行事实 |
 | `proxy_profiles` | 本地代理 profile；只保存 secret reference |
@@ -56,7 +57,7 @@ queued -> running -> succeeded
 
 ## 4. Snapshot 与增量事件
 
-`manager_snapshot` 返回 SDK/runtime、环境镜像、最近 100 条 operation、settings、数据库路径和 `latestEventSequence`。Dashboard 可从该 sequence 调用 `manager_events_since`，每次最多读取 500 条事件。
+`manager_snapshot` 返回 SDK/runtime、环境缓存、`environmentCache` 新鲜度、最近 100 条 operation、settings、数据库路径和 `latestEventSequence`。进程启动时持久化缓存先视为 stale；API Key 可用时首次 snapshot 自动尝试刷新一次。Dashboard 可从该 sequence 调用 `manager_events_since`，每次最多读取 500 条事件。
 
 host 进入 degraded 时，Manager 把 preparing/starting/ready/stopping 环境改为 unknown，并把 queued/running operation 标为 `HOST_DEGRADED`。Manager 不自动无限重启 host。
 
@@ -75,8 +76,11 @@ host 进入 degraded 时，Manager 把 preparing/starting/ready/stopping 环境�
 `manager_sync_environments` 串行执行：
 
 ```text
-queued -> initialize SDK once -> sdk_env_page -> upsert mirror -> succeeded/failed
+queued -> initialize SDK once -> sdk_env_page(page=1..N) -> atomic replace -> succeeded
+                                                       \-> preserve cache + stale on failure
 ```
+
+分页默认每页 200 条，最多 500 页/100000 个唯一 envId。Manager 根据 `data.total`（兼容 count）继续拉取，按 envId 去重；总数中途变化、空页提前结束、重复页无新增或超过上限都视为失败。缓存写入在 Manager 持久化入口再次脱敏，成功事务会删除服务端已不存在的 environment、runtime snapshot 和级联 detail。
 
 `manager_reconcile_runtimes` 调用 `sdk_browser_info`，把存在于返回值中的环境对账为 ready，把本地活动但不再存在的环境改为 stopped。该路径用于手动关闭浏览器后的状态恢复。
 

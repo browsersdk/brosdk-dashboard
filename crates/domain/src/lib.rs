@@ -283,8 +283,6 @@ pub enum HostWireMessage {
 pub struct EnvironmentRecord {
     pub env_id: String,
     pub name: String,
-    pub local_label: String,
-    pub tags: Vec<String>,
     pub status: String,
     pub cdp: String,
     pub last_event: String,
@@ -292,6 +290,17 @@ pub struct EnvironmentRecord {
     pub request_id: Option<i32>,
     pub current_operation_id: Option<String>,
     pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentCacheStatus {
+    pub source: String,
+    pub state: String,
+    pub count: usize,
+    pub last_success_at: Option<DateTime<Utc>>,
+    pub last_attempt_at: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -545,6 +554,7 @@ pub struct DashboardSnapshot {
     pub mcp: McpPanel,
     pub ai: AiProviderStatus,
     pub environments: Vec<EnvironmentRecord>,
+    pub environment_cache: EnvironmentCacheStatus,
     pub environment_bindings: Vec<EnvironmentBindingSummary>,
     pub fingerprints: Vec<FingerprintProfile>,
     pub proxies: Vec<ProxyProfile>,

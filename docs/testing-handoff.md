@@ -245,3 +245,5 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 全局 MCP 测试覆盖 `/sdk/v1/mcp` 的 initialize、initialized、tools/list、只读 tools/call、DELETE，并确认 mutation 工具不会被 Dashboard 直通。
 - 单环境 MCP 测试覆盖 advertised tools 与 Manager 白名单交集；非 ready 环境、未公布工具和变更工具必须拒绝。
 - 真实测试至少验证全局 `sdk.health`、`env.list`、`mcp.endpoint`，以及 ready 环境的 `tabs(list)` 和一个页面读取工具；报告不输出 envId、页面正文、URL query、API Key 或 userSig。
+
+2026-07-26 远端缓存子阶段结果：Manager 35 个测试通过，覆盖多页合并、重复 envId、空列表、缺少 total、总数变化、重复页无进展、条数上限、原子替换、远端删除、双重脱敏、失败保留和 v5 迁移。`npm run check`、`npm test`、`npm run build` 均通过；真实 Manager smoke 在独立临时数据目录完成首次自动刷新和显式刷新，operation 为 succeeded、缓存为 `sdk-server/fresh/1`，runtime 正常停止，临时数据库已清理。环境页在 1440x900 与 390x844 下无重叠、无页面级横向溢出，控制台无应用 warning/error。MCP 全局/单环境验收留给下一子阶段。

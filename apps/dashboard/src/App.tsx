@@ -138,7 +138,7 @@ export default function App() {
       setSnapshot(await getSnapshot());
       setError("");
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "读取本地状态失败");
+      setError(requestError instanceof Error ? requestError.message : "读取状态失败");
     } finally {
       setLoading(false);
     }
@@ -375,12 +375,21 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
     const normalized = query.trim().toLocaleLowerCase();
     return rows.filter((environment) => {
       const matchesStatus = status === "all" || environment.status === status;
-      const matchesQuery = !normalized || [environment.name, environment.localLabel, environment.envId, ...environment.tags]
+      const matchesQuery = !normalized || [environment.name, environment.envId]
         .some((value) => value.toLocaleLowerCase().includes(normalized));
       return matchesStatus && matchesQuery;
     });
   }, [query, rows, status]);
   const selected = rows.find((environment) => environment.envId === selectedEnvId) ?? null;
+  const cache = snapshot?.environmentCache;
+  const cacheLabel = cache?.state === "fresh"
+    ? `服务端 · ${cache.count}`
+    : cache?.state === "stale"
+      ? `缓存 · ${cache.count}`
+      : "待同步";
+  const cacheTitle = cache?.state === "fresh"
+    ? `最近同步：${cache.lastSuccessAt ? new Date(cache.lastSuccessAt).toLocaleString("zh-CN") : "刚刚"}`
+    : cache?.lastError ?? "尚未从 SDK 服务器同步环境";
 
   async function runAction(action: string, callback: () => Promise<unknown>) {
     setBusyAction(action);
@@ -418,6 +427,9 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
       <div className="module-toolbar">
         <div className="toolbar-group">
           <span className="toolbar-title">环境列表</span>
+          <span className={`cache-state ${cache?.state ?? "empty"}`} title={cacheTitle} aria-live="polite">
+            <Database size={13} />{cacheLabel}
+          </span>
           <label className="search-control">
             <Search size={15} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称或 envId" />
@@ -466,7 +478,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           <tbody>
             {filteredRows.map((environment) => (
               <tr key={environment.envId} className={selectedEnvId === environment.envId ? "selected" : ""} onClick={() => setSelectedEnvId(environment.envId)}>
-                <td><div className="resource-name"><span className="resource-icon"><Boxes size={16} /></span><div><strong>{environment.localLabel || environment.name}</strong><small>{environment.envId}</small></div></div></td>
+                <td><div className="resource-name"><span className="resource-icon"><Boxes size={16} /></span><div><strong>{environment.name}</strong><small>{environment.envId}</small></div></div></td>
                 <td><span className={`status-badge ${environment.status}`}>{statusLabel[environment.status] ?? environment.status}</span></td>
                 <td><code>{environment.cdp}</code></td>
                 <td>{environment.lastEvent}</td>
@@ -515,7 +527,7 @@ function EnvironmentDetail({ environment, onClose }: {
   return (
     <aside className="environment-detail" aria-label="环境详情">
       <div className="detail-heading">
-        <div><small>运行详情</small><h2>{environment.localLabel || environment.name}</h2></div>
+        <div><small>运行详情</small><h2>{environment.name}</h2></div>
         <button className="icon-button" type="button" title="关闭详情" aria-label="关闭详情" onClick={onClose}><X size={16} /></button>
       </div>
       <dl className="detail-list compact">
@@ -630,7 +642,7 @@ function FingerprintPage({ snapshot, onRefresh, onError }: {
         <aside className="resource-editor">
           <div className="panel-heading"><SlidersHorizontal size={17} /><h2>{selected ? "编辑指纹" : "新建指纹"}</h2></div>
           <label className="field"><span>名称</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <label className="field"><span>绑定环境</span><select value={boundEnvId} onChange={(event) => setBoundEnvId(event.target.value)}><option value="">不绑定</option>{snapshot?.environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.localLabel || environment.name}</option>)}</select></label>
+          <label className="field"><span>绑定环境</span><select value={boundEnvId} onChange={(event) => setBoundEnvId(event.target.value)}><option value="">不绑定</option>{snapshot?.environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.name}</option>)}</select></label>
           <label className="field"><span>Profile JSON</span><textarea rows={12} spellCheck={false} value={profileText} onChange={(event) => setProfileText(event.target.value)} /></label>
           <div className="form-actions"><button className="button primary" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void saveProfile()}><CheckCircle2 size={15} />保存</button></div>
           {binding && <JsonPreview label="远端指纹摘要" value={binding.remoteFingerprint} />}
@@ -731,7 +743,7 @@ function ProxyPage({ snapshot, onRefresh, onError }: {
           <label className="field"><span>名称</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
           <label className="field"><span>代理 URL</span><input placeholder="socks5://user:pass@host:1080" value={url} onChange={(event) => { setUrl(event.target.value); setParseSummary(""); }} /></label>
           <div className="inline-form-actions"><button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || !url || Boolean(busy)} onClick={() => void preview()}><Search size={14} />解析</button>{parseSummary && <code>{parseSummary}</code>}</div>
-          <label className="field"><span>绑定环境</span><select value={boundEnvId} onChange={(event) => setBoundEnvId(event.target.value)}><option value="">不绑定</option>{snapshot?.environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.localLabel || environment.name}</option>)}</select></label>
+          <label className="field"><span>绑定环境</span><select value={boundEnvId} onChange={(event) => setBoundEnvId(event.target.value)}><option value="">不绑定</option>{snapshot?.environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.name}</option>)}</select></label>
           <div className="form-actions"><button className="button primary" type="button" disabled={!isDesktopRuntime() || !url || Boolean(busy)} onClick={() => void save()}><CheckCircle2 size={15} />保存</button></div>
           <div className="divider" />
           <label className="field"><span>诊断 URL</span><input value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} /></label>
@@ -837,7 +849,7 @@ function McpPage({ snapshot, onRefresh, onError }: {
       <div className="panel">
         <div className="panel-heading"><Fingerprint size={17} /><h2>只读工具</h2></div>
         <div className="form-grid compact-form">
-          <label className="field"><span>环境</span><select value={selectedEnvId} onChange={(event) => setEnvId(event.target.value)}><option value="">选择 ready 环境</option>{readyEnvironments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.localLabel || environment.name}</option>)}</select></label>
+          <label className="field"><span>环境</span><select value={selectedEnvId} onChange={(event) => setEnvId(event.target.value)}><option value="">选择 ready 环境</option>{readyEnvironments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.name}</option>)}</select></label>
           <label className="field"><span>工具</span><select value={tool} onChange={(event) => setTool(event.target.value as "browser_state" | "tabs")}><option value="tabs">tabs</option><option value="browser_state">browser_state</option></select></label>
           {tool === "tabs" && <label className="field"><span>Action</span><select value={tabsAction} onChange={(event) => setTabsAction(event.target.value as "list" | "current")}><option value="list">list</option><option value="current">current</option></select></label>}
         </div>

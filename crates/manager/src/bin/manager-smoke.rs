@@ -25,6 +25,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 "errorCode": operation.error_code,
             },
             "environmentCount": after.environments.len(),
+            "environmentCache": {
+                "source": after.environment_cache.source,
+                "state": after.environment_cache.state,
+                "count": after.environment_cache.count,
+                "lastSuccessPresent": after.environment_cache.last_success_at.is_some(),
+                "lastErrorPresent": after.environment_cache.last_error.is_some(),
+            },
             "eventCount": events.len(),
             "latestEventSequence": after.latest_event_sequence,
             "runtimeStopped": stopped,

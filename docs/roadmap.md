@@ -15,7 +15,7 @@
 | 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
 | 9. AI Agent | P2 | 已完成 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、持久化幂等、DLL MCP 只读 adapter |
 | 10. 环境创建交互收敛 | P0 | 已完成 | 创建环境只要求选择代理和内核版本，真实 DLL 创建/删除及镜像对账通过 |
-| 11. 远端事实源与 MCP 双层路由 | P0 | 实施中 | 环境配置以 SDK 服务端为准，本地仅保留可丢弃缓存；补齐 DLL 全局与单环境 MCP 路由 |
+| 11. 远端事实源与 MCP 双层路由 | P0 | 缓存完成，MCP 实施中 | 环境配置以 SDK 服务端为准，本地仅保留可丢弃缓存；补齐 DLL 全局与单环境 MCP 路由 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -329,6 +329,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 ## 14. 当前状态
 
 阶段 0-10 的仓库内规划已完成。阶段 11 正按“远端缓存语义 -> MCP 双层路由 -> Dashboard/真实 E2E”推进，每一部分独立执行自动测试、更新文档并提交。
+
+阶段 11 远端缓存子阶段完成（2026-07-26）：
+
+- `sdk_env_page` 默认请求 200 条并按 `data.total` 拉取完整分页，按 envId 去重，限制最多 500 页/100000 条；异常总数、重复页和提前空页均 fail closed。
+- schema 升级到 v5，新增 `environment_cache_status`；全页成功后单事务替换缓存并删除远端缺失项，失败保留旧缓存并记录脱敏 stale 原因。
+- `EnvironmentRecord` 和 Dashboard 删除本地名称/标签覆盖；迁移保留旧列以兼容数据库，但启动即清空且后续不再读取。
+- API Key 可用时首次 snapshot 自动刷新；Dashboard 环境工具栏显示服务端、缓存或待同步状态，诊断包与 Manager smoke 同步输出缓存元数据。
+- `npm run check`、`npm test`、`npm run build` 通过；真实 `getUserSig(role=user) -> init -> env_page` Manager smoke 使用独立临时数据库通过，返回 fresh/1 个服务端环境且测试目录已清理；1440x900 与 390x844 环境页无重叠、无页面级横向溢出且控制台无应用错误。
 
 阶段 7 实现结果：
 

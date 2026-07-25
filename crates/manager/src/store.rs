@@ -6,15 +6,15 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use domain::{
-    AiAgentExecution, EnvironmentRecord, FingerprintProfile, HostEvent, KernelRecord, ManagerEvent,
-    ManagerSettings, OperationRecord, ProxyProfile,
+    AiAgentExecution, EnvironmentCacheStatus, EnvironmentRecord, FingerprintProfile, HostEvent,
+    KernelRecord, ManagerEvent, ManagerSettings, OperationRecord, ProxyProfile,
 };
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 pub struct StoredAgentExecution {
     pub plan_hash: String,
@@ -113,6 +113,15 @@ impl ManagerStore {
                 request_id INTEGER,
                 current_operation_id TEXT,
                 updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS environment_cache_status (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                state TEXT NOT NULL DEFAULT 'empty',
+                cache_count INTEGER NOT NULL DEFAULT 0,
+                last_success_at TEXT,
+                last_attempt_at TEXT,
+                last_error TEXT
             );
 
             CREATE TABLE IF NOT EXISTS operations (
@@ -267,6 +276,24 @@ impl ManagerStore {
             "UPDATE settings SET data_dir = ?1 WHERE id = 1 AND data_dir = ''",
             [defaults.data_dir.as_str()],
         )?;
+        connection.execute(
+            "UPDATE environments SET local_label = '', tags_json = '[]'",
+            [],
+        )?;
+        connection.execute(
+            r#"INSERT OR IGNORE INTO environment_cache_status(id, state, cache_count)
+               SELECT 1, CASE WHEN COUNT(*) > 0 THEN 'stale' ELSE 'empty' END, COUNT(*)
+               FROM environments"#,
+            [],
+        )?;
+        connection.execute(
+            r#"UPDATE environment_cache_status SET
+                   state = CASE WHEN (SELECT COUNT(*) FROM environments) > 0
+                                THEN 'stale' ELSE 'empty' END,
+                   cache_count = (SELECT COUNT(*) FROM environments)
+               WHERE id = 1"#,
+            [],
+        )?;
         Ok(Self {
             path: Arc::new(path),
             connection: Arc::new(Mutex::new(connection)),
@@ -338,9 +365,9 @@ impl ManagerStore {
     pub fn list_environments(&self) -> Result<Vec<EnvironmentRecord>, StoreError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            r#"SELECT env_id, name, local_label, tags_json, status, cdp, last_event,
+            r#"SELECT env_id, name, status, cdp, last_event,
                       generation, request_id, current_operation_id, updated_at
-               FROM environments ORDER BY COALESCE(NULLIF(local_label, ''), name), env_id"#,
+               FROM environments ORDER BY name, env_id"#,
         )?;
         let rows = statement.query_map([], environment_from_row)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -349,7 +376,7 @@ impl ManagerStore {
     pub fn environment(&self, env_id: &str) -> Result<Option<EnvironmentRecord>, StoreError> {
         self.connection()?
             .query_row(
-                r#"SELECT env_id, name, local_label, tags_json, status, cdp, last_event,
+                r#"SELECT env_id, name, status, cdp, last_event,
                           generation, request_id, current_operation_id, updated_at
                    FROM environments WHERE env_id = ?1"#,
                 [env_id],
@@ -367,19 +394,122 @@ impl ManagerStore {
         let transaction = connection.transaction()?;
         let now = timestamp();
         for (env_id, name, remote) in environments {
+            let mut remote = remote.clone();
+            sdk_ffi::redact_value(&mut remote);
             transaction.execute(
                 r#"INSERT INTO environments(
-                    env_id, name, remote_json, status, cdp, last_event, updated_at
-                ) VALUES (?1, ?2, ?3, 'stopped', '-', 'env_page sync', ?4)
+                    env_id, name, local_label, tags_json, remote_json,
+                    status, cdp, last_event, updated_at
+                ) VALUES (?1, ?2, '', '[]', ?3, 'stopped', '-', 'env_page sync', ?4)
                 ON CONFLICT(env_id) DO UPDATE SET
                     name = excluded.name,
+                    local_label = '',
+                    tags_json = '[]',
                     remote_json = excluded.remote_json,
                     updated_at = excluded.updated_at"#,
-                params![env_id, name, serde_json::to_string(remote)?, now],
+                params![env_id, name, serde_json::to_string(&remote)?, now],
             )?;
         }
         transaction.commit()?;
         Ok(())
+    }
+
+    pub fn replace_remote_environments(
+        &self,
+        environments: &[(String, String, Value)],
+    ) -> Result<(), StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            r#"CREATE TEMP TABLE IF NOT EXISTS incoming_environment_ids (
+                   env_id TEXT PRIMARY KEY
+               );
+               DELETE FROM incoming_environment_ids;"#,
+        )?;
+        let now = timestamp();
+        for (env_id, name, remote) in environments {
+            let mut remote = remote.clone();
+            sdk_ffi::redact_value(&mut remote);
+            transaction.execute(
+                "INSERT OR IGNORE INTO incoming_environment_ids(env_id) VALUES (?1)",
+                [env_id],
+            )?;
+            transaction.execute(
+                r#"INSERT INTO environments(
+                    env_id, name, local_label, tags_json, remote_json,
+                    status, cdp, last_event, updated_at
+                ) VALUES (?1, ?2, '', '[]', ?3, 'stopped', '-', 'env_page sync', ?4)
+                ON CONFLICT(env_id) DO UPDATE SET
+                    name = excluded.name,
+                    local_label = '',
+                    tags_json = '[]',
+                    remote_json = excluded.remote_json,
+                    updated_at = excluded.updated_at"#,
+                params![env_id, name, serde_json::to_string(&remote)?, now],
+            )?;
+        }
+        transaction.execute(
+            "DELETE FROM runtime_snapshots WHERE env_id NOT IN (SELECT env_id FROM incoming_environment_ids)",
+            [],
+        )?;
+        transaction.execute(
+            "DELETE FROM environments WHERE env_id NOT IN (SELECT env_id FROM incoming_environment_ids)",
+            [],
+        )?;
+        transaction.execute(
+            r#"UPDATE environment_cache_status SET
+                   state = 'fresh', cache_count = ?1, last_success_at = ?2,
+                   last_attempt_at = ?2, last_error = NULL
+               WHERE id = 1"#,
+            params![environments.len() as i64, now],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn mark_environment_cache_stale(&self, error: &str) -> Result<(), StoreError> {
+        self.connection()?.execute(
+            r#"UPDATE environment_cache_status SET
+                   state = CASE WHEN (SELECT COUNT(*) FROM environments) > 0
+                                THEN 'stale' ELSE 'empty' END,
+                   cache_count = (SELECT COUNT(*) FROM environments),
+                   last_attempt_at = ?1,
+                   last_error = ?2
+               WHERE id = 1"#,
+            params![timestamp(), error],
+        )?;
+        Ok(())
+    }
+
+    pub fn environment_cache_status(&self) -> Result<EnvironmentCacheStatus, StoreError> {
+        let (state, count, last_success_at, last_attempt_at, last_error): (
+            String,
+            i64,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = self.connection()?.query_row(
+            r#"SELECT state, cache_count, last_success_at, last_attempt_at, last_error
+               FROM environment_cache_status WHERE id = 1"#,
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        Ok(EnvironmentCacheStatus {
+            source: "sdk-server".into(),
+            state,
+            count: count.max(0) as usize,
+            last_success_at: last_success_at.as_deref().map(parse_time).transpose()?,
+            last_attempt_at: last_attempt_at.as_deref().map(parse_time).transpose()?,
+            last_error,
+        })
     }
 
     pub fn delete_environment(&self, env_id: &str) -> Result<(), StoreError> {
@@ -387,6 +517,12 @@ impl ManagerStore {
         let transaction = connection.transaction()?;
         transaction.execute("DELETE FROM runtime_snapshots WHERE env_id = ?1", [env_id])?;
         transaction.execute("DELETE FROM environments WHERE env_id = ?1", [env_id])?;
+        transaction.execute(
+            r#"UPDATE environment_cache_status SET
+                   cache_count = (SELECT COUNT(*) FROM environments)
+               WHERE id = 1"#,
+            [],
+        )?;
         transaction.commit()?;
         Ok(())
     }
@@ -1398,22 +1534,19 @@ fn operation_tx(
 }
 
 fn environment_from_row(row: &Row<'_>) -> rusqlite::Result<EnvironmentRecord> {
-    let tags: String = row.get(3)?;
-    let updated_at: String = row.get(10)?;
+    let updated_at: String = row.get(8)?;
     Ok(EnvironmentRecord {
         env_id: row.get(0)?,
         name: row.get(1)?,
-        local_label: row.get(2)?,
-        tags: serde_json::from_str(&tags).unwrap_or_default(),
-        status: row.get(4)?,
-        cdp: row.get(5)?,
-        last_event: row.get(6)?,
-        generation: row.get::<_, i64>(7)? as u64,
-        request_id: row.get(8)?,
-        current_operation_id: row.get(9)?,
+        status: row.get(2)?,
+        cdp: row.get(3)?,
+        last_event: row.get(4)?,
+        generation: row.get::<_, i64>(5)? as u64,
+        request_id: row.get(6)?,
+        current_operation_id: row.get(7)?,
         updated_at: parse_time(&updated_at).map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                10,
+                8,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )
@@ -1628,6 +1761,158 @@ mod tests {
             .expect("delete environment");
         assert!(store.environment("env-created").expect("lookup").is_none());
         assert!(store.environment_details().expect("details").is_empty());
+    }
+
+    #[test]
+    fn remote_environment_replace_is_complete_redacted_and_authoritative() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[
+                (
+                    "env-old".into(),
+                    "Old".into(),
+                    json!({ "envId": "env-old" }),
+                ),
+                (
+                    "env-keep".into(),
+                    "Before".into(),
+                    json!({ "envId": "env-keep" }),
+                ),
+            ])
+            .expect("seed environments");
+        store
+            .save_environment_detail("env-old", &json!({ "kernel": "Chrome" }))
+            .expect("detail");
+        store
+            .connection()
+            .expect("connection")
+            .execute(
+                "UPDATE environments SET local_label = 'Local', tags_json = '[\"tag\"]'",
+                [],
+            )
+            .expect("legacy overrides");
+
+        store
+            .replace_remote_environments(&[
+                (
+                    "env-keep".into(),
+                    "After".into(),
+                    json!({
+                        "envId": "env-keep",
+                        "cookie": "private",
+                        "proxy": "socks5://alice:secret@127.0.0.1:1080"
+                    }),
+                ),
+                (
+                    "env-new".into(),
+                    "New".into(),
+                    json!({ "envId": "env-new" }),
+                ),
+            ])
+            .expect("replace environments");
+
+        let environments = store.list_environments().expect("environments");
+        assert_eq!(environments.len(), 2);
+        assert_eq!(environments[0].name, "After");
+        assert!(store.environment("env-old").expect("lookup").is_none());
+        assert!(store.environment_details().expect("details").is_empty());
+        let (label, tags, remote): (String, String, String) = store
+            .connection()
+            .expect("connection")
+            .query_row(
+                "SELECT local_label, tags_json, remote_json FROM environments WHERE env_id = 'env-keep'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("cached environment");
+        assert!(label.is_empty());
+        assert_eq!(tags, "[]");
+        assert!(!remote.contains("private"));
+        assert!(!remote.contains(":secret@"));
+        let status = store.environment_cache_status().expect("cache status");
+        assert_eq!(status.state, "fresh");
+        assert_eq!(status.count, 2);
+        assert!(status.last_success_at.is_some());
+        assert!(status.last_error.is_none());
+    }
+
+    #[test]
+    fn failed_refresh_preserves_cache_and_marks_it_stale() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .replace_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("fresh cache");
+
+        store
+            .mark_environment_cache_stale("second page failed")
+            .expect("mark stale");
+
+        assert!(store.environment("env-1").expect("lookup").is_some());
+        let status = store.environment_cache_status().expect("cache status");
+        assert_eq!(status.state, "stale");
+        assert_eq!(status.count, 1);
+        assert_eq!(status.last_error.as_deref(), Some("second page failed"));
+        assert!(status.last_success_at.is_some());
+        assert!(status.last_attempt_at.is_some());
+    }
+
+    #[test]
+    fn reopening_marks_cache_stale_and_removes_legacy_overrides() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let path = directory.path().join("manager.sqlite3");
+        let store = test_store(&directory);
+        store
+            .replace_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("fresh cache");
+        store
+            .connection()
+            .expect("connection")
+            .execute(
+                "UPDATE environments SET local_label = 'Legacy', tags_json = '[\"old\"]'",
+                [],
+            )
+            .expect("legacy overrides");
+        drop(store);
+
+        let reopened = ManagerStore::open(
+            path,
+            &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
+                work_dir: "unused".into(),
+                extension_dir: "unused".into(),
+                log_dir: "unused".into(),
+                sdk_api_url: None,
+                debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: None,
+            },
+        )
+        .expect("reopen store");
+        assert_eq!(
+            reopened.environment_cache_status().expect("cache").state,
+            "stale"
+        );
+        let (label, tags): (String, String) = reopened
+            .connection()
+            .expect("connection")
+            .query_row(
+                "SELECT local_label, tags_json FROM environments WHERE env_id = 'env-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("legacy columns");
+        assert!(label.is_empty());
+        assert_eq!(tags, "[]");
     }
 
     #[test]

@@ -1,8 +1,12 @@
 use std::{
+    collections::HashSet,
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use domain::{
@@ -27,6 +31,77 @@ mod operation;
 mod profiles;
 mod store;
 
+const ENVIRONMENT_PAGE_SIZE: usize = 200;
+const MAX_ENVIRONMENT_PAGES: usize = 500;
+const MAX_ENVIRONMENTS: usize = 100_000;
+
+#[derive(Default)]
+struct EnvironmentPageAccumulator {
+    rows: Vec<(String, String, serde_json::Value)>,
+    seen: HashSet<String>,
+    expected_total: Option<usize>,
+}
+
+impl EnvironmentPageAccumulator {
+    fn push(&mut self, value: &serde_json::Value) -> Result<bool, ManagerError> {
+        if let Some(total) = mirror::environment_total(value) {
+            if total > MAX_ENVIRONMENTS {
+                return Err(ManagerError::InvalidHostResponse(format!(
+                    "environment page total {total} exceeds safety limit {MAX_ENVIRONMENTS}"
+                )));
+            }
+            if let Some(expected) = self.expected_total
+                && expected != total
+            {
+                return Err(ManagerError::InvalidHostResponse(format!(
+                    "environment page total changed from {expected} to {total} during sync"
+                )));
+            }
+            self.expected_total = Some(total);
+        }
+
+        let page_rows = mirror::environment_rows(value);
+        let page_len = page_rows.len();
+        let previous_len = self.rows.len();
+        for row in page_rows {
+            if self.seen.insert(row.0.clone()) {
+                self.rows.push(row);
+            }
+        }
+        if self.rows.len() > MAX_ENVIRONMENTS {
+            return Err(ManagerError::InvalidHostResponse(format!(
+                "environment row count exceeds safety limit {MAX_ENVIRONMENTS}"
+            )));
+        }
+        if let Some(total) = self.expected_total {
+            if self.rows.len() > total {
+                return Err(ManagerError::InvalidHostResponse(format!(
+                    "environment pagination returned {} rows for reported total {total}",
+                    self.rows.len()
+                )));
+            }
+            if self.rows.len() == total {
+                return Ok(true);
+            }
+        }
+        if page_len == 0 {
+            if let Some(total) = self.expected_total {
+                return Err(ManagerError::InvalidHostResponse(format!(
+                    "environment pagination ended after {} of {total} rows",
+                    self.rows.len()
+                )));
+            }
+            return Ok(true);
+        }
+        if self.rows.len() == previous_len {
+            return Err(ManagerError::InvalidHostResponse(
+                "environment pagination returned no new environment ids".into(),
+            ));
+        }
+        Ok(self.expected_total.is_none() && page_len < ENVIRONMENT_PAGE_SIZE)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ManagerError {
     #[error("{0}")]
@@ -39,7 +114,7 @@ pub enum ManagerError {
     InvalidHostResponse(String),
     #[error("SDK backend rejected the request: {0}")]
     BackendRejected(String),
-    #[error("environment was not found in the local account mirror")]
+    #[error("environment was not found in the SDK server cache")]
     EnvironmentNotFound,
     #[error("environment is not ready for browser commands (current state: {0})")]
     EnvironmentNotReady(String),
@@ -102,6 +177,7 @@ struct ManagerInner {
     last_runtime_status: RwLock<RuntimeHostStatus>,
     last_smoke: RwLock<Option<SmokeReport>>,
     agent_execution_lock: Mutex<()>,
+    initial_environment_sync_attempted: AtomicBool,
 }
 
 impl Default for Manager {
@@ -132,6 +208,7 @@ impl Manager {
                 last_runtime_status: RwLock::new(RuntimeHostStatus::default()),
                 last_smoke: RwLock::new(None),
                 agent_execution_lock: Mutex::new(()),
+                initial_environment_sync_attempted: AtomicBool::new(false),
             }),
         })
     }
@@ -217,6 +294,15 @@ impl Manager {
         if self.inner.runtime.lock().await.is_none() {
             let _ = self.start_runtime().await;
         }
+        if std::env::var_os("BROSDK_API_KEY").is_some()
+            && self
+                .inner
+                .initial_environment_sync_attempted
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+        {
+            let _ = self.sync_environments().await;
+        }
 
         let dll_path = sdk_ffi::default_library_path();
         let host_path = sdk_client::discover_host_path().ok();
@@ -298,6 +384,7 @@ impl Manager {
             },
             ai: ai_agent::AiClient::status(),
             environments,
+            environment_cache: self.inner.store.environment_cache_status()?,
             environment_bindings: bindings,
             fingerprints,
             proxies,
@@ -555,8 +642,6 @@ impl Manager {
             "environments": environments.into_iter().map(|environment| json!({
                 "envId": environment.env_id,
                 "name": environment.name,
-                "localLabel": environment.local_label,
-                "tags": environment.tags,
                 "status": environment.status,
                 "generation": environment.generation,
                 "lastEvent": environment.last_event,
@@ -720,16 +805,10 @@ impl Manager {
         let result = async {
             let host = self.runtime_handle().await?;
             self.ensure_sdk_initialized(&host).await?;
-            let value = host
-                .call(
-                    HostCommand::EnvPage {
-                        request: sdk_ffi::default_env_page_request(),
-                    },
-                    Some(operation.id.clone()),
-                )
+            let rows = self
+                .fetch_all_environments(&host, Some(operation.id.clone()))
                 .await?;
-            let rows = mirror::environment_rows(&value);
-            self.inner.store.upsert_remote_environments(&rows)?;
+            self.inner.store.replace_remote_environments(&rows)?;
             self.inner.store.append_event(
                 "environment.synced",
                 None,
@@ -745,11 +824,15 @@ impl Manager {
                 .inner
                 .operations
                 .succeed(&operation.id, &format!("synced {count} environments"))?),
-            Err(error) => Ok(self.inner.operations.fail(
-                &operation.id,
-                manager_error_code(&error),
-                &error.to_string(),
-            )?),
+            Err(error) => {
+                let message = redacted_response_text(&error.to_string());
+                self.inner.store.mark_environment_cache_stale(&message)?;
+                Ok(self.inner.operations.fail(
+                    &operation.id,
+                    manager_error_code(&error),
+                    &message,
+                )?)
+            }
         }
     }
 
@@ -812,21 +895,22 @@ impl Manager {
                 .store
                 .attach_operation_environment(&operation.id, &env_id)?;
 
-            let mirror_synced = match host
-                .call(
-                    HostCommand::EnvPage {
-                        request: sdk_ffi::default_env_page_request(),
-                    },
-                    Some(operation.id.clone()),
-                )
+            let mirror_synced = match self
+                .fetch_all_environments(&host, Some(operation.id.clone()))
                 .await
             {
-                Ok(value) => {
-                    let rows = mirror::environment_rows(&value);
-                    self.inner.store.upsert_remote_environments(&rows)?;
+                Ok(rows) => {
+                    self.inner.store.replace_remote_environments(&rows)?;
                     true
                 }
-                Err(_) => false,
+                Err(error) => {
+                    self.inner
+                        .store
+                        .mark_environment_cache_stale(&redacted_response_text(
+                            &error.to_string(),
+                        ))?;
+                    false
+                }
             };
             self.inner.store.append_event(
                 "environment.created",
@@ -1619,6 +1703,7 @@ impl Manager {
                     "embeddedMcpPort": settings.embedded_mcp_port,
                 },
                 "environments": self.inner.store.list_environments()?,
+                "environmentCache": self.inner.store.environment_cache_status()?,
                 "operations": self.inner.store.list_operations(200)?,
                 "kernels": self.inner.store.list_kernel_records()?,
             });
@@ -1877,6 +1962,34 @@ impl Manager {
                 Ok(failed)
             }
         }
+    }
+
+    async fn fetch_all_environments(
+        &self,
+        host: &RuntimeHost,
+        operation_id: Option<String>,
+    ) -> Result<Vec<(String, String, serde_json::Value)>, ManagerError> {
+        let mut accumulator = EnvironmentPageAccumulator::default();
+        for page in 1..=MAX_ENVIRONMENT_PAGES {
+            let value = host
+                .call(
+                    HostCommand::EnvPage {
+                        request: sdk_ffi::env_page_request(
+                            page as u64,
+                            ENVIRONMENT_PAGE_SIZE as u64,
+                        ),
+                    },
+                    operation_id.clone(),
+                )
+                .await?;
+            ensure_backend_success("environment page", &value)?;
+            if accumulator.push(&value)? {
+                return Ok(accumulator.rows);
+            }
+        }
+        Err(ManagerError::InvalidHostResponse(format!(
+            "environment pagination exceeded {MAX_ENVIRONMENT_PAGES} pages"
+        )))
     }
 
     async fn ensure_sdk_initialized(&self, host: &RuntimeHost) -> Result<(), ManagerError> {
@@ -2460,6 +2573,99 @@ mod tests {
         assert!(matches!(
             ensure_backend_success("environment create", &json!({ "data": {} })),
             Err(ManagerError::InvalidHostResponse(_))
+        ));
+    }
+
+    #[test]
+    fn environment_pages_merge_duplicates_until_reported_total() {
+        let mut pages = EnvironmentPageAccumulator::default();
+        assert!(
+            !pages
+                .push(&json!({
+                    "code": 200,
+                    "data": {
+                        "total": 3,
+                        "list": [
+                            { "envId": "env-1", "envName": "One" },
+                            { "envId": "env-2", "envName": "Two" }
+                        ]
+                    }
+                }))
+                .expect("first page")
+        );
+        assert!(
+            pages
+                .push(&json!({
+                    "code": 200,
+                    "data": {
+                        "total": 3,
+                        "list": [
+                            { "envId": "env-2", "envName": "Two" },
+                            { "envId": "env-3", "envName": "Three" }
+                        ]
+                    }
+                }))
+                .expect("second page")
+        );
+        assert_eq!(pages.rows.len(), 3);
+        assert_eq!(pages.rows[2].0, "env-3");
+    }
+
+    #[test]
+    fn environment_pages_reject_changed_totals_and_no_progress() {
+        let mut changed_total = EnvironmentPageAccumulator::default();
+        changed_total
+            .push(&json!({
+                "data": { "total": 2, "list": [{ "envId": "env-1" }] }
+            }))
+            .expect("first page");
+        assert!(matches!(
+            changed_total.push(&json!({
+                "data": { "total": 3, "list": [{ "envId": "env-2" }] }
+            })),
+            Err(ManagerError::InvalidHostResponse(message))
+                if message.contains("total changed")
+        ));
+
+        let mut repeated = EnvironmentPageAccumulator::default();
+        let page = json!({
+            "data": { "total": 2, "list": [{ "envId": "env-1" }] }
+        });
+        repeated.push(&page).expect("first page");
+        assert!(matches!(
+            repeated.push(&page),
+            Err(ManagerError::InvalidHostResponse(message))
+                if message.contains("no new environment ids")
+        ));
+    }
+
+    #[test]
+    fn environment_pages_handle_empty_missing_total_and_safety_limit() {
+        let mut empty = EnvironmentPageAccumulator::default();
+        assert!(
+            empty
+                .push(&json!({ "data": { "total": 0, "list": [] } }))
+                .expect("empty page")
+        );
+        assert!(empty.rows.is_empty());
+
+        let mut no_total = EnvironmentPageAccumulator::default();
+        assert!(
+            no_total
+                .push(&json!({
+                    "data": { "list": [{ "envId": "env-1" }] }
+                }))
+                .expect("short page without total")
+        );
+        assert_eq!(no_total.rows.len(), 1);
+
+        let mut over_limit = EnvironmentPageAccumulator::default();
+        assert!(matches!(
+            over_limit.push(&json!({
+                "data": { "total": MAX_ENVIRONMENTS + 1, "list": [] }
+            })),
+            Err(ManagerError::InvalidHostResponse(message))
+                if message.contains("exceeds safety limit")
         ));
     }
 

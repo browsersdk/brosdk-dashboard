@@ -9,9 +9,23 @@ pub fn environment_rows(value: &Value) -> Vec<(String, String, Value)> {
             let env_id = string_field(item, &["envId", "env_id", "id"])?;
             let name = string_field(item, &["name", "envName", "title"])
                 .unwrap_or_else(|| format!("环境 {env_id}"));
-            Some((env_id, name, item.clone()))
+            let mut cached = item.clone();
+            sdk_ffi::redact_value(&mut cached);
+            Some((env_id, name, cached))
         })
         .collect()
+}
+
+pub fn environment_total(value: &Value) -> Option<usize> {
+    ["/data/total", "/data/count", "/total", "/count"]
+        .iter()
+        .find_map(|pointer| value.pointer(pointer))
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+        })
+        .and_then(|value| usize::try_from(value).ok())
 }
 
 pub fn running_environments(value: &Value) -> HashMap<String, String> {
@@ -105,6 +119,24 @@ mod tests {
         assert_eq!(rows[0].0, "env-1");
         assert_eq!(rows[0].1, "Primary");
         assert_eq!(rows[1].0, "2");
+    }
+
+    #[test]
+    fn extracts_total_and_redacts_cached_secrets() {
+        let value = json!({
+            "data": {
+                "total": "1",
+                "list": [{
+                    "envId": "env-1",
+                    "proxy": "socks5://alice:secret@127.0.0.1:1080",
+                    "cookie": "private"
+                }]
+            }
+        });
+        let rows = environment_rows(&value);
+        assert_eq!(environment_total(&value), Some(1));
+        assert_eq!(rows[0].2["cookie"], "[redacted]");
+        assert_eq!(rows[0].2["proxy"], "socks5://alice:***@127.0.0.1:1080");
     }
 
     #[test]

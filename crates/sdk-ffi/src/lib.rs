@@ -490,10 +490,18 @@ pub fn init_request(
 }
 
 pub fn default_env_page_request() -> Value {
-    std::env::var("BROSDK_ENV_PAGE_REQUEST")
+    env_page_request(1, 200)
+}
+
+pub fn env_page_request(page: u64, page_size: u64) -> Value {
+    let mut request = std::env::var("BROSDK_ENV_PAGE_REQUEST")
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_else(|| json!({ "page": 1, "pageSize": 20 }))
+        .filter(Value::is_object)
+        .unwrap_or_else(|| json!({}));
+    request["page"] = json!(page);
+    request["pageSize"] = json!(page_size);
+    request
 }
 
 pub fn extract_user_sig(value: &Value) -> Option<&str> {

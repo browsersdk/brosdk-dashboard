@@ -88,8 +88,6 @@ export interface DashboardSnapshot {
   environments: Array<{
     envId: string;
     name: string;
-    localLabel: string;
-    tags: string[];
     status: string;
     cdp: string;
     lastEvent: string;
@@ -98,6 +96,14 @@ export interface DashboardSnapshot {
     currentOperationId: string | null;
     updatedAt: string;
   }>;
+  environmentCache: {
+    source: string;
+    state: "fresh" | "stale" | "empty";
+    count: number;
+    lastSuccessAt: string | null;
+    lastAttemptAt: string | null;
+    lastError: string | null;
+  };
   environmentBindings: EnvironmentBindingSummary[];
   fingerprints: FingerprintProfile[];
   proxies: ProxyProfile[];
