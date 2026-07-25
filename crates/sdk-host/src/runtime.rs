@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     ffi::{c_char, c_void},
     path::Path,
     sync::{Mutex, OnceLock},
@@ -76,6 +76,13 @@ struct HostRuntime {
     initialized: bool,
     sequence: u64,
     request_operations: HashMap<i32, String>,
+    pending_lifecycle: HashMap<(LifecycleDirection, String), String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum LifecycleDirection {
+    Open,
+    Close,
 }
 
 impl HostRuntime {
@@ -90,6 +97,7 @@ impl HostRuntime {
             initialized: false,
             sequence: 0,
             request_operations: HashMap::new(),
+            pending_lifecycle: HashMap::new(),
         };
         match BroSdk::load(default_library_path()) {
             Ok(sdk) => {
@@ -131,12 +139,20 @@ impl HostRuntime {
             HostCommand::BrowserInfo => self.with_initialized("sdk_browser_info", |sdk| {
                 sdk.browser_info().map(|output| output.value)
             }),
-            HostCommand::BrowserOpen { request: body } => {
-                self.call_async(request, "sdk_browser_open", |sdk| sdk.browser_open(body))
-            }
-            HostCommand::BrowserClose { request: body } => {
-                self.call_async(request, "sdk_browser_close", |sdk| sdk.browser_close(body))
-            }
+            HostCommand::BrowserOpen { request: body } => self.call_lifecycle(
+                request,
+                body,
+                LifecycleDirection::Open,
+                "sdk_browser_open",
+                |sdk| sdk.browser_open(body),
+            ),
+            HostCommand::BrowserClose { request: body } => self.call_lifecycle(
+                request,
+                body,
+                LifecycleDirection::Close,
+                "sdk_browser_close",
+                |sdk| sdk.browser_close(body),
+            ),
             HostCommand::BrowserCommand { request } => self
                 .with_initialized("sdk_browser_command", |sdk| {
                     sdk.browser_command(request).map(|output| output.value)
@@ -218,9 +234,11 @@ impl HostRuntime {
         call(self.sdk()?).map_err(sdk_error)
     }
 
-    fn call_async<F>(
+    fn call_lifecycle<F>(
         &mut self,
         request: &HostRequest,
+        body: &Value,
+        direction: LifecycleDirection,
         _name: &'static str,
         call: F,
     ) -> HostResult<Value>
@@ -233,12 +251,14 @@ impl HostRuntime {
                 "SDK must be initialized before this call",
             ));
         }
-        let request_id = call(self.sdk()?).map_err(sdk_error)?;
+        let accepted_code = call(self.sdk()?).map_err(sdk_error)?;
         if let Some(operation_id) = request.operation_id.as_ref() {
-            self.request_operations
-                .insert(request_id, operation_id.clone());
+            for env_id in lifecycle_env_ids(body) {
+                self.pending_lifecycle
+                    .insert((direction, env_id), operation_id.clone());
+            }
         }
-        Ok(json!({ "requestId": request_id, "state": "accepted" }))
+        Ok(json!({ "acceptedCode": accepted_code, "state": "accepted" }))
     }
 
     fn normalize_event(&mut self, raw: RawSdkEvent) -> HostEvent {
@@ -250,15 +270,31 @@ impl HostRuntime {
         });
         redact_value(&mut payload);
         let request_id = find_i32(&payload, &["reqId", "requestId", "request_id"]);
-        let operation_id = request_id.and_then(|id| self.request_operations.get(&id).cloned());
-        let event_name =
-            find_string(&payload, &["eventName", "event", "name"]).unwrap_or_else(|| {
-                match raw.kind {
-                    RawEventKind::Result => "sdk-result".into(),
-                    RawEventKind::Log => "sdk-log".into(),
-                }
+        let event_name = find_string(&payload, &["eventName", "event", "name", "type"])
+            .unwrap_or_else(|| match raw.kind {
+                RawEventKind::Result => "sdk-result".into(),
+                RawEventKind::Log => "sdk-log".into(),
             });
         let env_id = find_string(&payload, &["envId", "env_id"]);
+        let direction = lifecycle_direction(&event_name);
+        let operation_id = request_id
+            .and_then(|id| self.request_operations.get(&id).cloned())
+            .or_else(|| {
+                Some(
+                    self.pending_lifecycle
+                        .get(&(direction?, env_id.clone()?))?
+                        .clone(),
+                )
+            });
+        if let (Some(request_id), Some(operation_id)) = (request_id, operation_id.as_ref()) {
+            self.request_operations
+                .insert(request_id, operation_id.clone());
+        }
+        if is_terminal_lifecycle_event(&event_name)
+            && let (Some(direction), Some(env_id)) = (direction, env_id.as_ref())
+        {
+            self.pending_lifecycle.remove(&(direction, env_id.clone()));
+        }
         self.sequence += 1;
         HostEvent {
             sequence: self.sequence,
@@ -301,6 +337,37 @@ impl HostRuntime {
             )
         })
     }
+}
+
+fn lifecycle_env_ids(value: &Value) -> HashSet<String> {
+    value
+        .get("envs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| match item {
+            Value::String(env_id) if !env_id.is_empty() => Some(env_id.clone()),
+            Value::Object(_) => find_string(item, &["envId", "env_id", "id"]),
+            Value::Number(env_id) => Some(env_id.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn lifecycle_direction(event_name: &str) -> Option<LifecycleDirection> {
+    let event_name = event_name.to_ascii_lowercase();
+    if event_name.contains("browser-open") {
+        Some(LifecycleDirection::Open)
+    } else if event_name.contains("browser-close") {
+        Some(LifecycleDirection::Close)
+    } else {
+        None
+    }
+}
+
+fn is_terminal_lifecycle_event(event_name: &str) -> bool {
+    let event_name = event_name.to_ascii_lowercase();
+    event_name.contains("success") || event_name.contains("failed") || event_name.contains("error")
 }
 
 type HostResult<T> = std::result::Result<T, HostError>;
@@ -434,17 +501,47 @@ mod tests {
             initialized: false,
             sequence: 0,
             request_operations: HashMap::from([(42, "operation-1".into())]),
+            pending_lifecycle: HashMap::new(),
         };
         let event = runtime.normalize_event(RawSdkEvent {
             kind: RawEventKind::Result,
             code: 0,
-            bytes: br#"{"eventName":"browser-open-success","reqId":42,"envId":"env-1","authorization":"secret"}"#.to_vec(),
+            bytes: br#"{"type":"browser-open-success","reqId":42,"envId":"env-1","authorization":"secret"}"#.to_vec(),
             received_at: Utc::now(),
         });
 
         assert_eq!(event.operation_id.as_deref(), Some("operation-1"));
         assert_eq!(event.env_id.as_deref(), Some("env-1"));
+        assert_eq!(event.event_name, "browser-open-success");
         assert_eq!(event.payload["authorization"], "[redacted]");
+    }
+
+    #[test]
+    fn callback_req_id_is_bound_from_pending_environment_operation() {
+        let mut runtime = HostRuntime {
+            sdk: None,
+            load_error: None,
+            initialized: false,
+            sequence: 0,
+            request_operations: HashMap::new(),
+            pending_lifecycle: HashMap::from([(
+                (LifecycleDirection::Open, "env-1".into()),
+                "operation-1".into(),
+            )]),
+        };
+        let event = runtime.normalize_event(RawSdkEvent {
+            kind: RawEventKind::Result,
+            code: 0,
+            bytes: br#"{"type":"browser-open-success","reqId":42,"envId":"env-1"}"#.to_vec(),
+            received_at: Utc::now(),
+        });
+
+        assert_eq!(event.operation_id.as_deref(), Some("operation-1"));
+        assert_eq!(
+            runtime.request_operations.get(&42).map(String::as_str),
+            Some("operation-1")
+        );
+        assert!(runtime.pending_lifecycle.is_empty());
     }
 
     #[test]
@@ -455,6 +552,7 @@ mod tests {
             initialized: false,
             sequence: 0,
             request_operations: HashMap::new(),
+            pending_lifecycle: HashMap::new(),
         };
         let event = runtime.normalize_event(RawSdkEvent {
             kind: RawEventKind::Log,
@@ -474,6 +572,7 @@ mod tests {
             initialized: true,
             sequence: 0,
             request_operations: HashMap::new(),
+            pending_lifecycle: HashMap::new(),
         };
         let error = runtime
             .initialize(Path::new("unused"), None)

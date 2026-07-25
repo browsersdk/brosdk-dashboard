@@ -227,6 +227,19 @@ impl ManagerStore {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
+    pub fn environment(&self, env_id: &str) -> Result<Option<EnvironmentRecord>, StoreError> {
+        self.connection()?
+            .query_row(
+                r#"SELECT env_id, name, local_label, tags_json, status, cdp, last_event,
+                          generation, request_id, current_operation_id, updated_at
+                   FROM environments WHERE env_id = ?1"#,
+                [env_id],
+                environment_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     pub fn upsert_remote_environments(
         &self,
         environments: &[(String, String, Value)],
@@ -352,7 +365,7 @@ impl ManagerStore {
     pub fn accept_environment_operation(
         &self,
         id: &str,
-        request_id: i32,
+        request_id: Option<i32>,
         status: &str,
         cdp: &str,
         last_event: &str,
@@ -363,7 +376,7 @@ impl ManagerStore {
             operation_tx(&transaction, id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         let now = timestamp();
         transaction.execute(
-            "UPDATE operations SET request_id = ?1, updated_at = ?2 WHERE id = ?3",
+            "UPDATE operations SET request_id = COALESCE(?1, request_id), updated_at = ?2 WHERE id = ?3",
             params![request_id, now, id],
         )?;
         if matches!(operation.status.as_str(), "queued" | "running")
@@ -572,18 +585,32 @@ impl ManagerStore {
 
         if let Some(operation_id) = event.operation_id.as_deref()
             && let Some(operation) = operation_tx(&transaction, operation_id)?
-            && matches!(operation.status.as_str(), "queued" | "running")
-            && let Some(env_id) = event.env_id.as_deref().or(operation.env_id.as_deref())
         {
-            let current_generation: Option<i64> = transaction
-                .query_row(
-                    "SELECT generation FROM environments WHERE env_id = ?1",
-                    [env_id],
-                    |row| row.get(0),
-                )
-                .optional()?;
-            if current_generation == Some(operation.generation as i64) {
-                apply_lifecycle_event(&transaction, env_id, &operation, event)?;
+            if let Some(request_id) = event.request_id {
+                transaction.execute(
+                    "UPDATE operations SET request_id = COALESCE(request_id, ?1), updated_at = ?2 WHERE id = ?3",
+                    params![request_id, timestamp(), operation_id],
+                )?;
+                transaction.execute(
+                    "UPDATE environments SET request_id = COALESCE(request_id, ?1), updated_at = ?2 WHERE current_operation_id = ?3",
+                    params![request_id, timestamp(), operation_id],
+                )?;
+            }
+            if !matches!(operation.status.as_str(), "queued" | "running") {
+                transaction.commit()?;
+                return Ok(manager_event);
+            }
+            if let Some(env_id) = event.env_id.as_deref().or(operation.env_id.as_deref()) {
+                let current_generation: Option<i64> = transaction
+                    .query_row(
+                        "SELECT generation FROM environments WHERE env_id = ?1",
+                        [env_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if current_generation == Some(operation.generation as i64) {
+                    apply_lifecycle_event(&transaction, env_id, &operation, event)?;
+                }
             }
         }
 
@@ -621,30 +648,54 @@ impl ManagerStore {
     pub fn reconcile_running_environments(
         &self,
         running: &HashMap<String, String>,
+        observed: &std::collections::HashSet<String>,
     ) -> Result<(), StoreError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         let mut statement = transaction.prepare(
-            "SELECT env_id, status FROM environments WHERE status IN ('starting', 'ready', 'stopping', 'unknown')",
+            r#"SELECT e.env_id, e.status, o.kind, o.status
+               FROM environments e
+               LEFT JOIN operations o ON o.id = e.current_operation_id"#,
         )?;
         let candidates = statement
             .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         drop(statement);
-        for (env_id, previous) in candidates {
+        for (env_id, previous, operation_kind, operation_status) in candidates {
+            let active_start = operation_kind.as_deref() == Some("environment.start")
+                && matches!(operation_status.as_deref(), Some("queued" | "running"));
             let (status, cdp, event) = match running.get(&env_id) {
                 Some(cdp) => (
                     "ready",
                     cdp.as_str(),
                     "sdk_browser_info reconciliation: running",
                 ),
-                None => (
-                    "stopped",
+                None if active_start => continue,
+                None if observed.contains(&env_id) && previous == "stopped" => (
+                    "unknown",
                     "-",
-                    "sdk_browser_info reconciliation: not running",
+                    "sdk_browser_info reconciliation: active, readiness unknown",
                 ),
+                None if observed.contains(&env_id) => continue,
+                None if matches!(
+                    previous.as_str(),
+                    "preparing" | "starting" | "ready" | "stopping" | "unknown"
+                ) =>
+                {
+                    (
+                        "stopped",
+                        "-",
+                        "sdk_browser_info reconciliation: not running",
+                    )
+                }
+                None => continue,
             };
             if previous != status {
                 transaction.execute(
@@ -720,24 +771,69 @@ fn apply_lifecycle_event(
     };
     let now = timestamp();
     transaction.execute(
-        r#"UPDATE operations SET status = ?1, message = ?2,
+        r#"UPDATE operations SET status = ?1, message = ?2, request_id = COALESCE(request_id, ?3),
                   error_code = CASE WHEN ?1 = 'failed' THEN 'SDK_EVENT_FAILED' ELSE NULL END,
-                  updated_at = ?3 WHERE id = ?4"#,
-        params![operation_status, event.event_name, now, operation.id],
+                  updated_at = ?4 WHERE id = ?5"#,
+        params![
+            operation_status,
+            event.event_name,
+            event.request_id,
+            now,
+            operation.id,
+        ],
     )?;
+    let cdp = if environment_status == "ready" {
+        event_cdp(event)
+    } else {
+        "-".into()
+    };
     transaction.execute(
-        r#"UPDATE environments SET status = ?1, last_event = ?2,
-                  current_operation_id = NULL, updated_at = ?3
-           WHERE env_id = ?4 AND generation = ?5"#,
+        r#"UPDATE environments SET status = ?1, cdp = ?2, last_event = ?3,
+                  request_id = COALESCE(request_id, ?4), current_operation_id = NULL, updated_at = ?5
+           WHERE env_id = ?6 AND generation = ?7"#,
         params![
             environment_status,
+            cdp,
             event.event_name,
+            event.request_id,
             now,
             env_id,
             operation.generation,
         ],
     )?;
     Ok(())
+}
+
+fn event_cdp(event: &HostEvent) -> String {
+    find_json_value(
+        &event.payload,
+        &["cdp", "cdpUrl", "debuggerAddress", "webSocketDebuggerUrl"],
+    )
+    .and_then(Value::as_str)
+    .filter(|value| !value.is_empty())
+    .map(str::to_string)
+    .or_else(|| {
+        find_json_value(&event.payload, &["remoteDebuggingPort"])
+            .and_then(Value::as_u64)
+            .filter(|port| *port > 0)
+            .map(|port| format!("127.0.0.1:{port}"))
+    })
+    .unwrap_or_else(|| "ready".into())
+}
+
+fn find_json_value<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
+    match value {
+        Value::Object(map) => {
+            for key in keys {
+                if let Some(value) = map.get(*key) {
+                    return Some(value);
+                }
+            }
+            map.values().find_map(|value| find_json_value(value, keys))
+        }
+        Value::Array(values) => values.iter().find_map(|value| find_json_value(value, keys)),
+        _ => None,
+    }
 }
 
 fn operation_tx(
@@ -829,6 +925,8 @@ fn parse_time(value: &str) -> Result<DateTime<Utc>, chrono::ParseError> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use super::*;
 
     fn test_store(directory: &tempfile::TempDir) -> ManagerStore {
@@ -956,12 +1054,34 @@ mod tests {
             })
             .expect("mark ready");
         store
-            .reconcile_running_environments(&HashMap::new())
+            .reconcile_running_environments(&HashMap::new(), &HashSet::new())
             .expect("reconcile");
         assert_eq!(
             store.list_environments().expect("environments")[0].status,
             "stopped"
         );
+    }
+
+    #[test]
+    fn reconciliation_detects_external_start() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("upsert environment");
+        store
+            .reconcile_running_environments(
+                &HashMap::from([("env-1".into(), "ws://127.0.0.1/devtools/browser/1".into())]),
+                &HashSet::from(["env-1".into()]),
+            )
+            .expect("reconcile");
+        let environment = store.list_environments().expect("environments").remove(0);
+        assert_eq!(environment.status, "ready");
+        assert_eq!(environment.cdp, "ws://127.0.0.1/devtools/browser/1");
     }
 
     #[test]
@@ -998,10 +1118,10 @@ mod tests {
         let operation = store
             .accept_environment_operation(
                 &operation.id,
-                42,
+                None,
                 "starting",
                 "-",
-                "SDK accepted request 42",
+                "SDK accepted request; awaiting callback reqId",
             )
             .expect("accepted response");
         let environment = store.list_environments().expect("environments").remove(0);

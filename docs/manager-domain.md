@@ -41,7 +41,9 @@ queued -> running -> succeeded
 
 因此旧启动请求的晚到 `browser-open-success` 不会把已经停止或进入新一轮启动的环境改回 ready。callback 本身仍写入 `manager_events`，便于诊断。
 
-启动/停止操作在调用 SDK 前进入 `running`，环境进入 `preparing`/`stopping`。SDK 同步返回 reqId 只会把启动环境推进到 `starting`，不会写 `ready`。如果 callback 早于同步返回，accepted reqId 与 operation/environment 更新在单一事务中检查当前 operation 状态；已经由 callback 完成的 `succeeded/ready` 不会被回退。
+启动/停止操作在调用 SDK 前进入 `running`，环境进入 `preparing`/`stopping`。`sdk_browser_open` / `sdk_browser_close` 的同步非负返回值是 accepted 状态码，不保证等于 callback `reqId`，也不会让环境进入 ready。Runtime Host 按 `envId + open/close` 方向暂存 operation，首个 lifecycle callback 到达后写入真实 `reqId` 并建立后续映射；如果 terminal callback 早于 host 同步响应，accepted 更新会检查 operation 当前状态，已经完成的 `succeeded/ready` 不会被回退。
+
+`sdk_browser_info` 对账不会在活跃 start operation 期间因列表为空把环境提前改回 stopped；Starting/无 CDP 条目也不会被当作 ready。
 
 ## 4. Snapshot 与增量事件
 

@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host、阶段 3 Manager Domain 和阶段 4 Dashboard MVP 已实现：
+截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host、阶段 3 Manager Domain、阶段 4 Dashboard MVP 和阶段 5 环境 E2E 已实现：
 
 ```text
 brosdk-dashboard/
@@ -65,15 +65,12 @@ brosdk-dashboard/
 
 ## 当前实施目标
 
-下一步按 [roadmap.md](roadmap.md) 推进阶段 5 环境 E2E，在明确的测试 envId 上验证真实生命周期：
+下一步按 [roadmap.md](roadmap.md) 推进阶段 6 完整菜单：
 
-1. 启动桌面窗口。
-2. 从环境变量读取 API Key，换取 userSig。
-3. 初始化 `brosdk.dll`。
-4. 拉取环境列表。
-5. 启动一个指定环境并等待真实 ready。
-6. 展示 CDP/运行状态。
-7. 停止环境。
-8. 处理手动关闭浏览器后的状态回写。
+1. 指纹读取、预览、导入/导出和绑定摘要。
+2. 代理配置、URL 解析、凭据保护和网络诊断。
+3. 内核列表、安装/更新/卸载状态与缓存管理。
+4. 操作筛选、重试、取消和日志详情。
+5. 设置目录选择、启动策略和诊断包。
 
-完成这个闭环后，再移植 `brosdk-v3/apps/dashboard` 的完整菜单和 AI Agent 侧边栏。
+阶段 5 已用真实账号完成 `getUserSig(role=user) -> init -> env_page -> browser_open -> browser-open-success -> Runtime.evaluate -> browser_close -> browser-close-success`。DLL 自带 MCP capability 已验证可用；只有设置 `BROSDK_EMBEDDED_PORT` 时才在 runtime host 初始化中启用端口。

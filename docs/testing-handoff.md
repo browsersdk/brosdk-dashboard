@@ -15,6 +15,9 @@ $env:BROSDK_API_KEY = "<api-key>"
 ```powershell
 $env:BROSDK_E2E_ENV_ID = "<existing-env-id>"
 $env:BROSDK_E2E_ALLOW_MUTATION = "0"
+$env:BROSDK_E2E_USE_ONLY_ENV = "0"
+$env:BROSDK_E2E_MANUAL_CLOSE_TIMEOUT_SECS = "0"
+$env:BROSDK_E2E_SIMULATE_MANUAL_CLOSE = "0"
 $env:BROSDK_WORK_DIR = "D:\go\src\browsersdk\brosdk-dashboard\runtime\sdk-work"
 $env:BROSDK_EMBEDDED_PORT = "17891"
 ```
@@ -97,6 +100,23 @@ sdk_init
   -> sdk_browser_info no longer contains envId
   -> sdk_shutdown
 ```
+
+自动 runner：
+
+```powershell
+npm run e2e:environment
+```
+
+默认必须设置 `BROSDK_E2E_ENV_ID`。如测试账号只有一个环境，可显式设置 `BROSDK_E2E_USE_ONLY_ENV=1`；runner 会先调用 `sdk_browser_info`，若该环境已经运行则拒绝接管或停止。设置 `BROSDK_E2E_SIMULATE_MANUAL_CLOSE=1` 时，runner 通过 CDP `Browser.close` 模拟用户关闭整个浏览器并验证 Manager 对账；需要真人关闭窗口时，改用 `BROSDK_E2E_MANUAL_CLOSE_TIMEOUT_SECS` 正整数。若设置了 `BROSDK_EMBEDDED_PORT`，runner 会确认 DLL 自带 MCP 端口实际监听。
+
+ABI 注意事项：
+
+- `sdk_browser_open` / `sdk_browser_close` 的同步非负返回值表示 accepted，不是 callback JSON 中的 `reqId`。
+- lifecycle operation 必须通过 callback 的 `envId + type` 绑定，再记录真实 `reqId`。
+- `sdk_browser_info` 会包含 Starting 条目；只有 callback success 或明确 CDP endpoint 才算 ready。
+- 页面级 `Runtime.evaluate` 先执行 `Target.getTargets` 和 `Target.attachToTarget` 获取 `sessionId`，完成后执行 `Target.detachFromTarget`。
+
+2026-07-25 真实验证：测试账号完成环境同步、callback ready、页面 session `Runtime.evaluate`、SDK close、CDP `Browser.close` 模拟手动关闭对账，以及配置端口下的 DLL 内嵌 MCP TCP 监听检查。输出只记录布尔结果和环境数量，不记录 API Key、userSig 或 envId。
 
 验收：
 

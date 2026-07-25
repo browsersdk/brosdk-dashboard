@@ -9,7 +9,7 @@
 | 2. Runtime Host | P0 | 已完成 | DLL 被隔离在子进程，Manager 通过 pipe/UDS 调用 SDK |
 | 3. Manager Domain | P0 | 已完成 | SQLite、settings、operation、环境镜像和事件流完成 |
 | 4. Dashboard MVP | P0 | 已完成 | 总览、环境列表、启动、停止、运行详情完成 |
-| 5. 环境 E2E | P0 | 进行中 | 使用测试 API Key 完成列表、启动、ready、手动关闭对账、停止 |
+| 5. 环境 E2E | P0 | 已完成 | 使用测试 API Key 完成列表、启动、ready、CDP command、手动关闭对账入口、停止 |
 | 6. 完整菜单 | P1 | 待实施 | 指纹、代理、内核、操作、设置菜单逐步补齐 |
 | 7. 打包发布 | P1 | 待实施 | Windows 安装/便携包、图标、签名准备、升级策略 |
 | 8. 跨平台 | P2 | 待实施 | macOS/Linux 动态库和平台 adapter 接入 |
@@ -131,6 +131,16 @@
 - 默认 E2E 只执行读取和指定环境启动/停止。
 - 所有测试输出不包含 API Key、userSig、代理密码、Cookie 明文。
 
+实现结果：
+
+- `npm run e2e:environment` 提供生命周期 runner；无 API Key 或目标环境时安全跳过。
+- 默认要求 `BROSDK_E2E_ENV_ID`。仅在显式设置 `BROSDK_E2E_USE_ONLY_ENV=1`、账号镜像恰好一个环境且该环境当前未运行时，才允许自动选中。
+- runner 通过 callback 的 `type` 字段识别生命周期事件，并按 `envId + open/close` 方向绑定 operation；DLL 的同步非负返回值只表示 accepted，不能当作 callback `reqId`。
+- ready 必须来自 `browser-open-success` 或带有效 CDP endpoint 的 `sdk_browser_info`。Starting 条目不会被误判为 ready，活跃 start operation 也不会被空对账提前改回 stopped。
+- CDP 验证使用 `Target.getTargets -> Target.attachToTarget -> Runtime.evaluate -> Target.detachFromTarget`，避免把页面命令发到 browser target。
+- 设置 `BROSDK_E2E_SIMULATE_MANUAL_CLOSE=1` 后，runner 通过 CDP `Browser.close` 自动验证手动关闭对账；`BROSDK_E2E_MANUAL_CLOSE_TIMEOUT_SECS` 仍可保留真人关闭窗口。未触发手动关闭时自动执行 SDK close。
+- 设置 `BROSDK_EMBEDDED_PORT` 时，runner 会确认 DLL 自带 MCP 端口实际开始监听。
+
 ## 8. 阶段 6：完整菜单
 
 目标：补齐本地客户端的全部菜单能力。
@@ -204,9 +214,9 @@
 
 ## 12. 当前下一步
 
-阶段 0/1/2/3/4 已完成。当前从阶段 5 开始：
+阶段 0/1/2/3/4/5 已完成。当前从阶段 6 开始：
 
-1. 增加 `BROSDK_E2E_ENV_ID` 门禁的生命周期 runner。
-2. 拉取列表并确认 envId 属于当前账号，再启动并等待真实 ready。
-3. 执行 `Runtime.evaluate`，对账手动关闭场景，再停止并确认 stopped。
-4. 默认只允许指定环境的启动/停止；其他写操作继续要求 mutation 开关。
+1. 补齐指纹、代理、内核、操作和设置菜单的数据模型与 Manager API。
+2. 优先实现只读列表、详情和诊断，再逐项开放受 operation 保护的写操作。
+3. 为代理 URL 解析、路径校验、操作筛选/重试和核心未知版本状态增加自动化覆盖。
+4. 保持 Dashboard 不直接访问 DLL、SQLite 或 CDP。

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
 use domain::{
-    ApiKeyStatus, DashboardSnapshot, HostCommand, ManagerEvent, ManagerSettings, McpPanel,
-    OperationRecord, RuntimeHostState, RuntimeHostStatus, SdkPanel, SmokeReport,
+    ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot, HostCommand, ManagerEvent,
+    ManagerSettings, McpPanel, OperationRecord, RuntimeHostState, RuntimeHostStatus, SdkPanel,
+    SmokeReport,
 };
 use operation::OperationQueue;
 use sdk_client::{RuntimeHost, SdkHostClient};
@@ -25,6 +26,12 @@ pub enum ManagerError {
     RuntimeNotRunning,
     #[error("invalid runtime host response: {0}")]
     InvalidHostResponse(String),
+    #[error("environment was not found in the local account mirror")]
+    EnvironmentNotFound,
+    #[error("environment is not ready for browser commands (current state: {0})")]
+    EnvironmentNotReady(String),
+    #[error("browser command method must not be empty")]
+    InvalidBrowserCommand,
 }
 
 #[derive(Clone)]
@@ -264,7 +271,10 @@ impl Manager {
                 .call(HostCommand::BrowserInfo, Some(operation.id.clone()))
                 .await?;
             let running = mirror::running_environments(&value);
-            self.inner.store.reconcile_running_environments(&running)?;
+            let observed = mirror::observed_environment_ids(&value);
+            self.inner
+                .store
+                .reconcile_running_environments(&running, &observed)?;
             Ok::<usize, ManagerError>(running.len())
         }
         .await;
@@ -301,7 +311,7 @@ impl Manager {
     pub fn accept_environment_operation(
         &self,
         operation_id: &str,
-        request_id: i32,
+        request_id: Option<i32>,
     ) -> Result<OperationRecord, ManagerError> {
         let operation = self
             .inner
@@ -324,7 +334,9 @@ impl Manager {
         } else {
             "stopping"
         };
-        let last_event = format!("SDK accepted request {request_id}");
+        let last_event = request_id
+            .map(|request_id| format!("SDK accepted request {request_id}"))
+            .unwrap_or_else(|| "SDK accepted request; awaiting callback reqId".into());
         Ok(self.inner.store.accept_environment_operation(
             operation_id,
             request_id,
@@ -340,6 +352,73 @@ impl Manager {
 
     pub async fn stop_environment(&self, env_id: &str) -> Result<OperationRecord, ManagerError> {
         self.execute_environment_operation(env_id, false).await
+    }
+
+    pub async fn browser_command(
+        &self,
+        env_id: &str,
+        method: &str,
+        params: serde_json::Value,
+        session_id: Option<&str>,
+    ) -> Result<BrowserCommandExecution, ManagerError> {
+        if method.trim().is_empty() {
+            return Err(ManagerError::InvalidBrowserCommand);
+        }
+        let environment = self
+            .inner
+            .store
+            .environment(env_id)?
+            .ok_or(ManagerError::EnvironmentNotFound)?;
+        if environment.status != "ready" {
+            return Err(ManagerError::EnvironmentNotReady(environment.status));
+        }
+        let operation = self.inner.operations.enqueue(
+            "browser.command",
+            Some(env_id),
+            "执行浏览器命令",
+            environment.generation,
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "calling sdk_browser_command")?;
+        let result = async {
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            let mut request = json!({
+                "envId": env_id,
+                "method": method,
+                "params": params,
+            });
+            if let Some(session_id) = session_id {
+                request["sessionId"] = json!(session_id);
+            }
+            Ok::<serde_json::Value, ManagerError>(
+                host.call(
+                    HostCommand::BrowserCommand { request },
+                    Some(operation.id.clone()),
+                )
+                .await?,
+            )
+        }
+        .await;
+        match result {
+            Ok(response) => Ok(BrowserCommandExecution {
+                operation: self
+                    .inner
+                    .operations
+                    .succeed(&operation.id, "browser command completed")?,
+                response,
+            }),
+            Err(error) => {
+                self.inner.operations.fail(
+                    &operation.id,
+                    manager_error_code(&error),
+                    &error.to_string(),
+                )?;
+                Err(error)
+            }
+        }
     }
 
     pub fn cancel_operation(&self, operation_id: &str) -> Result<OperationRecord, ManagerError> {
@@ -435,10 +514,7 @@ impl Manager {
             let request_id = response
                 .get("requestId")
                 .and_then(serde_json::Value::as_i64)
-                .and_then(|value| i32::try_from(value).ok())
-                .ok_or(ManagerError::InvalidHostResponse(
-                    "accepted browser operation did not include requestId".into(),
-                ))?;
+                .and_then(|value| i32::try_from(value).ok());
             self.accept_environment_operation(&operation.id, request_id)
         }
         .await;
@@ -548,6 +624,9 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::Store(_) => "STORE_ERROR",
         ManagerError::RuntimeNotRunning => "RUNTIME_NOT_RUNNING",
         ManagerError::InvalidHostResponse(_) => "INVALID_HOST_RESPONSE",
+        ManagerError::EnvironmentNotFound => "ENVIRONMENT_NOT_FOUND",
+        ManagerError::EnvironmentNotReady(_) => "ENVIRONMENT_NOT_READY",
+        ManagerError::InvalidBrowserCommand => "INVALID_BROWSER_COMMAND",
     }
 }
 

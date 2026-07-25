@@ -299,6 +299,13 @@ pub struct OperationRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BrowserCommandExecution {
+    pub operation: OperationRecord,
+    pub response: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ManagerSettings {
     pub work_dir: String,
     pub extension_dir: String,
