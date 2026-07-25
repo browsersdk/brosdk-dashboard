@@ -470,10 +470,20 @@ pub struct McpPanel {
     pub notes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum McpToolScope {
+    Global,
+    #[default]
+    Environment,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpToolCallRequest {
-    pub env_id: String,
+    #[serde(default)]
+    pub scope: McpToolScope,
+    pub env_id: Option<String>,
     pub tool: String,
     #[serde(default)]
     pub arguments: Value,
@@ -483,9 +493,39 @@ pub struct McpToolCallRequest {
 #[serde(rename_all = "camelCase")]
 pub struct McpToolCallExecution {
     pub operation: OperationRecord,
+    pub scope: McpToolScope,
+    pub env_id: Option<String>,
     pub tool: String,
     pub protocol_version: String,
+    pub advertised_tools: Vec<String>,
     pub response: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolDiscoveryRequest {
+    pub scope: McpToolScope,
+    pub env_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolSummary {
+    pub name: String,
+    pub description: Option<String>,
+    pub read_only_hint: Option<bool>,
+    pub destructive_hint: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpToolDiscovery {
+    pub operation: OperationRecord,
+    pub scope: McpToolScope,
+    pub env_id: Option<String>,
+    pub protocol_version: String,
+    pub advertised_tools: Vec<McpToolSummary>,
+    pub allowed_tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

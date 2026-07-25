@@ -31,10 +31,32 @@ pub enum McpClientError {
 }
 
 #[derive(Debug, Clone)]
+pub struct McpToolDefinition {
+    pub name: String,
+    pub description: Option<String>,
+    pub read_only_hint: Option<bool>,
+    pub destructive_hint: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+pub struct McpToolDiscovery {
+    pub protocol_version: String,
+    pub advertised_tools: Vec<McpToolDefinition>,
+}
+
+#[derive(Debug, Clone)]
 pub struct McpToolResult {
     pub protocol_version: String,
-    pub advertised_tools: Vec<String>,
+    pub advertised_tools: Vec<McpToolDefinition>,
     pub result: Value,
+}
+
+pub async fn call_global_tool(
+    port: u16,
+    tool: &str,
+    arguments: Value,
+) -> Result<McpToolResult, McpClientError> {
+    call_tool(global_endpoint(port)?, tool, arguments).await
 }
 
 pub async fn call_env_tool(
@@ -43,23 +65,74 @@ pub async fn call_env_tool(
     tool: &str,
     arguments: Value,
 ) -> Result<McpToolResult, McpClientError> {
-    let endpoint = env_endpoint(port, env_id)?;
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(45))
-        .build()?;
+    call_tool(env_endpoint(port, env_id)?, tool, arguments).await
+}
+
+pub async fn discover_global_tools(port: u16) -> Result<McpToolDiscovery, McpClientError> {
+    discover_tools(global_endpoint(port)?).await
+}
+
+pub async fn discover_env_tools(
+    port: u16,
+    env_id: &str,
+) -> Result<McpToolDiscovery, McpClientError> {
+    discover_tools(env_endpoint(port, env_id)?).await
+}
+
+async fn call_tool(
+    endpoint: Url,
+    tool: &str,
+    arguments: Value,
+) -> Result<McpToolResult, McpClientError> {
+    let client = client()?;
     let (session_id, protocol_version) = initialize(&client, &endpoint).await?;
-    let result = call_in_session(
-        &client,
-        &endpoint,
-        &session_id,
-        &protocol_version,
-        tool,
-        arguments,
-    )
+    let result = async {
+        let advertised_tools =
+            activate_and_list(&client, &endpoint, &session_id, &protocol_version).await?;
+        if !advertised_tools
+            .iter()
+            .any(|definition| definition.name == tool)
+        {
+            return Err(McpClientError::ToolUnavailable(tool.into()));
+        }
+        call_in_session(
+            &client,
+            &endpoint,
+            &session_id,
+            &protocol_version,
+            tool,
+            arguments,
+            advertised_tools,
+        )
+        .await
+    }
     .await;
     let _ = close_session(&client, &endpoint, &session_id, &protocol_version).await;
     result
+}
+
+async fn discover_tools(endpoint: Url) -> Result<McpToolDiscovery, McpClientError> {
+    let client = client()?;
+    let (session_id, protocol_version) = initialize(&client, &endpoint).await?;
+    let result = activate_and_list(&client, &endpoint, &session_id, &protocol_version)
+        .await
+        .map(|advertised_tools| McpToolDiscovery {
+            protocol_version: protocol_version.clone(),
+            advertised_tools,
+        });
+    let _ = close_session(&client, &endpoint, &session_id, &protocol_version).await;
+    result
+}
+
+fn client() -> Result<Client, McpClientError> {
+    Ok(Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(45))
+        .build()?)
+}
+
+fn global_endpoint(port: u16) -> Result<Url, McpClientError> {
+    Ok(Url::parse(&format!("http://127.0.0.1:{port}/sdk/v1/mcp"))?)
 }
 
 fn env_endpoint(port: u16, env_id: &str) -> Result<Url, McpClientError> {
@@ -98,14 +171,12 @@ async fn initialize(client: &Client, endpoint: &Url) -> Result<(String, String),
     Ok((session_id, protocol_version))
 }
 
-async fn call_in_session(
+async fn activate_and_list(
     client: &Client,
     endpoint: &Url,
     session_id: &str,
     protocol_version: &str,
-    tool: &str,
-    arguments: Value,
-) -> Result<McpToolResult, McpClientError> {
+) -> Result<Vec<McpToolDefinition>, McpClientError> {
     let initialized = post_json(
         client,
         endpoint,
@@ -125,11 +196,18 @@ async fn call_in_session(
     )
     .await?;
     let list = response_json(list).await?;
-    let advertised_tools = advertised_tools(rpc_result(&list)?);
-    if !advertised_tools.iter().any(|name| name == tool) {
-        return Err(McpClientError::ToolUnavailable(tool.into()));
-    }
+    Ok(advertised_tools(rpc_result(&list)?))
+}
 
+async fn call_in_session(
+    client: &Client,
+    endpoint: &Url,
+    session_id: &str,
+    protocol_version: &str,
+    tool: &str,
+    arguments: Value,
+    advertised_tools: Vec<McpToolDefinition>,
+) -> Result<McpToolResult, McpClientError> {
     let call = post_json(
         client,
         endpoint,
@@ -251,14 +329,29 @@ fn rpc_result(value: &Value) -> Result<&Value, McpClientError> {
         .ok_or_else(|| McpClientError::Rpc("response did not contain result".into()))
 }
 
-fn advertised_tools(result: &Value) -> Vec<String> {
+fn advertised_tools(result: &Value) -> Vec<McpToolDefinition> {
     result
         .get("tools")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|tool| tool.get("name").and_then(Value::as_str))
-        .map(str::to_string)
+        .filter_map(|tool| {
+            let name = tool.get("name").and_then(Value::as_str)?.to_string();
+            let annotations = tool.get("annotations");
+            Some(McpToolDefinition {
+                name,
+                description: tool
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                read_only_hint: annotations
+                    .and_then(|value| value.get("readOnlyHint"))
+                    .and_then(Value::as_bool),
+                destructive_hint: annotations
+                    .and_then(|value| value.get("destructiveHint"))
+                    .and_then(Value::as_bool),
+            })
+        })
         .collect()
 }
 
@@ -295,14 +388,26 @@ mod tests {
                 .as_str(),
             "http://127.0.0.1:9222/sdk/v1/mcp/env/env%2Fone%20two"
         );
+        assert_eq!(
+            global_endpoint(9222).expect("endpoint").as_str(),
+            "http://127.0.0.1:9222/sdk/v1/mcp"
+        );
     }
 
     #[test]
-    fn extracts_advertised_tool_names() {
-        assert_eq!(
-            advertised_tools(&json!({ "tools": [{ "name": "tabs" }, { "name": "snapshot" }] })),
-            vec!["tabs", "snapshot"]
-        );
+    fn extracts_advertised_tool_metadata() {
+        let tools = advertised_tools(&json!({
+            "tools": [{
+                "name": "tabs",
+                "description": "Manage tabs",
+                "annotations": { "readOnlyHint": false, "destructiveHint": true }
+            }, { "name": "snapshot" }]
+        }));
+        assert_eq!(tools[0].name, "tabs");
+        assert_eq!(tools[0].description.as_deref(), Some("Manage tabs"));
+        assert_eq!(tools[0].read_only_hint, Some(false));
+        assert_eq!(tools[0].destructive_hint, Some(true));
+        assert_eq!(tools[1].name, "snapshot");
     }
 
     #[tokio::test]
@@ -359,12 +464,54 @@ mod tests {
             .await
             .expect("tool call");
         assert_eq!(result.protocol_version, MCP_PROTOCOL_VERSION);
-        assert_eq!(result.advertised_tools, vec!["tabs"]);
+        assert_eq!(result.advertised_tools[0].name, "tabs");
         server.await.expect("server");
         let methods = methods.lock().expect("methods");
         assert_eq!(methods.len(), 5);
         assert!(methods[0].starts_with("POST "));
         assert!(methods[4].starts_with("DELETE "));
+    }
+
+    #[tokio::test]
+    async fn discovers_global_tools_and_closes_session() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        let methods = Arc::new(Mutex::new(Vec::new()));
+        let observed = methods.clone();
+        let server = tokio::spawn(async move {
+            for step in 0..4 {
+                let (mut stream, _) = listener.accept().await.expect("accept");
+                let request = read_request(&mut stream).await;
+                observed
+                    .lock()
+                    .expect("methods")
+                    .push(request.lines().next().unwrap_or_default().to_string());
+                let response = match step {
+                    0 => http_response(
+                        "200 OK",
+                        &[("Mcp-Session-Id", "global-session")],
+                        r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}"#,
+                    ),
+                    1 => http_response("202 Accepted", &[], ""),
+                    2 => http_response(
+                        "200 OK",
+                        &[],
+                        r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"sdk.health","annotations":{"readOnlyHint":true}}]}}"#,
+                    ),
+                    _ => http_response("200 OK", &[], "{}"),
+                };
+                stream.write_all(response.as_bytes()).await.expect("write");
+            }
+        });
+
+        let discovery = discover_global_tools(port).await.expect("discovery");
+        assert_eq!(discovery.advertised_tools[0].name, "sdk.health");
+        assert_eq!(discovery.advertised_tools[0].read_only_hint, Some(true));
+        server.await.expect("server");
+        let methods = methods.lock().expect("methods");
+        assert_eq!(methods.len(), 4);
+        assert!(methods[0].contains("/sdk/v1/mcp "));
+        assert!(methods[3].starts_with("DELETE "));
     }
 
     async fn read_request(stream: &mut tokio::net::TcpStream) -> String {

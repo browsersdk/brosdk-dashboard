@@ -70,7 +70,9 @@ BROSDK_API_KEY -> sdk_get_user_sig -> userSig -> sdk_init -> sdk_info
 
 补充：当前 DLL 已自带 MCP 功能，和内嵌 HTTP/WS 服务同属 `sdk_init` 的 `port` 启用路径。新客户端首版把它标记为 `embedded_mcp` capability；需要 smoke 或后续自动化验证时，由 `sdk-host` 在隔离进程中传入端口。Manager 仍然是 Dashboard 与自动化工具的策略边界，负责 envId 路由、operation 追踪和敏感信息脱敏。
 
-阶段 11 源码审计确认 DLL 的真实 MCP 分层并不缺少单环境操作：全局管理端点 `/sdk/v1/mcp` 已注册 `env.list/resolve/get/create/update/destroy`、`browser.open/close/cleanup/status/install`、`task.list/get` 和 `mcp.endpoint`；单环境自动化端点 `/sdk/v1/mcp/env/{envId}` 已注册 `browser_state`、`tabs`、`snapshot/diff/read/grep/screenshot/pdf/wait` 及导航、交互、上传下载等工具。当前产品缺口是 Manager client 只连接单环境 endpoint 且策略只开放两个动作。Dashboard/Agent 不直接持有 MCP session；Manager adapter 负责严格 lifecycle、工具发现、读写分层、ready 状态校验、operation 追踪、URL 降级和响应脱敏。
+阶段 11 源码审计确认 DLL 的真实 MCP 分层并不缺少单环境操作：全局管理端点 `/sdk/v1/mcp` 已注册 `env.list/resolve/get/create/update/destroy`、`browser.open/close/cleanup/status/install`、`task.list/get` 和 `mcp.endpoint`；单环境自动化端点 `/sdk/v1/mcp/env/{envId}` 已注册 `browser_state`、`tabs`、`snapshot/diff/read/grep/screenshot/pdf/wait` 及导航、交互、上传下载等工具。Manager client 现已接通两个 endpoint，并负责严格 lifecycle、动态工具发现、读写分层、ready 状态校验、operation 追踪、URL 降级和响应脱敏；Dashboard/Agent 不直接持有 MCP session。
+
+Manager 的全局只读策略允许 `sdk.health`、`sdk.info`、`env.list`、`env.resolve`、`env.get`、`browser.status`、`task.list`、`task.get`、`mcp.endpoint`。单环境策略允许 `browser_state`、`tabs`、`snapshot`、`diff`、`read`、`grep`、`screenshot`，并限制 action、页号、文本/节点上限和截图尺寸；其余工具即使被 DLL 广告，也不会被透传。2026-07-26 真实 DLL smoke 使用协议 `2025-11-25` 发现 16 个全局工具、允许 9 个，并完成三个全局只读调用。
 
 ## 4. 进程锁风险
 

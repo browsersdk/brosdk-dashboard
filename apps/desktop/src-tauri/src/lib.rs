@@ -350,6 +350,17 @@ async fn manager_call_embedded_mcp(
 }
 
 #[tauri::command]
+async fn manager_discover_embedded_mcp_tools(
+    manager: tauri::State<'_, manager::Manager>,
+    request: domain::McpToolDiscoveryRequest,
+) -> Result<domain::McpToolDiscovery, String> {
+    manager
+        .discover_embedded_mcp_tools(request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn sdk_host_path() -> Result<String, String> {
     sdk_client::discover_host_path()
         .map(|path| path.display().to_string())
@@ -405,6 +416,7 @@ pub fn run() {
             manager_ai_plan_agent,
             manager_ai_execute_agent,
             manager_call_embedded_mcp,
+            manager_discover_embedded_mcp_tools,
             sdk_host_path
         ])
         .run(tauri::generate_context!())

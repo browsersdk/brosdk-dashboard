@@ -89,3 +89,9 @@ queued -> initialize SDK once -> sdk_env_page(page=1..N) -> atomic replace -> su
 创建 operation 的 request snapshot 只保存 `proxyProfileId` 和 `kernelId`。后端 DTO、完整代理 URL、API Key、userSig 和原始响应均不进入 operation request。测试清理使用 `sdk_env_destroy`，成功后事务删除本地 environment/runtime snapshot，environment detail 通过外键级联删除。
 
 数据库和事件 payload 不保存 API Key、userSig、代理密码、Cookie 或完整 Authorization。SDK 数据在 host 出口和 Manager 持久化入口都执行脱敏。
+
+## 6. DLL MCP 路由
+
+Manager 是 DLL MCP 的唯一客户端边界。请求显式区分 `global` 与 `environment` scope：全局 scope 连接 `/sdk/v1/mcp`，不能携带 Manager 路由 envId；环境 scope 连接 `/sdk/v1/mcp/env/{envId}`，且只接受缓存中处于 ready 的环境。工具发现和调用分别写入 `mcp.tools-discover`、`mcp.global-tool-call` 或 `mcp.environment-tool-call` operation。
+
+Manager 在建立 MCP session 前执行工具与参数白名单校验。全局只开放健康、环境读取、浏览器状态和任务读取；环境级只开放有尺寸、数量和超时上限的读取工具。DLL 广告 mutation 并不自动获得权限，环境生命周期与远端环境写入仍走既有 Manager operation。MCP 响应返回 Dashboard 前再次脱敏，URL 只保留 origin；operation request 仅记录 scope、工具名和参数键，不保存页面内容或参数值。

@@ -138,7 +138,7 @@ DLL 的 `/sdk/v1/env/create` 与第三方服务端 `/api/v2/browser/create` 复�
 
 `brosdk.dll` 本身已经包含内嵌 MCP / HTTP 能力。新客户端把它作为 `sdk-host` 的 platform capability 暴露：当 Manager 明确配置端口时，由 `sdk_init` 的 `port` 字段启用 DLL 内嵌端点；Dashboard 不直接依赖该端点，仍通过 Manager 统一处理 envId 路由、operation 状态、安全策略和未来审批。
 
-阶段 9 的 Manager MCP adapter 使用 DLL 的 Streamable HTTP 单环境端点 `/sdk/v1/mcp/env/{envId}`，严格执行 `initialize -> notifications/initialized -> tools/list/tools/call -> DELETE`。阶段 11 增加全局 `/sdk/v1/mcp` 路由和动态工具发现：全局写工具仍由 Manager 对应 operation 代替，单环境工具按 DLL annotations 和 Manager 白名单分层。每次调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。设置端口只代表下次 init 的配置，只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。
+Manager MCP adapter 同时支持 DLL 的 Streamable HTTP 全局端点 `/sdk/v1/mcp` 和单环境端点 `/sdk/v1/mcp/env/{envId}`，严格执行 `initialize -> notifications/initialized -> tools/list -> tools/call -> DELETE`；仅发现工具时省略 `tools/call`。全局写工具仍由 Manager 对应 operation 代替，单环境工具按 DLL annotations 和 Manager 白名单分层。每次发现与调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。设置端口只代表下次 init 的配置，只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。
 
 ## 8. 运行状态语义
 

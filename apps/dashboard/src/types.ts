@@ -159,8 +159,11 @@ export interface AiAgentExecution {
 
 export interface McpToolCallExecution {
   operation: DashboardSnapshot["operations"][number];
+  scope: "global" | "environment";
+  envId: string | null;
   tool: string;
   protocolVersion: string;
+  advertisedTools: string[];
   response: unknown;
 }
 

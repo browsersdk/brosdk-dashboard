@@ -141,7 +141,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
         if embedded_port().is_some() {
             let mcp = manager
                 .call_embedded_mcp(domain::McpToolCallRequest {
-                    env_id: env_id.into(),
+                    scope: domain::McpToolScope::Environment,
+                    env_id: Some(env_id.into()),
                     tool: "tabs".into(),
                     arguments: json!({ "action": "list" }),
                 })

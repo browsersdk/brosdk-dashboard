@@ -154,7 +154,7 @@ export async function callEmbeddedMcp(
   action: "get" | "list" | "current",
 ): Promise<McpToolCallExecution> {
   return invoke<McpToolCallExecution>("manager_call_embedded_mcp", {
-    request: { envId, tool, arguments: { action } },
+    request: { scope: "environment", envId, tool, arguments: { action } },
   });
 }
 

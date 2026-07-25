@@ -15,7 +15,7 @@
 | 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
 | 9. AI Agent | P2 | 已完成 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、持久化幂等、DLL MCP 只读 adapter |
 | 10. 环境创建交互收敛 | P0 | 已完成 | 创建环境只要求选择代理和内核版本，真实 DLL 创建/删除及镜像对账通过 |
-| 11. 远端事实源与 MCP 双层路由 | P0 | 缓存完成，MCP 实施中 | 环境配置以 SDK 服务端为准，本地仅保留可丢弃缓存；补齐 DLL 全局与单环境 MCP 路由 |
+| 11. 远端事实源与 MCP 双层路由 | P0 | 缓存与 Manager MCP 完成，Dashboard 实施中 | 环境配置以 SDK 服务端为准，本地仅保留可丢弃缓存；补齐 DLL 全局与单环境 MCP 路由 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -314,7 +314,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 - DLL 源码的全局 MCP 已包含 `sdk.health`、`sdk.info`、`env.list/resolve/get/create/update/destroy`、`browser.open/close/cleanup/status/install`、`task.list/get` 和 `mcp.endpoint`。
 - DLL 单环境 MCP 已包含 `browser_state`、`tabs`、`snapshot`、`diff`、`read`、`grep`、`screenshot`、`pdf`、`wait` 以及导航/交互类工具。
-- 因此缺口不在 DLL，而在本项目当前只实现 `/sdk/v1/mcp/env/{envId}` 且只允许 `browser_state(get)`、`tabs(list/current)`。
+- 因此缺口不在 DLL，而在本项目原先只实现 `/sdk/v1/mcp/env/{envId}` 且只允许 `browser_state(get)`、`tabs(list/current)`。
 - `brostu` 与当前 DLL 一样通过 init `port` 启用内嵌服务，并直接使用 `PageEnv/GetEnvInfo/CreateEnv/UpdateEnv/BrowserInfo`，没有额外的本地环境事实库要求。
 
 验收：
@@ -328,7 +328,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 ## 14. 当前状态
 
-阶段 0-10 的仓库内规划已完成。阶段 11 正按“远端缓存语义 -> MCP 双层路由 -> Dashboard/真实 E2E”推进，每一部分独立执行自动测试、更新文档并提交。
+阶段 0-10 的仓库内规划已完成。阶段 11 的远端缓存语义和 Manager MCP 双层路由已完成，正推进 Dashboard 动态工具交互与单环境真实 E2E；每一部分独立执行自动测试、更新文档并提交。
 
 阶段 11 远端缓存子阶段完成（2026-07-26）：
 
@@ -337,6 +337,13 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - `EnvironmentRecord` 和 Dashboard 删除本地名称/标签覆盖；迁移保留旧列以兼容数据库，但启动即清空且后续不再读取。
 - API Key 可用时首次 snapshot 自动刷新；Dashboard 环境工具栏显示服务端、缓存或待同步状态，诊断包与 Manager smoke 同步输出缓存元数据。
 - `npm run check`、`npm test`、`npm run build` 通过；真实 `getUserSig(role=user) -> init -> env_page` Manager smoke 使用独立临时数据库通过，返回 fresh/1 个服务端环境且测试目录已清理；1440x900 与 390x844 环境页无重叠、无页面级横向溢出且控制台无应用错误。
+
+阶段 11 Manager MCP 子阶段完成（2026-07-26）：
+
+- MCP client 复用全局 `/sdk/v1/mcp` 与单环境 `/sdk/v1/mcp/env/{envId}` 的严格 Streamable HTTP session 生命周期，`tools/list` 同时解析说明和 read-only/destructive annotations。
+- Manager API 使用显式 `global`/`environment` scope；全局允许 `sdk.health/info`、`env.list/resolve/get`、`browser.status`、`task.list/get`、`mcp.endpoint`，环境级允许 7 个带参数上限的只读工具。
+- 单环境发现/调用要求缓存中的环境为 ready；全局 mutation、页面导航/交互/脚本/文件工具、全页截图和越界参数均在建立 MCP session 前拒绝。每次发现和调用都有独立 operation，响应继续脱敏并把 URL 降为 origin。
+- domain、MCP client、Manager 和 Tauri command 已接通动态发现；定向测试通过。真实隔离 smoke 发现 DLL 广告 16 个全局工具、Manager 放行 9 个，协议为 `2025-11-25`，并成功调用 `sdk.health`、`env.list`、`mcp.endpoint`；临时数据库与端口均已清理。
 
 阶段 7 实现结果：
 

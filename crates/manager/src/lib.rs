@@ -14,9 +14,9 @@ use domain::{
     AiChatResponse, ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot,
     EnvironmentCreateInput, FingerprintProfile, FingerprintProfileInput, HostCommand,
     KernelInstallInput, KernelRecord, ManagerEvent, ManagerSettings, McpPanel,
-    McpToolCallExecution, McpToolCallRequest, OperationExecution, OperationRecord,
-    ProxyParseResult, ProxyProfile, ProxyProfileInput, RuntimeHostState, RuntimeHostStatus,
-    SdkPanel, SmokeReport,
+    McpToolCallExecution, McpToolCallRequest, McpToolDiscovery, McpToolDiscoveryRequest,
+    McpToolScope, McpToolSummary, OperationExecution, OperationRecord, ProxyParseResult,
+    ProxyProfile, ProxyProfileInput, RuntimeHostState, RuntimeHostStatus, SdkPanel, SmokeReport,
 };
 use operation::OperationQueue;
 use sdk_client::{RuntimeHost, SdkHostClient};
@@ -34,6 +34,26 @@ mod store;
 const ENVIRONMENT_PAGE_SIZE: usize = 200;
 const MAX_ENVIRONMENT_PAGES: usize = 500;
 const MAX_ENVIRONMENTS: usize = 100_000;
+const GLOBAL_MCP_READ_TOOLS: &[&str] = &[
+    "sdk.health",
+    "sdk.info",
+    "env.list",
+    "env.resolve",
+    "env.get",
+    "browser.status",
+    "task.list",
+    "task.get",
+    "mcp.endpoint",
+];
+const ENVIRONMENT_MCP_READ_TOOLS: &[&str] = &[
+    "browser_state",
+    "tabs",
+    "snapshot",
+    "diff",
+    "read",
+    "grep",
+    "screenshot",
+];
 
 #[derive(Default)]
 struct EnvironmentPageAccumulator {
@@ -365,11 +385,15 @@ impl Manager {
                 embedded_available: capabilities.embedded_mcp,
                 configured: configured_mcp_port.is_some(),
                 active: active_mcp_port.is_some(),
-                allowed_tools: vec![
-                    "browser_state:get".into(),
-                    "tabs:list".into(),
-                    "tabs:current".into(),
-                ],
+                allowed_tools: GLOBAL_MCP_READ_TOOLS
+                    .iter()
+                    .map(|tool| format!("global:{tool}"))
+                    .chain(
+                        ENVIRONMENT_MCP_READ_TOOLS
+                            .iter()
+                            .map(|tool| format!("environment:{tool}")),
+                    )
+                    .collect(),
                 manager_route: "Manager owns the runtime host process, envId routing and operation state; only sdk-host can enable the DLL embedded MCP port.".into(),
                 endpoint_hint: active_mcp_port
                     .map(|port| format!("active on 127.0.0.1:{port}"))
@@ -378,7 +402,8 @@ impl Manager {
                 notes: vec![
                     "Dashboard communicates with Manager through Tauri commands.".into(),
                     "Manager communicates with sdk-host through a supervised named pipe/UDS.".into(),
-                    "The Manager MCP adapter allows browser_state(get) and tabs(list/current) for ready environments only.".into(),
+                    "Global MCP is limited to management reads; lifecycle mutations continue through Manager operations.".into(),
+                    "Environment MCP is limited to bounded browser reads for ready environments.".into(),
                     "Unexpected host exit becomes degraded state and never exits the desktop UI.".into(),
                 ],
             },
@@ -555,7 +580,8 @@ impl Manager {
                     .unwrap_or_else(|| json!({}));
                 let result = self
                     .call_embedded_mcp(McpToolCallRequest {
-                        env_id: required_env_id(&request.plan)?.into(),
+                        scope: McpToolScope::Environment,
+                        env_id: Some(required_env_id(&request.plan)?.into()),
                         tool: tool.into(),
                         arguments,
                     })
@@ -723,22 +749,60 @@ impl Manager {
         &self,
         request: McpToolCallRequest,
     ) -> Result<McpToolCallExecution, ManagerError> {
-        let environment = self
-            .inner
-            .store
-            .environment(&request.env_id)?
-            .ok_or(ManagerError::EnvironmentNotFound)?;
-        if environment.status != "ready" {
-            return Err(ManagerError::EnvironmentNotReady(environment.status));
-        }
-        let arguments = validate_mcp_tool_call(&request.tool, request.arguments)?;
         let port = self
             .inner
             .active_mcp_port
             .read()
             .await
             .ok_or(ManagerError::McpNotConfigured)?;
+        let (env_id, generation, arguments, kind, label) = match request.scope {
+            McpToolScope::Global => {
+                if request
+                    .env_id
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                {
+                    return Err(ManagerError::InvalidMcpArguments(
+                        "global MCP calls must not include envId".into(),
+                    ));
+                }
+                (
+                    None,
+                    0,
+                    validate_global_mcp_tool_call(&request.tool, request.arguments)?,
+                    "mcp.global-tool-call",
+                    "调用 DLL 全局 MCP",
+                )
+            }
+            McpToolScope::Environment => {
+                let env_id = request
+                    .env_id
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        ManagerError::InvalidMcpArguments(
+                            "environment MCP calls require envId".into(),
+                        )
+                    })?;
+                let environment = self
+                    .inner
+                    .store
+                    .environment(env_id)?
+                    .ok_or(ManagerError::EnvironmentNotFound)?;
+                if environment.status != "ready" {
+                    return Err(ManagerError::EnvironmentNotReady(environment.status));
+                }
+                (
+                    Some(env_id.to_string()),
+                    environment.generation,
+                    validate_environment_mcp_tool_call(&request.tool, request.arguments)?,
+                    "mcp.environment-tool-call",
+                    "调用 DLL 环境 MCP",
+                )
+            }
+        };
         let request_summary = json!({
+            "scope": mcp_scope_name(request.scope),
             "tool": request.tool,
             "argumentKeys": arguments
                 .as_object()
@@ -746,39 +810,60 @@ impl Manager {
                 .unwrap_or_default(),
         });
         let operation = self.inner.operations.enqueue(
-            "mcp.tool-call",
-            Some(&request.env_id),
-            "调用 DLL 内嵌 MCP",
-            environment.generation,
+            kind,
+            env_id.as_deref(),
+            label,
+            generation,
             Some(&request_summary),
         )?;
         let _execution = self.inner.operations.acquire().await;
         self.inner
             .operations
             .start(&operation.id, "calling embedded MCP")?;
-        let result =
-            mcp_client::call_env_tool(port, &request.env_id, &request.tool, arguments).await;
+        let result = match request.scope {
+            McpToolScope::Global => {
+                mcp_client::call_global_tool(port, &request.tool, arguments).await
+            }
+            McpToolScope::Environment => {
+                mcp_client::call_env_tool(
+                    port,
+                    env_id.as_deref().expect("validated environment id"),
+                    &request.tool,
+                    arguments,
+                )
+                .await
+            }
+        };
         match result {
             Ok(result) => {
                 let response = sanitize_mcp_response(result.result);
+                let advertised_tools = result
+                    .advertised_tools
+                    .into_iter()
+                    .map(|tool| tool.name)
+                    .collect::<Vec<_>>();
                 let operation = self
                     .inner
                     .operations
                     .succeed(&operation.id, "embedded MCP tool completed")?;
                 self.inner.store.append_event(
                     "mcp.tool-completed",
-                    Some(&request.env_id),
+                    env_id.as_deref(),
                     Some(&operation.id),
                     &json!({
+                        "scope": mcp_scope_name(request.scope),
                         "tool": request.tool,
-                        "advertisedToolCount": result.advertised_tools.len(),
+                        "advertisedToolCount": advertised_tools.len(),
                         "protocolVersion": result.protocol_version,
                     }),
                 )?;
                 Ok(McpToolCallExecution {
                     operation,
+                    scope: request.scope,
+                    env_id,
                     tool: request.tool,
                     protocol_version: result.protocol_version,
+                    advertised_tools,
                     response,
                 })
             }
@@ -787,6 +872,122 @@ impl Manager {
                 self.inner
                     .operations
                     .fail(&operation.id, "MCP_TOOL_ERROR", message)?;
+                Err(error.into())
+            }
+        }
+    }
+
+    pub async fn discover_embedded_mcp_tools(
+        &self,
+        request: McpToolDiscoveryRequest,
+    ) -> Result<McpToolDiscovery, ManagerError> {
+        let port = self
+            .inner
+            .active_mcp_port
+            .read()
+            .await
+            .ok_or(ManagerError::McpNotConfigured)?;
+        let (env_id, generation) = match request.scope {
+            McpToolScope::Global => {
+                if request
+                    .env_id
+                    .as_deref()
+                    .is_some_and(|value| !value.is_empty())
+                {
+                    return Err(ManagerError::InvalidMcpArguments(
+                        "global MCP discovery must not include envId".into(),
+                    ));
+                }
+                (None, 0)
+            }
+            McpToolScope::Environment => {
+                let env_id = request
+                    .env_id
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| {
+                        ManagerError::InvalidMcpArguments(
+                            "environment MCP discovery requires envId".into(),
+                        )
+                    })?;
+                let environment = self
+                    .inner
+                    .store
+                    .environment(env_id)?
+                    .ok_or(ManagerError::EnvironmentNotFound)?;
+                if environment.status != "ready" {
+                    return Err(ManagerError::EnvironmentNotReady(environment.status));
+                }
+                (Some(env_id.to_string()), environment.generation)
+            }
+        };
+        let operation = self.inner.operations.enqueue(
+            "mcp.tools-discover",
+            env_id.as_deref(),
+            "发现 DLL MCP 工具",
+            generation,
+            Some(&json!({ "scope": mcp_scope_name(request.scope) })),
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "discovering embedded MCP tools")?;
+        let result = match request.scope {
+            McpToolScope::Global => mcp_client::discover_global_tools(port).await,
+            McpToolScope::Environment => {
+                mcp_client::discover_env_tools(
+                    port,
+                    env_id.as_deref().expect("validated environment id"),
+                )
+                .await
+            }
+        };
+        match result {
+            Ok(result) => {
+                let advertised_tools = result
+                    .advertised_tools
+                    .into_iter()
+                    .map(|tool| McpToolSummary {
+                        name: tool.name,
+                        description: tool.description,
+                        read_only_hint: tool.read_only_hint,
+                        destructive_hint: tool.destructive_hint,
+                    })
+                    .collect::<Vec<_>>();
+                let allowed_tools = advertised_tools
+                    .iter()
+                    .filter(|tool| mcp_tool_allowed(request.scope, &tool.name))
+                    .map(|tool| tool.name.clone())
+                    .collect::<Vec<_>>();
+                let operation = self
+                    .inner
+                    .operations
+                    .succeed(&operation.id, "embedded MCP tools discovered")?;
+                self.inner.store.append_event(
+                    "mcp.tools-discovered",
+                    env_id.as_deref(),
+                    Some(&operation.id),
+                    &json!({
+                        "scope": mcp_scope_name(request.scope),
+                        "advertisedToolCount": advertised_tools.len(),
+                        "allowedToolCount": allowed_tools.len(),
+                        "protocolVersion": result.protocol_version,
+                    }),
+                )?;
+                Ok(McpToolDiscovery {
+                    operation,
+                    scope: request.scope,
+                    env_id,
+                    protocol_version: result.protocol_version,
+                    advertised_tools,
+                    allowed_tools,
+                })
+            }
+            Err(error) => {
+                let message = mcp_error_message(&error);
+                self.inner
+                    .operations
+                    .fail(&operation.id, "MCP_DISCOVERY_ERROR", message)?;
                 Err(error.into())
             }
         }
@@ -2306,34 +2507,327 @@ fn replay_agent_execution(
     })
 }
 
-fn validate_mcp_tool_call(
+fn validate_global_mcp_tool_call(
     tool: &str,
     arguments: serde_json::Value,
 ) -> Result<serde_json::Value, ManagerError> {
-    let object = arguments.as_object().ok_or_else(|| {
-        ManagerError::InvalidMcpArguments("arguments must be a JSON object".into())
-    })?;
-    let action = object.get("action").and_then(serde_json::Value::as_str);
+    let object = mcp_argument_object(&arguments)?;
+    match tool {
+        "sdk.health" | "sdk.info" => {
+            ensure_mcp_keys(object, &[])?;
+            Ok(json!({}))
+        }
+        "env.list" => {
+            ensure_mcp_keys(object, &["page", "pageSize"])?;
+            Ok(json!({
+                "page": mcp_bounded_u64(object, "page", 1, 1_000_000, 1)?,
+                "pageSize": mcp_bounded_u64(object, "pageSize", 1, 200, 50)?,
+            }))
+        }
+        "env.resolve" => {
+            ensure_mcp_keys(object, &["envId", "query"])?;
+            match (object.get("envId"), object.get("query")) {
+                (Some(env_id), None) => Ok(json!({
+                    "envId": validate_mcp_env_id(mcp_required_string(env_id, "envId", 32)?)?
+                })),
+                (None, Some(query)) => Ok(json!({
+                    "query": mcp_required_string(query, "query", 128)?
+                })),
+                _ => Err(ManagerError::InvalidMcpArguments(
+                    "env.resolve requires exactly one of envId or query".into(),
+                )),
+            }
+        }
+        "env.get" | "mcp.endpoint" => {
+            ensure_mcp_keys(object, &["envId"])?;
+            let env_id = object
+                .get("envId")
+                .ok_or_else(|| ManagerError::InvalidMcpArguments("envId is required".into()))?;
+            Ok(json!({
+                "envId": validate_mcp_env_id(mcp_required_string(env_id, "envId", 32)?)?
+            }))
+        }
+        "browser.status" => {
+            ensure_mcp_keys(object, &["envId"])?;
+            if let Some(env_id) = object.get("envId") {
+                Ok(json!({
+                    "envId": validate_mcp_env_id(mcp_required_string(env_id, "envId", 32)?)?
+                }))
+            } else {
+                Ok(json!({}))
+            }
+        }
+        "task.list" => {
+            ensure_mcp_keys(object, &["limit"])?;
+            Ok(json!({
+                "limit": mcp_bounded_u64(object, "limit", 1, 100, 50)?
+            }))
+        }
+        "task.get" => {
+            ensure_mcp_keys(object, &["taskId"])?;
+            let task_id = object
+                .get("taskId")
+                .ok_or_else(|| ManagerError::InvalidMcpArguments("taskId is required".into()))?;
+            Ok(json!({ "taskId": mcp_required_string(task_id, "taskId", 128)? }))
+        }
+        _ => Err(ManagerError::McpToolNotAllowed(format!("global:{tool}"))),
+    }
+}
+
+fn validate_environment_mcp_tool_call(
+    tool: &str,
+    arguments: serde_json::Value,
+) -> Result<serde_json::Value, ManagerError> {
+    let object = mcp_argument_object(&arguments)?;
     match tool {
         "browser_state" => {
-            if object.keys().any(|key| key != "action") || !matches!(action, None | Some("get")) {
+            ensure_mcp_keys(object, &["action", "sinceSeq", "timeoutMs"])?;
+            let action = object
+                .get("action")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("get");
+            if action == "get" {
+                if object.contains_key("sinceSeq") || object.contains_key("timeoutMs") {
+                    return Err(ManagerError::InvalidMcpArguments(
+                        "browser_state get does not accept wait parameters".into(),
+                    ));
+                }
+                return Ok(json!({ "action": "get" }));
+            }
+            if action != "wait" {
                 return Err(ManagerError::InvalidMcpArguments(
-                    "browser_state only allows action=get".into(),
+                    "browser_state only allows action=get or action=wait".into(),
                 ));
             }
-            Ok(json!({ "action": "get" }))
+            let since_seq = object.get("sinceSeq").ok_or_else(|| {
+                ManagerError::InvalidMcpArguments("browser_state wait requires sinceSeq".into())
+            })?;
+            let since_seq = since_seq.as_u64().ok_or_else(|| {
+                ManagerError::InvalidMcpArguments("sinceSeq must be an integer".into())
+            })?;
+            Ok(json!({
+                "action": "wait",
+                "sinceSeq": since_seq,
+                "timeoutMs": mcp_bounded_u64(object, "timeoutMs", 1, 30_000, 10_000)?,
+            }))
         }
         "tabs" => {
-            if object.keys().any(|key| key != "action")
-                || !matches!(action, None | Some("list") | Some("current"))
-            {
+            ensure_mcp_keys(object, &["action"])?;
+            let action = object
+                .get("action")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("list");
+            if !matches!(action, "list" | "current") {
                 return Err(ManagerError::InvalidMcpArguments(
                     "tabs only allows action=list or action=current".into(),
                 ));
             }
-            Ok(json!({ "action": action.unwrap_or("list") }))
+            Ok(json!({ "action": action }))
         }
-        _ => Err(ManagerError::McpToolNotAllowed(tool.into())),
+        "snapshot" | "diff" => {
+            ensure_mcp_keys(object, &["page", "domFallback", "maxNodes", "maxTextBytes"])?;
+            let mut normalized = serde_json::Map::new();
+            normalized.insert("page".into(), json!(mcp_required_page(object)?));
+            if let Some(value) = object.get("domFallback") {
+                normalized.insert("domFallback".into(), json!(mcp_bool(value, "domFallback")?));
+            }
+            if object.contains_key("maxNodes") {
+                normalized.insert(
+                    "maxNodes".into(),
+                    json!(mcp_bounded_u64(object, "maxNodes", 1, 2_000, 2_000)?),
+                );
+            }
+            if object.contains_key("maxTextBytes") {
+                normalized.insert(
+                    "maxTextBytes".into(),
+                    json!(mcp_bounded_u64(
+                        object,
+                        "maxTextBytes",
+                        1,
+                        1_048_576,
+                        1_048_576,
+                    )?),
+                );
+            }
+            Ok(serde_json::Value::Object(normalized))
+        }
+        "read" => {
+            ensure_mcp_keys(object, &["page"])?;
+            Ok(json!({ "page": mcp_required_page(object)? }))
+        }
+        "grep" => {
+            ensure_mcp_keys(object, &["page", "pattern", "over", "limit"])?;
+            let pattern = object.get("pattern").ok_or_else(|| {
+                ManagerError::InvalidMcpArguments("grep pattern is required".into())
+            })?;
+            let mut normalized = serde_json::Map::from_iter([
+                ("page".into(), json!(mcp_required_page(object)?)),
+                (
+                    "pattern".into(),
+                    json!(mcp_required_string(pattern, "pattern", 256)?),
+                ),
+            ]);
+            if let Some(over) = object.get("over") {
+                let over = mcp_required_string(over, "over", 16)?;
+                if !matches!(over.as_str(), "ax" | "content") {
+                    return Err(ManagerError::InvalidMcpArguments(
+                        "grep over must be ax or content".into(),
+                    ));
+                }
+                normalized.insert("over".into(), json!(over));
+            }
+            if object.contains_key("limit") {
+                normalized.insert(
+                    "limit".into(),
+                    json!(mcp_bounded_u64(object, "limit", 1, 200, 100)?),
+                );
+            }
+            Ok(serde_json::Value::Object(normalized))
+        }
+        "screenshot" => {
+            ensure_mcp_keys(object, &["page", "format", "quality", "size", "fullPage"])?;
+            if object
+                .get("fullPage")
+                .map(|value| mcp_bool(value, "fullPage"))
+                .transpose()?
+                == Some(true)
+            {
+                return Err(ManagerError::InvalidMcpArguments(
+                    "full-page screenshots are not allowed by Manager policy".into(),
+                ));
+            }
+            let mut normalized =
+                serde_json::Map::from_iter([("page".into(), json!(mcp_required_page(object)?))]);
+            if let Some(format) = object.get("format") {
+                let format = mcp_required_string(format, "format", 8)?;
+                if !matches!(format.as_str(), "jpeg" | "png" | "webp") {
+                    return Err(ManagerError::InvalidMcpArguments(
+                        "screenshot format must be jpeg, png or webp".into(),
+                    ));
+                }
+                normalized.insert("format".into(), json!(format));
+            }
+            if object.contains_key("quality") {
+                normalized.insert(
+                    "quality".into(),
+                    json!(mcp_bounded_u64(object, "quality", 0, 100, 80)?),
+                );
+            }
+            if let Some(size) = object.get("size") {
+                let size = size.as_object().ok_or_else(|| {
+                    ManagerError::InvalidMcpArguments("screenshot size must be an object".into())
+                })?;
+                ensure_mcp_keys(size, &["width", "height"])?;
+                let width = mcp_bounded_u64(size, "width", 1, 2_048, 1_280)?;
+                let height = mcp_bounded_u64(size, "height", 1, 2_048, 720)?;
+                normalized.insert("size".into(), json!({ "width": width, "height": height }));
+            }
+            normalized.insert("fullPage".into(), json!(false));
+            Ok(serde_json::Value::Object(normalized))
+        }
+        _ => Err(ManagerError::McpToolNotAllowed(format!(
+            "environment:{tool}"
+        ))),
+    }
+}
+
+fn mcp_argument_object(
+    arguments: &serde_json::Value,
+) -> Result<&serde_json::Map<String, serde_json::Value>, ManagerError> {
+    arguments
+        .as_object()
+        .ok_or_else(|| ManagerError::InvalidMcpArguments("arguments must be a JSON object".into()))
+}
+
+fn ensure_mcp_keys(
+    object: &serde_json::Map<String, serde_json::Value>,
+    allowed: &[&str],
+) -> Result<(), ManagerError> {
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err(ManagerError::InvalidMcpArguments(
+            "arguments contain unsupported fields".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn mcp_bounded_u64(
+    object: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    minimum: u64,
+    maximum: u64,
+    default: u64,
+) -> Result<u64, ManagerError> {
+    let value = match object.get(key) {
+        Some(value) => value.as_u64().ok_or_else(|| {
+            ManagerError::InvalidMcpArguments(format!("{key} must be an integer"))
+        })?,
+        None => default,
+    };
+    if !(minimum..=maximum).contains(&value) {
+        return Err(ManagerError::InvalidMcpArguments(format!(
+            "{key} must be between {minimum} and {maximum}"
+        )));
+    }
+    Ok(value)
+}
+
+fn mcp_required_page(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<u64, ManagerError> {
+    if !object.contains_key("page") {
+        return Err(ManagerError::InvalidMcpArguments("page is required".into()));
+    }
+    mcp_bounded_u64(object, "page", 1, u32::MAX as u64, 1)
+}
+
+fn mcp_required_string(
+    value: &serde_json::Value,
+    key: &str,
+    maximum_chars: usize,
+) -> Result<String, ManagerError> {
+    let value = value
+        .as_str()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            ManagerError::InvalidMcpArguments(format!("{key} must be a non-empty string"))
+        })?;
+    if value.chars().count() > maximum_chars {
+        return Err(ManagerError::InvalidMcpArguments(format!(
+            "{key} exceeds {maximum_chars} characters"
+        )));
+    }
+    Ok(value.into())
+}
+
+fn mcp_bool(value: &serde_json::Value, key: &str) -> Result<bool, ManagerError> {
+    value
+        .as_bool()
+        .ok_or_else(|| ManagerError::InvalidMcpArguments(format!("{key} must be a boolean")))
+}
+
+fn validate_mcp_env_id(env_id: String) -> Result<String, ManagerError> {
+    if env_id.chars().all(|character| character.is_ascii_digit()) {
+        Ok(env_id)
+    } else {
+        Err(ManagerError::InvalidMcpArguments(
+            "envId must be a decimal string".into(),
+        ))
+    }
+}
+
+fn mcp_scope_name(scope: McpToolScope) -> &'static str {
+    match scope {
+        McpToolScope::Global => "global",
+        McpToolScope::Environment => "environment",
+    }
+}
+
+fn mcp_tool_allowed(scope: McpToolScope, tool: &str) -> bool {
+    match scope {
+        McpToolScope::Global => GLOBAL_MCP_READ_TOOLS.contains(&tool),
+        McpToolScope::Environment => ENVIRONMENT_MCP_READ_TOOLS.contains(&tool),
     }
 }
 
@@ -2698,14 +3192,56 @@ mod tests {
     }
 
     #[test]
-    fn mcp_policy_rejects_mutating_tab_actions() {
+    fn mcp_policy_allows_bounded_reads_and_rejects_mutations() {
         assert!(matches!(
-            validate_mcp_tool_call("tabs", json!({ "action": "new" })),
+            validate_environment_mcp_tool_call("tabs", json!({ "action": "new" })),
             Err(ManagerError::InvalidMcpArguments(_))
         ));
+        assert_eq!(
+            validate_environment_mcp_tool_call("snapshot", json!({ "page": 2, "maxNodes": 500 }))
+                .expect("snapshot"),
+            json!({ "page": 2, "maxNodes": 500 })
+        );
+        assert_eq!(
+            validate_environment_mcp_tool_call(
+                "grep",
+                json!({ "page": 3, "pattern": "checkout", "limit": 20 })
+            )
+            .expect("grep"),
+            json!({ "page": 3, "pattern": "checkout", "limit": 20 })
+        );
         assert!(matches!(
-            validate_mcp_tool_call("snapshot", json!({ "page": 1 })),
+            validate_environment_mcp_tool_call("navigate", json!({})),
             Err(ManagerError::McpToolNotAllowed(_))
+        ));
+        assert!(matches!(
+            validate_environment_mcp_tool_call(
+                "screenshot",
+                json!({ "page": 1, "fullPage": true })
+            ),
+            Err(ManagerError::InvalidMcpArguments(_))
+        ));
+    }
+
+    #[test]
+    fn global_mcp_policy_normalizes_reads_and_rejects_writes() {
+        assert_eq!(
+            validate_global_mcp_tool_call("env.list", json!({ "pageSize": 200 }))
+                .expect("env list"),
+            json!({ "page": 1, "pageSize": 200 })
+        );
+        assert_eq!(
+            validate_global_mcp_tool_call("env.resolve", json!({ "query": "Primary" }))
+                .expect("env resolve"),
+            json!({ "query": "Primary" })
+        );
+        assert!(matches!(
+            validate_global_mcp_tool_call("env.create", json!({ "request": {} })),
+            Err(ManagerError::McpToolNotAllowed(_))
+        ));
+        assert!(matches!(
+            validate_global_mcp_tool_call("mcp.endpoint", json!({ "envId": "not-numeric" })),
+            Err(ManagerError::InvalidMcpArguments(_))
         ));
     }
 
@@ -2764,7 +3300,8 @@ mod tests {
         let manager = Manager::with_store(store).expect("manager");
         let error = manager
             .call_embedded_mcp(McpToolCallRequest {
-                env_id: "env-1".into(),
+                scope: McpToolScope::Environment,
+                env_id: Some("env-1".into()),
                 tool: "tabs".into(),
                 arguments: json!({ "action": "list" }),
             })
