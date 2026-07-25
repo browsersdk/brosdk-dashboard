@@ -6,6 +6,8 @@ use serde_json::Value;
 #[serde(rename_all = "camelCase")]
 pub struct SdkCapabilities {
     pub platform: String,
+    pub support_status: String,
+    pub unsupported_reason: Option<String>,
     pub c_abi: bool,
     pub embedded_web_api: bool,
     pub embedded_mcp: bool,
@@ -16,45 +18,32 @@ pub struct SdkCapabilities {
     pub cdp_calls: Vec<String>,
     pub dll_path: Option<String>,
     pub dll_exists: bool,
+    pub library_dir: Option<String>,
+    pub library_filename: Option<String>,
+    pub secret_backend: Option<String>,
+    pub ipc_transport: Option<String>,
 }
 
 impl Default for SdkCapabilities {
     fn default() -> Self {
         Self {
             platform: std::env::consts::OS.to_string(),
-            c_abi: true,
-            embedded_web_api: true,
-            embedded_mcp: true,
-            supports_init_port: true,
-            callbacks: vec![
-                "result".into(),
-                "log".into(),
-                "cookies-storage".into(),
-                "security-decision".into(),
-            ],
-            sync_calls: vec![
-                "sdk_get_user_sig".into(),
-                "sdk_init".into(),
-                "sdk_info".into(),
-                "sdk_env_page".into(),
-                "sdk_browser_info".into(),
-                "sdk_browser_command".into(),
-                "sdk_browser_snapshot".into(),
-                "sdk_shutdown".into(),
-            ],
-            async_calls: vec![
-                "sdk_browser_open".into(),
-                "sdk_browser_close".into(),
-                "sdk_browser_install".into(),
-                "sdk_token_update".into(),
-            ],
-            cdp_calls: vec![
-                "sdk_browser_command".into(),
-                "sdk_browser_env_check".into(),
-                "sdk_browser_snapshot".into(),
-            ],
+            support_status: "unavailable".into(),
+            unsupported_reason: Some("SDK library has not been resolved".into()),
+            c_abi: false,
+            embedded_web_api: false,
+            embedded_mcp: false,
+            supports_init_port: false,
+            callbacks: Vec::new(),
+            sync_calls: Vec::new(),
+            async_calls: Vec::new(),
+            cdp_calls: Vec::new(),
             dll_path: None,
             dll_exists: false,
+            library_dir: None,
+            library_filename: None,
+            secret_backend: None,
+            ipc_transport: None,
         }
     }
 }

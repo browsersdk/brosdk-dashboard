@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host、阶段 3 Manager Domain、阶段 4 Dashboard MVP、阶段 5 环境 E2E、阶段 6 完整菜单和阶段 7 Windows 便携发布已实现：
+截至 2026-07-25，阶段 0 项目骨架、阶段 1 DLL smoke、阶段 2 Runtime Host、阶段 3 Manager Domain、阶段 4 Dashboard MVP、阶段 5 环境 E2E、阶段 6 完整菜单、阶段 7 Windows 便携发布和阶段 8 跨平台 adapter 基础已实现：
 
 ```text
 brosdk-dashboard/
@@ -67,12 +67,14 @@ brosdk-dashboard/
 
 ## 当前实施目标
 
-下一步按 [roadmap.md](roadmap.md) 推进阶段 8 跨平台 adapter：
+下一步按 [roadmap.md](roadmap.md) 推进阶段 9 AI Agent：
 
-1. 将动态库、IPC、进程和密钥能力抽到平台边界。
-2. 增加 macOS/Linux 目录和能力探测的安全默认值。
-3. 为不支持能力提供明确状态和自动化测试。
+1. 接入 OpenAI 兼容模型配置和只读 Chat。
+2. 增加白名单 Agent 操作、operation id 和状态约束。
+3. 将 DLL 内嵌 MCP 保持在 Manager 策略边界内。
 
 阶段 5 已用真实账号完成 `getUserSig(role=user) -> init -> env_page -> browser_open -> browser-open-success -> Runtime.evaluate -> browser_close -> browser-close-success`。DLL 自带 MCP capability 已验证可用；只有设置 `BROSDK_EMBEDDED_PORT` 时才在 runtime host 初始化中启用端口。
 
 阶段 7 已完成 Windows 便携发布验证：`npm run release:portable` 生成 ZIP，`npm run release:verify` 校验 `BroSDK Dashboard.exe`、`sdk-host.exe`、`brosdk/brosdk.dll` 和 `RELEASE-MANIFEST.json`。NSIS/MSI 的最终构建需要 Windows 构建机安装 NSIS/WiX 工具；正式签名不在仓库中保存证书。
+
+阶段 8 已完成平台路径、UDS、系统 keyring 和 capability 边界；Windows、Linux x64 和 macOS x64 的核心平台 crates 均通过编译检查。仓库当前仍只携带 Windows x64 SDK 动态库，因此其他平台会明确显示 unavailable，直到对应库加入 `libs/<platform>_<arch>`。

@@ -12,7 +12,7 @@
 | 5. 环境 E2E | P0 | 已完成 | 使用测试 API Key 完成列表、启动、ready、CDP command、手动关闭对账入口、停止 |
 | 6. 完整菜单 | P1 | 已完成 | 指纹、代理、内核、操作、设置菜单与 Manager API 已补齐 |
 | 7. 打包发布 | P1 | 已完成（安装器需本机工具链） | Windows 便携包、Tauri 资源、图标、WebView2、签名准备、升级策略 |
-| 8. 跨平台 | P2 | 待实施 | macOS/Linux 动态库和平台 adapter 接入 |
+| 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
 | 9. AI Agent | P2 | 待实施 | Chat 只读、Agent 受控操作、MCP 自动化工具 |
 
 ## 2. 阶段 0：项目骨架
@@ -223,11 +223,11 @@
 
 ## 12. 当前下一步
 
-阶段 0/1/2/3/4/5/6/7 已完成。当前从阶段 8 开始：
+阶段 0/1/2/3/4/5/6/7 已完成，阶段 8 的平台 adapter 基础已完成。当前从阶段 9 开始：
 
-1. 增加 macOS/Linux 动态库目录与能力探测，不让 Windows 路径泄漏到通用层。
-2. 实现平台 adapter 的 UDS、进程、数据目录和密钥能力边界。
-3. 为不支持的平台能力提供明确 capability 和自动化测试。
+1. 接入 OpenAI 兼容模型提供商，API Key 只从环境变量读取。
+2. 实现只读 Chat 和白名单 Agent 操作，所有写操作返回 operation id。
+3. 将 DLL 内嵌 MCP 作为 capability，继续由 Manager 管理端口与 envId 路由。
 
 阶段 7 实现结果：
 
@@ -235,3 +235,10 @@
 - 运行时支持便携目录、安装目录、Tauri `resources`/`resources/bin` 和目标三元组 sidecar 名称发现。
 - 发布脚本兼容当前 Windows PowerShell，生成 `RELEASE-MANIFEST.json` 和 ZIP，并由 `npm run release:verify` 校验文件存在性、SHA-256 和大小。
 - WebView2 使用 `embedBootstrapper`；正式发布仍需在 Windows 构建机安装 NSIS/WiX，证书由发布环境注入。
+
+阶段 8 实现结果：
+
+- 平台 resolver 按 `windows_x64`、`windows_arm64`、`macos_universal`、`linux_x64` 解析动态库目录和文件名。
+- Windows 使用 named pipe + DPAPI；macOS/Linux 使用 UDS + 系统 keyring（Keychain/Secret Service），不再回退到明文 secret 文件。
+- `SdkCapabilities` 报告 support status、unsupported reason、动态库、IPC 和密钥后端；缺少平台动态库时明确 unavailable。
+- Windows workspace 测试通过，并对 `x86_64-unknown-linux-gnu`、`x86_64-apple-darwin` 完成平台核心 crates 的交叉 `cargo check`。

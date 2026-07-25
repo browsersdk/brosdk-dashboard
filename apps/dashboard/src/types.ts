@@ -2,6 +2,8 @@ export type SmokeStageStatus = "passed" | "failed" | "skipped";
 
 export interface SdkCapabilities {
   platform: string;
+  supportStatus: string;
+  unsupportedReason: string | null;
   cAbi: boolean;
   embeddedWebApi: boolean;
   embeddedMcp: boolean;
@@ -12,6 +14,10 @@ export interface SdkCapabilities {
   cdpCalls: string[];
   dllPath: string | null;
   dllExists: boolean;
+  libraryDir: string | null;
+  libraryFilename: string | null;
+  secretBackend: string | null;
+  ipcTransport: string | null;
 }
 
 export interface JsonSummary {

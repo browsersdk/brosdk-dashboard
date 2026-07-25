@@ -172,6 +172,8 @@ function demoSnapshot(): DashboardSnapshot {
     },
     capabilities: {
       platform: "windows",
+      supportStatus: "available",
+      unsupportedReason: null,
       cAbi: true,
       embeddedWebApi: true,
       embeddedMcp: true,
@@ -182,6 +184,10 @@ function demoSnapshot(): DashboardSnapshot {
       cdpCalls: ["sdk_browser_command", "sdk_browser_snapshot"],
       dllPath: "libs/windows_x64/brosdk.dll",
       dllExists: true,
+      libraryDir: "windows_x64",
+      libraryFilename: "brosdk.dll",
+      secretBackend: "windows-dpapi",
+      ipcTransport: "named-pipe",
     },
     mcp: {
       mode: "manager-routed",

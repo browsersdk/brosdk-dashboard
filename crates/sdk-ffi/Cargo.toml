@@ -8,5 +8,6 @@ publish.workspace = true
 [dependencies]
 domain = { path = "../domain" }
 libloading.workspace = true
+platform = { path = "../platform" }
 serde_json.workspace = true
 thiserror.workspace = true

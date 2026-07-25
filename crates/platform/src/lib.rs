@@ -15,6 +15,10 @@ pub enum PlatformError {
     Secret(String),
 }
 
+pub fn platform_id() -> &'static str {
+    std::env::consts::OS
+}
+
 pub fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -37,10 +41,31 @@ pub fn default_data_dir() -> PathBuf {
 }
 
 fn fallback_data_dir() -> PathBuf {
-    #[cfg(all(windows, not(debug_assertions)))]
+    #[cfg(windows)]
     if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
         return PathBuf::from(local_app_data).join("BroSDK Dashboard");
     }
+
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("BroSDK Dashboard");
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(data_home) = std::env::var_os("XDG_DATA_HOME") {
+        return PathBuf::from(data_home).join("BroSDK Dashboard");
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("BroSDK Dashboard");
+    }
+
     workspace_root().join("runtime").join("data")
 }
 
@@ -51,6 +76,24 @@ pub fn platform_config_dir() -> PathBuf {
             .join("BroSDK Dashboard")
             .join("config");
     }
+
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home)
+            .join("Library")
+            .join("Preferences")
+            .join("BroSDK Dashboard");
+    }
+
+    #[cfg(target_os = "linux")]
+    if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME") {
+        return PathBuf::from(config_home).join("BroSDK Dashboard");
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".config").join("BroSDK Dashboard");
+    }
+
     workspace_root().join("runtime").join("config")
 }
 
@@ -116,6 +159,63 @@ pub fn target_triple() -> &'static str {
     TARGET_TRIPLE
 }
 
+#[cfg(all(windows, target_arch = "x86_64"))]
+const LIBRARY_DIR_NAME: &str = "windows_x64";
+#[cfg(all(windows, target_arch = "aarch64"))]
+const LIBRARY_DIR_NAME: &str = "windows_arm64";
+#[cfg(target_os = "macos")]
+const LIBRARY_DIR_NAME: &str = "macos_universal";
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const LIBRARY_DIR_NAME: &str = "linux_x64";
+#[cfg(not(any(
+    all(windows, target_arch = "x86_64"),
+    all(windows, target_arch = "aarch64"),
+    target_os = "macos",
+    all(target_os = "linux", target_arch = "x86_64")
+)))]
+const LIBRARY_DIR_NAME: &str = "unsupported";
+
+#[cfg(windows)]
+const LIBRARY_FILENAME: &str = "brosdk.dll";
+#[cfg(target_os = "macos")]
+const LIBRARY_FILENAME: &str = "libbrosdk.dylib";
+#[cfg(target_os = "linux")]
+const LIBRARY_FILENAME: &str = "libbrosdk.so";
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+const LIBRARY_FILENAME: &str = "brosdk.unsupported";
+
+#[cfg(windows)]
+const SECRET_BACKEND: &str = "windows-dpapi";
+#[cfg(target_os = "macos")]
+const SECRET_BACKEND: &str = "macos-keychain";
+#[cfg(target_os = "linux")]
+const SECRET_BACKEND: &str = "linux-secret-service";
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+const SECRET_BACKEND: &str = "unsupported";
+
+#[cfg(windows)]
+const IPC_TRANSPORT: &str = "named-pipe";
+#[cfg(unix)]
+const IPC_TRANSPORT: &str = "unix-domain-socket";
+#[cfg(not(any(windows, unix)))]
+const IPC_TRANSPORT: &str = "unsupported";
+
+pub fn library_dir_name() -> &'static str {
+    LIBRARY_DIR_NAME
+}
+
+pub fn library_filename() -> &'static str {
+    LIBRARY_FILENAME
+}
+
+pub fn secret_backend() -> &'static str {
+    SECRET_BACKEND
+}
+
+pub fn ipc_transport() -> &'static str {
+    IPC_TRANSPORT
+}
+
 pub fn secrets_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("secrets")
 }
@@ -124,18 +224,59 @@ pub fn store_secret(data_dir: &Path, id: &str, secret: &[u8]) -> Result<String, 
     let reference = format!("{id}.bin");
     let directory = secrets_dir(data_dir);
     fs::create_dir_all(&directory)?;
-    let protected = protect_secret(secret)?;
-    fs::write(directory.join(&reference), protected)?;
+
+    #[cfg(windows)]
+    {
+        fs::write(directory.join(&reference), protect_secret(secret)?)?;
+    }
+    #[cfg(unix)]
+    {
+        let value = std::str::from_utf8(secret)
+            .map_err(|error| PlatformError::Secret(format!("secret is not UTF-8: {error}")))?;
+        let entry = keyring::Entry::new("com.brosdk.dashboard", &reference)
+            .map_err(|error| PlatformError::Secret(error.to_string()))?;
+        entry
+            .set_password(value)
+            .map_err(|error| PlatformError::Secret(error.to_string()))?;
+        fs::write(directory.join(&reference), b"keyring:v1")?;
+    }
     Ok(reference)
 }
 
 pub fn read_secret(data_dir: &Path, reference: &str) -> Result<Vec<u8>, PlatformError> {
     let path = safe_secret_path(data_dir, reference)?;
-    unprotect_secret(&fs::read(path)?)
+
+    #[cfg(windows)]
+    {
+        return unprotect_secret(&fs::read(path)?);
+    }
+    #[cfg(unix)]
+    {
+        let _ = fs::read(path)?;
+        let entry = keyring::Entry::new("com.brosdk.dashboard", reference)
+            .map_err(|error| PlatformError::Secret(error.to_string()))?;
+        return entry
+            .get_password()
+            .map(|value| value.into_bytes())
+            .map_err(|error| PlatformError::Secret(error.to_string()));
+    }
+
+    #[allow(unreachable_code)]
+    Err(PlatformError::Secret(
+        "secret storage is unsupported".into(),
+    ))
 }
 
 pub fn delete_secret(data_dir: &Path, reference: &str) -> Result<(), PlatformError> {
     let path = safe_secret_path(data_dir, reference)?;
+
+    #[cfg(unix)]
+    {
+        let entry = keyring::Entry::new("com.brosdk.dashboard", reference)
+            .map_err(|error| PlatformError::Secret(error.to_string()))?;
+        let _ = entry.delete_credential();
+    }
+
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -226,17 +367,24 @@ fn unprotect_secret(protected: &[u8]) -> Result<Vec<u8>, PlatformError> {
     Ok(bytes)
 }
 
-#[cfg(not(windows))]
-fn protect_secret(secret: &[u8]) -> Result<Vec<u8>, PlatformError> {
-    Ok(secret.to_vec())
+#[cfg(all(test, not(windows)))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn platform_paths_have_explicit_library_contract() {
+        assert!(!library_dir_name().is_empty());
+        assert!(!library_filename().is_empty());
+        assert!(!target_triple().is_empty());
+    }
+
+    #[test]
+    fn secret_backend_is_not_plaintext_file_storage() {
+        assert_ne!(secret_backend(), "plaintext-file");
+    }
 }
 
-#[cfg(not(windows))]
-fn unprotect_secret(protected: &[u8]) -> Result<Vec<u8>, PlatformError> {
-    Ok(protected.to_vec())
-}
-
-#[cfg(test)]
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 

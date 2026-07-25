@@ -374,28 +374,77 @@ pub fn default_library_path() -> PathBuf {
         .nth(2)
         .expect("sdk-ffi crate lives under crates/sdk-ffi")
         .join("libs")
-        .join("windows_x64")
-        .join("brosdk.dll")
+        .join(platform::library_dir_name())
+        .join(platform::library_filename())
 }
 
-fn library_candidates(executable_dir: &Path) -> [PathBuf; 3] {
-    [
-        executable_dir.join("brosdk").join("brosdk.dll"),
+fn library_candidates(executable_dir: &Path) -> Vec<PathBuf> {
+    let filename = platform::library_filename();
+    vec![
+        executable_dir.join("brosdk").join(filename),
         executable_dir
             .join("resources")
             .join("brosdk")
-            .join("brosdk.dll"),
-        executable_dir.join("brosdk.dll"),
+            .join(filename),
+        executable_dir.join(filename),
+        executable_dir.join("resources").join(filename),
     ]
 }
 
 pub fn capabilities_for_path(path: impl Into<PathBuf>) -> SdkCapabilities {
     let path = path.into();
-    SdkCapabilities {
+    let exists = path.is_file();
+    let mut capabilities = SdkCapabilities {
+        support_status: if exists { "available" } else { "unavailable" }.into(),
+        unsupported_reason: (!exists).then(|| {
+            format!(
+                "{} is not present for {}",
+                platform::library_filename(),
+                platform::platform_id()
+            )
+        }),
+        c_abi: exists,
+        embedded_web_api: exists,
+        embedded_mcp: exists,
+        supports_init_port: exists,
         dll_path: Some(path.display().to_string()),
-        dll_exists: path.exists(),
+        dll_exists: exists,
+        library_dir: Some(platform::library_dir_name().into()),
+        library_filename: Some(platform::library_filename().into()),
+        secret_backend: Some(platform::secret_backend().into()),
+        ipc_transport: Some(platform::ipc_transport().into()),
         ..SdkCapabilities::default()
+    };
+    if exists {
+        capabilities.callbacks = vec![
+            "result".into(),
+            "log".into(),
+            "cookies-storage".into(),
+            "security-decision".into(),
+        ];
+        capabilities.sync_calls = vec![
+            "sdk_get_user_sig".into(),
+            "sdk_init".into(),
+            "sdk_info".into(),
+            "sdk_env_page".into(),
+            "sdk_browser_info".into(),
+            "sdk_browser_command".into(),
+            "sdk_browser_snapshot".into(),
+            "sdk_shutdown".into(),
+        ];
+        capabilities.async_calls = vec![
+            "sdk_browser_open".into(),
+            "sdk_browser_close".into(),
+            "sdk_browser_install".into(),
+            "sdk_token_update".into(),
+        ];
+        capabilities.cdp_calls = vec![
+            "sdk_browser_command".into(),
+            "sdk_browser_env_check".into(),
+            "sdk_browser_snapshot".into(),
+        ];
     }
+    SdkCapabilities { ..capabilities }
 }
 
 pub fn get_user_sig_request(api_key: &str) -> Value {
@@ -553,6 +602,7 @@ unsafe fn read_static_string(ptr: *const c_char) -> Option<String> {
 mod tests {
     use super::*;
 
+    #[cfg(windows)]
     #[test]
     fn default_capabilities_include_embedded_mcp() {
         let caps = capabilities_for_path(default_library_path());
@@ -560,6 +610,16 @@ mod tests {
         assert!(caps.embedded_web_api);
         assert!(caps.embedded_mcp);
         assert!(caps.supports_init_port);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn missing_non_windows_library_is_explicitly_unavailable() {
+        let caps = capabilities_for_path(default_library_path());
+        assert!(!caps.dll_exists);
+        assert_eq!(caps.support_status, "unavailable");
+        assert!(!caps.embedded_mcp);
+        assert!(caps.unsupported_reason.is_some());
     }
 
     #[test]
@@ -589,5 +649,6 @@ mod tests {
         assert_eq!(candidates[0], root.join("brosdk\\brosdk.dll"));
         assert_eq!(candidates[1], root.join("resources\\brosdk\\brosdk.dll"));
         assert_eq!(candidates[2], root.join("brosdk.dll"));
+        assert_eq!(candidates[3], root.join("resources\\brosdk.dll"));
     }
 }

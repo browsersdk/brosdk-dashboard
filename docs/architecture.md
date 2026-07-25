@@ -216,3 +216,10 @@ Windows x64 是首个完成平台。macOS/Linux 不在没有动态库和平台�
 - `sdk-host` 的 IPC、进程监督、日志路径和崩溃恢复按平台 adapter 实现。
 - Dashboard 和 Manager domain 不包含 `cfg(windows)` 业务分支。
 - 若某个平台 SDK 不支持某能力，Dashboard 显示 capability，而不是隐藏失败。
+
+当前 adapter 状态：
+
+- Windows x64：`brosdk.dll`、named pipe、DPAPI 已可运行。
+- macOS：解析 `libs/macos_universal/libbrosdk.dylib`，使用 UDS 和 Keychain；缺库时 capability 为 unavailable。
+- Linux x64：解析 `libs/linux_x64/libbrosdk.so`，使用 UDS 和 Secret Service；缺库时 capability 为 unavailable。
+- `SdkCapabilities` 同时报告 `supportStatus`、`unsupportedReason`、`libraryDir`、`libraryFilename`、`secretBackend` 和 `ipcTransport`。

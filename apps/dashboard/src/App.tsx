@@ -290,7 +290,11 @@ function SdkPanel({ snapshot }: { snapshot: DashboardSnapshot | null }) {
     ["Database", snapshot?.databasePath ?? "-"],
     ["Event sequence", snapshot ? String(snapshot.latestEventSequence) : "-"],
     ["平台", capabilities?.platform ?? "-"],
-    ["C ABI", capabilities?.cAbi ? "ready" : "unknown"],
+    ["支持状态", capabilities?.supportStatus ?? "-"],
+    ["C ABI", capabilities?.cAbi ? "ready" : "unavailable"],
+    ["动态库目录", capabilities?.libraryDir ?? "-"],
+    ["IPC", capabilities?.ipcTransport ?? "-"],
+    ["密钥后端", capabilities?.secretBackend ?? "-"],
     ["CDP", capabilities?.cdpCalls.join(", ") || "-"],
   ], [capabilities, snapshot]);
 
@@ -302,6 +306,7 @@ function SdkPanel({ snapshot }: { snapshot: DashboardSnapshot | null }) {
           <div key={label}><dt>{label}</dt><dd title={value}>{value}</dd></div>
         ))}
       </dl>
+      {capabilities?.unsupportedReason && <div className="note-list"><span>{capabilities.unsupportedReason}</span></div>}
     </section>
   );
 }
@@ -736,6 +741,7 @@ function McpPage({ snapshot }: { snapshot: DashboardSnapshot | null }) {
         <div className="panel-heading"><Bot size={17} /><h2>DLL 内嵌 MCP</h2></div>
         <dl className="detail-list">
           <div><dt>能力</dt><dd>{snapshot?.mcp.embeddedAvailable ? "available" : "unknown"}</dd></div>
+          <div><dt>平台支持</dt><dd>{snapshot?.capabilities.supportStatus ?? "-"}</dd></div>
           <div><dt>模式</dt><dd>{snapshot?.mcp.mode ?? "-"}</dd></div>
           <div><dt>端点</dt><dd>{snapshot?.mcp.endpointHint ?? "-"}</dd></div>
           <div><dt>路由</dt><dd>{snapshot?.mcp.managerRoute ?? "-"}</dd></div>
