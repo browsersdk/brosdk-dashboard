@@ -326,3 +326,5 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 2026-07-26 Dashboard E2E 子阶段结果：组件测试 33 项、Playwright 6 项全部通过；production build 通过。应用内浏览器完成页面身份、非空 DOM、同名 envId 交互和 console 检查；当前后端没有 screenshot 方法，桌面与移动视觉/溢出由 Playwright 两个项目验证。
 
 2026-07-26 阶段 14 最终结果：真实双环境 runner 显式断言两个临时 envId 非空且唯一，报告 `uniqueEnvironmentIds=true` 且不输出真实标识。两个环境再次完成独立更新、批量启停、callback ready、远端指纹详情、本地清理和服务端删除；环境数从 1 恢复为 1，清理 2/2。最终 Dashboard 33 项组件测试、Playwright 6 项、Rust workspace 81 项测试、`npm run check`、Clippy 和 production build 全部通过，退出后无临时数据目录、测试端口或 `sdk-host` 残留。
+
+2026-07-26 首次初始化交互回归：纯浏览器根页面不再展示无法调用 Manager 的禁用 API Key 表单，改为可点击的工作台预览入口；真实 API Key 初始化仍只在 Tauri 桌面运行时提供。Windows 桌面窗口已验证输入后按钮启用，并使用隐藏测试凭据完成初始化、加载环境工作台和启动隔离 `sdk-host`。Playwright 首次启动回归在桌面与 390px 项目各执行一次，Dashboard E2E 共 8 项。

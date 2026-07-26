@@ -223,6 +223,11 @@ export default function App() {
         busy={credentialBusy}
         error={error}
         onSubmit={initialize}
+        onPreview={() => {
+          const url = new URL(window.location.href);
+          url.searchParams.set("preview", "workspace");
+          window.location.assign(url);
+        }}
       />
     );
   }

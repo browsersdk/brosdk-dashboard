@@ -22,9 +22,11 @@ describe("ApiKeySetup", () => {
     expect(view.container.textContent).toContain("由系统环境管理");
   });
 
-  it("disables initialization in browser preview", () => {
-    const view = render(<ApiKeySetup mode="first-run" desktop={false} source="none" busy={false} onSubmit={vi.fn()} />);
-    fireEvent.change(within(view.container).getByLabelText("API Key"), { target: { value: "test-key" } });
-    expect((within(view.container).getByRole("button", { name: "初始化" }) as HTMLButtonElement).disabled).toBe(true);
+  it("offers a workspace preview instead of a disabled initialization form in the browser", () => {
+    const onPreview = vi.fn();
+    const view = render(<ApiKeySetup mode="first-run" desktop={false} source="none" busy={false} onSubmit={vi.fn()} onPreview={onPreview} />);
+    expect(within(view.container).queryByLabelText("API Key")).toBeNull();
+    fireEvent.click(within(view.container).getByRole("button", { name: "进入工作台预览" }));
+    expect(onPreview).toHaveBeenCalledOnce();
   });
 });

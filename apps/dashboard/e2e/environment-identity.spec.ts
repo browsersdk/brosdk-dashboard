@@ -2,6 +2,18 @@ import { expect, test, type Page } from "@playwright/test";
 
 const scenario = "preview=workspace&scenario=duplicate-names";
 
+test("browser first run offers a working workspace preview entry", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  await page.goto("/");
+  await expectHealthyDashboard(page, "连接 SDK 服务");
+  await expect(page.getByLabel("API Key")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "进入工作台预览" }).click();
+  await expect(page).toHaveURL(/preview=workspace/);
+  await expectHealthyDashboard(page, "总览");
+  expect(issues).toEqual([]);
+});
+
 test("same-name environments remain independently searchable and selectable", async ({ page }) => {
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=environments`);

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Eye, EyeOff, KeyRound, LoaderCircle, LogOut, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, KeyRound, LayoutDashboard, LoaderCircle, LogOut, ShieldCheck } from "lucide-react";
 
 interface ApiKeySetupProps {
   mode: "first-run" | "settings";
@@ -9,6 +9,7 @@ interface ApiKeySetupProps {
   error?: string;
   onSubmit: (apiKey: string) => Promise<void>;
   onClear?: () => Promise<void>;
+  onPreview?: () => void;
 }
 
 export function ApiKeySetup({
@@ -19,6 +20,7 @@ export function ApiKeySetup({
   error,
   onSubmit,
   onClear,
+  onPreview,
 }: ApiKeySetupProps) {
   const [apiKey, setApiKey] = useState("");
   const [visible, setVisible] = useState(false);
@@ -32,7 +34,18 @@ export function ApiKeySetup({
     setApiKey("");
   }
 
-  const form = (
+  const content = !desktop ? (
+    <div className="credential-form">
+      <p className="credential-state">浏览器预览模式</p>
+      {mode === "first-run" && (
+        <div className="credential-actions">
+          <button className="button primary" type="button" onClick={onPreview} disabled={!onPreview}>
+            <LayoutDashboard size={16} />进入工作台预览
+          </button>
+        </div>
+      )}
+    </div>
+  ) : (
     <form className="credential-form" onSubmit={(event) => void submit(event)}>
       <label className="field credential-field">
         <span>API Key</span>
@@ -60,7 +73,6 @@ export function ApiKeySetup({
         </div>
       </label>
       {error && <p className="credential-error" role="alert">{error}</p>}
-      {!desktop && <p className="credential-state">桌面预览模式</p>}
       {managed && <p className="credential-state">由系统环境管理</p>}
       <div className="credential-actions">
         {mode === "settings" && onClear && (
@@ -76,7 +88,7 @@ export function ApiKeySetup({
     </form>
   );
 
-  if (mode === "settings") return form;
+  if (mode === "settings") return content;
   return (
     <main className="setup-screen">
       <section className="setup-panel" aria-labelledby="setup-title">
@@ -86,7 +98,7 @@ export function ApiKeySetup({
           <h1 id="setup-title">连接 SDK 服务</h1>
           <p>凭据由系统安全存储保护</p>
         </div>
-        {form}
+        {content}
       </section>
     </main>
   );
