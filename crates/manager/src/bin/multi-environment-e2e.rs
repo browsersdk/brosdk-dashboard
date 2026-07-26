@@ -74,6 +74,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             owned_env_ids.push(env_id);
             created_environment_count += 1;
         }
+        ensure_unique_environment_ids(&owned_env_ids)?;
         ensure_owned_environments(&manager, &owned_env_ids, "stopped").await?;
 
         failed_stage = "metadata-update";
@@ -157,6 +158,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "environmentCountBefore": environment_count_before,
             "environmentCountAfter": environment_count_after,
             "temporaryEnvironmentCount": ENVIRONMENT_COUNT,
+            "uniqueEnvironmentIds": true,
             "metadataUpdated": true,
             "independentStartOperations": true,
             "bothReady": true,
@@ -269,6 +271,15 @@ async fn ensure_owned_environments(
         if environment(manager, env_id).await?.status != expected_status {
             return Err("temporary environment has an unexpected initial state".into());
         }
+    }
+    Ok(())
+}
+
+fn ensure_unique_environment_ids(env_ids: &[String]) -> Result<(), Box<dyn Error>> {
+    if env_ids.iter().any(|env_id| env_id.trim().is_empty())
+        || env_ids.iter().collect::<HashSet<_>>().len() != env_ids.len()
+    {
+        return Err("temporary environment ids are empty or duplicated".into());
     }
     Ok(())
 }
@@ -590,5 +601,12 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn requires_non_empty_unique_environment_ids() {
+        ensure_unique_environment_ids(&["env-1".into(), "env-2".into()]).expect("unique ids");
+        assert!(ensure_unique_environment_ids(&["env-1".into(), "env-1".into()]).is_err());
+        assert!(ensure_unique_environment_ids(&["env-1".into(), " ".into()]).is_err());
     }
 }

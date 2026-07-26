@@ -18,7 +18,7 @@
 | 11. 远端事实源与 MCP 双层路由 | P0 | 已完成 | 环境配置以 SDK 服务端为准，本地仅保留可丢弃缓存；DLL 全局与单环境 MCP 已接通并通过真实验收 |
 | 12. 首次初始化与环境工作台 | P0 | 已完成 | API Key 安全初始化、环境详情、远端指纹、运维动作和真实生命周期 E2E 完成 |
 | 13. 多环境工作流 | P0 | 已完成 | 批量启停、受限远端元数据编辑、跨环境指纹对比和双环境 E2E |
-| 14. Dashboard envId 身份与 E2E | P0 | 规划完成，实施中 | envId 唯一主键、同名环境可辨识交互和桌面/移动浏览器 E2E |
+| 14. Dashboard envId 身份与 E2E | P0 | 已完成 | envId 唯一主键、同名环境可辨识交互和桌面/移动浏览器 E2E |
 
 ## 2. 阶段 0：项目骨架
 
@@ -446,7 +446,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 ## 17. 当前状态
 
-阶段 0-13 已完成。阶段 14 已完成契约与验收规划，正在实施 Dashboard envId 身份校验、同名环境交互和可重复浏览器 E2E。
+阶段 0-14 已完成。Dashboard 已把 envId 固化为环境关联和操作的唯一主键，并完成同名环境交互、桌面/移动浏览器 E2E 与真实双环境 SDK 复验。
 
 阶段 14 envId 身份子阶段完成（2026-07-26）：
 
@@ -461,6 +461,12 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 3 条身份流程分别覆盖环境表 envId 搜索/独立多选/详情、指纹两列绑定、MCP 与代理绑定下拉；在 1440x900 和 390x844 两个项目执行，共 6 项测试。
 - 每条测试都校验页面 title/H1、无 Vite overlay、无页面级横向溢出和 console/page error；预览态 SDK mutation 保持禁用。
 - 应用内浏览器复核同名环境多选计数、envId 精确搜索、两列指纹对比和 MCP 两个 envId 选项，console 无 warning/error。当前浏览器后端没有 screenshot 方法，视觉与移动视口证据由 Playwright 项目提供。
+
+阶段 14 真实 SDK 与最终验收完成（2026-07-26）：
+
+- 双环境 runner 新增 envId 非空与唯一性断言，成功报告只增加 `uniqueEnvironmentIds=true`，不输出两个真实 envId。
+- 真实 DLL 链路再次创建两个临时环境，完成独立元数据更新、批量启停、callback ready、远端指纹详情、本地清理和服务端删除；账号环境数前后均为 1，清理 2/2。
+- Dashboard 33 项组件测试、Playwright 6 项、Rust workspace 81 项测试、TypeScript、Rustfmt、Clippy 和 production build 全部通过；退出后无临时 Manager 数据目录、测试端口或 `sdk-host` 残留。
 
 阶段 13 批量生命周期子阶段完成（2026-07-26）：
 

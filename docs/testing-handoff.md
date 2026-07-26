@@ -235,7 +235,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-13 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-14 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -324,3 +324,5 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - Playwright 失败产物写入已忽略的 `target/playwright/dashboard`。成功运行不会把 API Key、userSig、真实账号 envId 或页面正文写入仓库。
 
 2026-07-26 Dashboard E2E 子阶段结果：组件测试 33 项、Playwright 6 项全部通过；production build 通过。应用内浏览器完成页面身份、非空 DOM、同名 envId 交互和 console 检查；当前后端没有 screenshot 方法，桌面与移动视觉/溢出由 Playwright 两个项目验证。
+
+2026-07-26 阶段 14 最终结果：真实双环境 runner 显式断言两个临时 envId 非空且唯一，报告 `uniqueEnvironmentIds=true` 且不输出真实标识。两个环境再次完成独立更新、批量启停、callback ready、远端指纹详情、本地清理和服务端删除；环境数从 1 恢复为 1，清理 2/2。最终 Dashboard 33 项组件测试、Playwright 6 项、Rust workspace 81 项测试、`npm run check`、Clippy 和 production build 全部通过，退出后无临时数据目录、测试端口或 `sdk-host` 残留。

@@ -27,6 +27,13 @@ Manager 使用 `runtime/data/manager.sqlite3` 持久化设置、operation、本�
 | `manager_events` | AUTOINCREMENT sequence 的增量事件流 |
 | `schema_migrations` | 已应用 schema version |
 
+### envId 身份规则
+
+- SDK 服务端分配的 `envId` 是不可变唯一主键；环境名称允许重复，只用于展示和搜索。
+- `environments.env_id`、`runtime_snapshots.env_id` 和 `environment_details.env_id` 都是主键；详情通过外键绑定环境并随环境缓存删除。
+- Manager operation、generation、runtime callback、详情刷新、代理绑定和单环境 MCP 路由都只接受精确 envId，不用名称或数组位置反查。
+- Dashboard snapshot 在渲染前拒绝空/重复环境 envId、重复详情 envId 和悬空详情绑定；表格选择、React key、指纹列及 mutation 参数始终使用 envId。
+
 ## 2. Operation 队列
 
 所有 operation 先以 `queued` 写入数据库，再等待 FIFO Tokio Mutex。获得执行权后转为 `running`，最终进入 `succeeded`、`failed` 或 `cancelled`。operation 状态更新和对应 `operation.<status>` 事件写入同一个 SQLite transaction，页面刷新不会看到状态与事件不一致。
