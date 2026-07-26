@@ -18,6 +18,14 @@ npm run e2e:credential
 
 该 runner 使用唯一系统临时数据目录，验证初始化、DPAPI 密文、Manager 重建恢复和移除后的账号缓存隔离，退出时清理临时目录。普通桌面使用 `manager_configure_api_key` 写入平台安全存储；`BROSDK_API_KEY` 仅保留给测试和受管部署。
 
+真实 Dashboard 环境启停 E2E：
+
+```powershell
+npm run e2e:dashboard:desktop
+```
+
+该 runner 驱动 Windows Tauri 窗口中的环境表按钮；已有已初始化窗口时直接复用，没有窗口时启动隔离桌面进程并通过隐藏 API Key 完成初始化。测试结束前会把目标环境恢复为 stopped，隔离启动时还会关闭进程并清理临时数据目录。
+
 可选测试变量：
 
 ```powershell
@@ -328,3 +336,5 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 2026-07-26 阶段 14 最终结果：真实双环境 runner 显式断言两个临时 envId 非空且唯一，报告 `uniqueEnvironmentIds=true` 且不输出真实标识。两个环境再次完成独立更新、批量启停、callback ready、远端指纹详情、本地清理和服务端删除；环境数从 1 恢复为 1，清理 2/2。最终 Dashboard 33 项组件测试、Playwright 6 项、Rust workspace 81 项测试、`npm run check`、Clippy 和 production build 全部通过，退出后无临时数据目录、测试端口或 `sdk-host` 残留。
 
 2026-07-26 首次初始化交互回归：纯浏览器根页面不再展示无法调用 Manager 的禁用 API Key 表单，改为可点击的工作台预览入口；真实 API Key 初始化仍只在 Tauri 桌面运行时提供。Windows 桌面窗口已验证输入后按钮启用，并使用隐藏测试凭据完成初始化、加载环境工作台和启动隔离 `sdk-host`。Playwright 首次启动回归在桌面与 390px 项目各执行一次，Dashboard E2E 共 8 项。
+
+2026-07-26 Dashboard 功能 E2E 补充：`npm run e2e:dashboard` 只验证无后端浏览器预览的布局、身份和选择交互，不能作为 SDK mutation 验收。新增 `npm run e2e:dashboard:desktop`，在 Windows 可访问性树中驱动真实 Tauri 环境表，验证启动按钮可用、点击后出现可用停止按钮、再停止并恢复启动按钮；可复用已初始化窗口，干净环境下会启动前端/桌面进程并通过隐藏 API Key 完成首次初始化。报告不输出 API Key、envId、名称、CDP 或页面内容。

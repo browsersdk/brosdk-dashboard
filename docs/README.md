@@ -83,7 +83,7 @@ brosdk-dashboard/
 
 阶段 13 真实双环境验收也已完成：`npm run e2e:multi-environment` 使用隐藏 API Key 和唯一临时 Manager 数据目录，创建两个临时环境，分别更新元数据，再通过批量入口生成两组独立启停 operation；两个环境均到达 callback ready、刷新各自远端指纹详情、停止、清理本地数据并删除服务端记录。测试前后账号环境数均为 1，成功报告只包含数量和布尔值；异常路径会先对账运行态，再补偿停止、清理和删除。Dashboard 28 项、Rust workspace 80 项测试及 Clippy、production build 全部通过。
 
-阶段 14 Dashboard 身份验收已完成：`envId` 是环境、详情、指纹列、批量选择、代理绑定和 MCP 单环境选择的唯一关联键，环境名称允许重复；snapshot 对空/重复 envId、重复详情绑定和悬空详情绑定 fail closed。`npm run e2e:dashboard` 在 1440x900 与 390x844 下执行 6 项同名环境 Playwright 流程；真实双环境 runner 也显式断言两个临时 envId 非空且唯一。最终 Dashboard 33 项、Playwright 6 项、Rust workspace 81 项测试及 Clippy、production build 全部通过；真实 E2E 前后环境数均为 1，清理 2/2，退出后无临时目录或 `sdk-host` 残留。
+阶段 14 Dashboard 身份验收已完成：`envId` 是环境、详情、指纹列、批量选择、代理绑定和 MCP 单环境选择的唯一关联键，环境名称允许重复；snapshot 对空/重复 envId、重复详情绑定和悬空详情绑定 fail closed。`npm run e2e:dashboard` 在 1440x900 与 390x844 下执行 8 项同名环境和只读预览 Playwright 流程；`npm run e2e:dashboard:desktop` 另外通过真实 Tauri 环境表按钮完成启动/ready/停止/stopped。真实双环境 runner 也显式断言两个临时 envId 非空且唯一。最终 Dashboard 33 项、Playwright 8 项、Rust workspace 81 项测试及 Clippy、production build 全部通过；真实 E2E 前后环境数均为 1，清理 2/2，退出后无临时目录或 `sdk-host` 残留。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

@@ -461,6 +461,13 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 3 条身份流程分别覆盖环境表 envId 搜索/独立多选/详情、指纹两列绑定、MCP 与代理绑定下拉；在 1440x900 和 390x844 两个项目执行，共 6 项测试。
 - 每条测试都校验页面 title/H1、无 Vite overlay、无页面级横向溢出和 console/page error；预览态 SDK mutation 保持禁用。
 - 应用内浏览器复核同名环境多选计数、envId 精确搜索、两列指纹对比和 MCP 两个 envId 选项，console 无 warning/error。当前浏览器后端没有 screenshot 方法，视觉与移动视口证据由 Playwright 项目提供。
+- 浏览器 Playwright 明确只覆盖无后端预览，不作为 SDK mutation 证据；Windows 真实 Dashboard 启停由 `npm run e2e:dashboard:desktop` 驱动 Tauri 环境表按钮并等待 ready/stopped 状态反转。
+
+阶段 14 Dashboard 功能 E2E 回归完成（2026-07-26）：
+
+- 环境列表在浏览器预览中明确显示“浏览器预览 · 只读”，启动/停止等真实 mutation 继续禁用，避免把没有 Tauri bridge 的预览当作实际客户端。
+- `npm run e2e:dashboard:desktop` 已通过真实 Tauri UI 自动化，直接定位带环境标识的启动/停止控件，完成 start -> ready -> stop -> stopped；报告不输出 envId、名称、CDP 或页面内容。
+- Dashboard Playwright 回归共 8 项，组件 33 项，Rust workspace 81 项；`npm run check`、Clippy 和 production build 通过。
 
 阶段 14 真实 SDK 与最终验收完成（2026-07-26）：
 

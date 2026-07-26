@@ -16,6 +16,7 @@ import {
   HardDriveDownload,
   KeyRound,
   LoaderCircle,
+  Monitor,
   Network,
   Play,
   Plus,
@@ -515,6 +516,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           <span className={`cache-state ${cache?.state ?? "empty"}`} title={cacheTitle} aria-live="polite">
             <Database size={13} />{cacheLabel}
           </span>
+          {!isDesktopRuntime() && <span className="cache-state empty" title="浏览器预览只读，真实环境操作请使用桌面客户端"><Monitor size={13} />浏览器预览 · 只读</span>}
           <label className="search-control">
             <Search size={15} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称或 envId" />

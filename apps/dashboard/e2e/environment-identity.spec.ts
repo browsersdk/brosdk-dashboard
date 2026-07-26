@@ -18,6 +18,7 @@ test("same-name environments remain independently searchable and selectable", as
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=environments`);
   await expectHealthyDashboard(page, "环境");
+  await expect(page.getByText("浏览器预览 · 只读", { exact: true })).toBeVisible();
 
   const first = page.locator('tr[data-env-id="env-demo-01"]');
   const second = page.locator('tr[data-env-id="env-demo-02"]');
