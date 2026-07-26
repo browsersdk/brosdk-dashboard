@@ -3,7 +3,7 @@ import { CircleDot, Columns3, Fingerprint, Globe2, List, LoaderCircle, RefreshCw
 import { isDesktopRuntime, openFingerprintCheck, refreshEnvironmentDetail } from "../../api";
 import type { DashboardSnapshot, OperationRecord } from "../../types";
 import { environmentControlLabel } from "../../environmentIdentity";
-import { fingerprintDetailGroups, formatRemoteValue, readRemoteValue, remoteProxyLabel } from "../environments/remoteDetails";
+import { fingerprintDetailGroups, formatFingerprintValue, formatRemoteValue, readRemoteValue, remoteProxyLabel } from "../environments/remoteDetails";
 import { FingerprintComparisonView } from "./FingerprintComparisonView";
 
 interface FingerprintPageProps {
@@ -201,7 +201,7 @@ export function FingerprintPage({
                   {groups.map((group) => (
                     <section key={group.title} className="fingerprint-group">
                       <h3>{group.title}</h3>
-                      <dl>{group.rows.map((row) => <div key={row.key}><dt>{row.label}</dt><dd title={formatRemoteValue(row.value)}>{formatRemoteValue(row.value)}</dd></div>)}</dl>
+                      <dl>{group.rows.map((row) => <div key={row.key}><dt>{row.label}</dt><dd title={formatFingerprintValue(row.key, row.value)}>{formatFingerprintValue(row.key, row.value)}</dd></div>)}</dl>
                     </section>
                   ))}
                 </div>

@@ -45,6 +45,11 @@ test("fingerprint comparison keeps columns bound to envId", async ({ page }) => 
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=fingerprints`);
   await expectHealthyDashboard(page, "指纹");
+  const viewer = page.locator(".fingerprint-viewer");
+  await expect(viewer).toContainText("Canvas");
+  await expect(viewer).toContainText("真实");
+  await expect(viewer).not.toContainText("其它");
+  await expect(viewer).not.toContainText("{");
 
   await expect(page.getByRole("button", { name: "查看 共享工作环境 (env-demo-01)" })).toHaveCount(1);
   await expect(page.getByRole("button", { name: "查看 共享工作环境 (env-demo-02)" })).toHaveCount(1);

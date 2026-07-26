@@ -469,6 +469,12 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - `npm run e2e:dashboard:desktop` 已通过真实 Tauri UI 自动化，直接定位带环境标识的启动/停止控件，完成 start -> ready -> stop -> stopped；报告不输出 envId、名称、CDP 或页面内容。
 - Dashboard Playwright 回归共 8 项，组件 33 项，Rust workspace 81 项；`npm run check`、Clippy 和 production build 通过。
 
+阶段 14 指纹详情展示回归完成（2026-07-26）：
+
+- 指纹详情改为固定白名单摘要，不再自动追加“其它”字段；嵌套对象和 JSON 编码对象只显示“已配置”，内部键值不会进入正文或 tooltip。
+- Canvas、WebGL、WebRTC、AudioContext、字体指纹、Client Rects、语音和媒体设备按服务端 DTO 枚举显示可读模式；浏览器、语言、时区、屏幕、CPU、内存和 WebGL 厂商/渲染器继续显示实际摘要。
+- MAC、WebRTC IP、字体列表、端口、设备名、硬件内部开关和未知扩展字段默认隐藏；跨环境对比复用同一安全格式化器。
+
 阶段 14 真实 SDK 与最终验收完成（2026-07-26）：
 
 - 双环境 runner 新增 envId 非空与唯一性断言，成功报告只增加 `uniqueEnvironmentIds=true`，不输出两个真实 envId。

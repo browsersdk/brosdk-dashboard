@@ -338,3 +338,5 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 2026-07-26 首次初始化交互回归：纯浏览器根页面不再展示无法调用 Manager 的禁用 API Key 表单，改为可点击的工作台预览入口；真实 API Key 初始化仍只在 Tauri 桌面运行时提供。Windows 桌面窗口已验证输入后按钮启用，并使用隐藏测试凭据完成初始化、加载环境工作台和启动隔离 `sdk-host`。Playwright 首次启动回归在桌面与 390px 项目各执行一次，Dashboard E2E 共 8 项。
 
 2026-07-26 Dashboard 功能 E2E 补充：`npm run e2e:dashboard` 只验证无后端浏览器预览的布局、身份和选择交互，不能作为 SDK mutation 验收。新增 `npm run e2e:dashboard:desktop`，在 Windows 可访问性树中驱动真实 Tauri 环境表，验证启动按钮可用、点击后出现可用停止按钮、再停止并恢复启动按钮；可复用已初始化窗口，干净环境下会启动前端/桌面进程并通过隐藏 API Key 完成首次初始化。报告不输出 API Key、envId、名称、CDP 或页面内容。
+
+2026-07-26 指纹展示回归：指纹详情只展示服务端 DTO 中有明确用户语义的浏览器、系统、设备和主要指纹表面字段。Canvas、WebGL、WebRTC、AudioContext、字体等枚举转换为可读模式；对象或 JSON 编码对象只显示“已配置”。未知字段、“其它”分组、MAC、WebRTC IP、字体列表和 perturb 等内部参数不进入 DOM、title 或对比单元格。

@@ -1,5 +1,5 @@
 import type { DashboardSnapshot, EnvironmentBindingSummary } from "../../types";
-import { formatRemoteValue, readRemoteValue } from "../environments/remoteDetails";
+import { formatFingerprintValue, formatRemoteValue, readRemoteValue } from "../environments/remoteDetails";
 
 type Environment = DashboardSnapshot["environments"][number];
 
@@ -120,7 +120,7 @@ export function buildFingerprintComparison(
         return {
           key: field.key,
           label: field.label,
-          values: rawValues.map(formatRemoteValue),
+          values: rawValues.map((value) => formatFingerprintValue(field.key, value)),
           state: comparisonState(rawValues),
         };
       }),

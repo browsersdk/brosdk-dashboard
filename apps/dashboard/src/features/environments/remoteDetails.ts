@@ -11,12 +11,19 @@ export interface DetailGroup {
   rows: DetailRow[];
 }
 
-const sensitiveKey = /(cookie|storage|password|secret|token|^dek$)/i;
-
 export function asRemoteRecord(value: unknown): RemoteRecord {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as RemoteRecord
-    : {};
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) return value as RemoteRecord;
+  if (typeof value !== "string" || value.length > 200_000) return {};
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{")) return {};
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as RemoteRecord
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 export function readRemoteValue(value: unknown, keys: string[]): unknown {
@@ -35,8 +42,52 @@ export function formatRemoteValue(value: unknown): string {
   return String(value);
 }
 
+const fingerprintModes: Record<string, Record<string, string>> = {
+  canvas: { "0": "一致性", "1": "真实", "2": "随机", "3": "关闭", "4": "一致性" },
+  webGl: { "0": "真实", "1": "隐身", "2": "真实" },
+  webGlInfo: { "0": "关闭", "1": "真实", "2": "自定义", "3": "自动生成" },
+  webRTC: { "0": "禁用", "1": "真实 IP", "2": "代理 IP", "3": "隐身", "4": "转发", "5": "禁用" },
+  audioContext: { "0": "真实", "1": "隐身", "2": "真实" },
+  fontFinger: { "0": "真实", "1": "隐身", "2": "真实" },
+  clientRects: { "0": "真实", "1": "隐身", "2": "真实" },
+  speechVoices: { "1": "真实", "2": "噪声" },
+  mediaDevice: { "1": "真实", "2": "噪声" },
+  doNotTrack: { "1": "启用", "2": "默认", "3": "不启用" },
+};
+
+function compactFingerprintObject(value: unknown): string {
+  if (value === null || typeof value !== "object") return "-";
+  return Object.keys(value as Record<string, unknown>).length > 0 ? "已配置" : "-";
+}
+
+export function formatFingerprintValue(key: string, value: unknown): string {
+  if (value === undefined || value === null || value === "") return "-";
+  const mode = fingerprintModes[key]?.[String(value)];
+  if (mode) return mode;
+  if (Array.isArray(value)) {
+    return value.every((item) => item === null || ["string", "number", "boolean"].includes(typeof item))
+      ? value.map((item) => formatFingerprintValue(key, item)).join(", ")
+      : `${value.length} 项`;
+  }
+  if (typeof value === "object") return compactFingerprintObject(value);
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (parsed !== null && typeof parsed === "object") return compactFingerprintObject(parsed);
+      } catch {
+        // Keep malformed server text as-is instead of exposing a parser error.
+      }
+    }
+  }
+  return String(value);
+}
+
 export function remoteProxyLabel(value: unknown): string {
-  return formatRemoteValue(readRemoteValue(value, ["displayUrl"]) ?? value);
+  const displayUrl = readRemoteValue(value, ["displayUrl"]);
+  if (displayUrl !== null) return formatRemoteValue(displayUrl);
+  return readRemoteValue(value, ["configured", "passwordPresent"]) ? "已配置" : "-";
 }
 
 const groupDefinitions: Array<{
@@ -60,10 +111,6 @@ const groupDefinitions: Array<{
       ["dpi", "屏幕", ["dpi", "screen", "screenResolution"]],
       ["cpu", "CPU", ["cpu", "hardwareConcurrency"]],
       ["mem", "内存", ["mem", "deviceMemory"]],
-      ["deviceName", "设备名", ["deviceName"]],
-      ["hardware", "硬件", ["hardware"]],
-      ["mac", "MAC", ["mac"]],
-      ["bluetooth", "蓝牙", ["bluetooth"]],
       ["doNotTrack", "Do Not Track", ["doNotTrack"]],
     ],
   },
@@ -74,37 +121,24 @@ const groupDefinitions: Array<{
       ["webGl", "WebGL", ["webGl", "webGL"]],
       ["webGlVendor", "WebGL Vendor", ["webGlVendor", "webGLVendor"]],
       ["webGlRenderer", "WebGL Renderer", ["webGlRenderer", "webGLRenderer"]],
-      ["webGlInfo", "WebGL Info", ["webGlInfo", "webGLInfo"]],
       ["webRTC", "WebRTC", ["webRTC", "webrtc"]],
-      ["webRTCIP", "WebRTC IP", ["webRTCIP", "webrtcIP"]],
       ["audioContext", "AudioContext", ["audioContext"]],
-      ["clientRects", "Client Rects", ["clientRects"]],
-      ["font", "字体", ["font", "fonts"]],
       ["fontFinger", "字体指纹", ["fontFinger"]],
-      ["speechVoices", "语音", ["speechVoices"]],
+      ["clientRects", "Client Rects", ["clientRects"]],
+      ["speechVoices", "语音指纹", ["speechVoices"]],
       ["mediaDevice", "媒体设备", ["mediaDevice", "mediaDevices"]],
-      ["enableScanPort", "端口扫描", ["enableScanPort"]],
     ],
   },
 ];
 
 export function fingerprintDetailGroups(value: unknown): DetailGroup[] {
   const record = asRemoteRecord(value);
-  const usedKeys = new Set<string>();
-  const groups = groupDefinitions.map((group) => ({
+  return groupDefinitions.map((group) => ({
     title: group.title,
     rows: group.fields.flatMap(([key, label, aliases]) => {
       const matched = aliases.find((alias) => record[alias] !== undefined && record[alias] !== null && record[alias] !== "");
       if (!matched) return [];
-      aliases.forEach((alias) => usedKeys.add(alias));
-      return [{ key, label, value: record[matched] }];
+      return [{ key, label, value: formatFingerprintValue(key, record[matched]) }];
     }),
   })).filter((group) => group.rows.length > 0);
-
-  const otherRows = Object.entries(record)
-    .filter(([key, item]) => !usedKeys.has(key) && !sensitiveKey.test(key) && item !== null && item !== "")
-    .sort(([left], [right]) => left.localeCompare(right))
-    .map(([key, item]) => ({ key, label: key, value: item }));
-  if (otherRows.length > 0) groups.push({ title: "其它", rows: otherRows });
-  return groups;
 }

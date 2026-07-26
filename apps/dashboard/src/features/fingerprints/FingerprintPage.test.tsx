@@ -110,17 +110,26 @@ describe("FingerprintPage", () => {
     await waitFor(() => expect(openCheck).toHaveBeenCalledWith("env-2"));
   });
 
-  it("keeps unknown fingerprint fields visible but filters sensitive keys", () => {
-    const groups = fingerprintDetailGroups({
+  it("shows allowlisted fingerprint summaries without exposing internal JSON", () => {
+    const groups = fingerprintDetailGroups(JSON.stringify({
+      canvas: 4,
+      webGl: { mode: 1, rendererSeed: "internal-renderer" },
+      webRTC: 2,
+      font: { enable: 1, list: ["internal-font"] },
       customSurface: { mode: 2 },
-      cookieSeed: "hidden",
-      nested: { value: true },
-    });
+      cookieSeed: "hidden-cookie",
+    }));
     const text = JSON.stringify(groups);
-    expect(text).toContain("customSurface");
-    expect(text).toContain("nested");
+    expect(text).toContain("一致性");
+    expect(text).toContain("已配置");
+    expect(text).toContain("代理 IP");
+    expect(text).not.toContain("其它");
+    expect(text).not.toContain("customSurface");
+    expect(text).not.toContain("rendererSeed");
+    expect(text).not.toContain("internal-renderer");
+    expect(text).not.toContain("internal-font");
     expect(text).not.toContain("cookieSeed");
-    expect(text).not.toContain("hidden");
+    expect(text).not.toContain("hidden-cookie");
   });
 
   it("compares selected remote summaries as same, different, or unknown", () => {
