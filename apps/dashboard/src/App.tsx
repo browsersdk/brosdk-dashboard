@@ -21,7 +21,6 @@ import {
   Play,
   Plus,
   RefreshCw,
-  RotateCcw,
   ServerCog,
   Settings,
   ShieldCheck,
@@ -29,7 +28,6 @@ import {
   Trash2,
   Search,
   SlidersHorizontal,
-  X,
   TerminalSquare,
 } from "lucide-react";
 import {
@@ -75,6 +73,7 @@ import { EnvironmentBatchBar } from "./features/environments/EnvironmentBatchBar
 import { EnvironmentDetail } from "./features/environments/EnvironmentDetail";
 import { FingerprintPage } from "./features/fingerprints/FingerprintPage";
 import { McpPage } from "./features/mcp/McpPage";
+import { OperationsPage } from "./features/operations/OperationsPage";
 import { ApiKeySetup } from "./features/setup/ApiKeySetup";
 import { environmentControlLabel, environmentLabel } from "./environmentIdentity";
 import type {
@@ -872,70 +871,6 @@ function AiPage({ snapshot, onRefresh, onError }: {
   );
 }
 
-function OperationsPage({ snapshot, onRefresh, onError }: {
-  snapshot: DashboardSnapshot | null;
-  onRefresh: () => Promise<void>;
-  onError: (message: string) => void;
-}) {
-  const [status, setStatus] = useState("all");
-  const [kind, setKind] = useState("all");
-  const [query, setQuery] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [busy, setBusy] = useState("");
-  const kinds = useMemo(() => Array.from(new Set((snapshot?.operations ?? []).map((operation) => operation.kind))), [snapshot?.operations]);
-  const operations = useMemo(() => (snapshot?.operations ?? []).filter((operation) => {
-    const matchesStatus = status === "all" || operation.status === status;
-    const matchesKind = kind === "all" || operation.kind === kind;
-    const needle = query.trim().toLocaleLowerCase();
-    const matchesQuery = !needle || `${operation.label} ${operation.message} ${operation.id} ${operation.envId ?? ""}`.toLocaleLowerCase().includes(needle);
-    return matchesStatus && matchesKind && matchesQuery;
-  }), [snapshot?.operations, status, kind, query]);
-  const selected = snapshot?.operations.find((operation) => operation.id === selectedId) ?? null;
-
-  async function run(action: string, callback: () => Promise<unknown>) {
-    setBusy(action); onError("");
-    try { await callback(); await onRefresh(); }
-    catch (requestError) { onError(errorMessage(requestError, "操作处理失败")); }
-    finally { setBusy(""); }
-  }
-
-  return (
-    <section className={`module-workspace operation-workspace ${selected ? "with-detail" : ""}`}>
-      <div className="module-toolbar">
-        <div className="toolbar-group">
-          <label className="search-control"><Search size={14} /><input aria-label="搜索操作" placeholder="搜索操作、环境或 ID" value={query} onChange={(event) => setQuery(event.target.value)} /></label>
-          <label className="select-control"><SlidersHorizontal size={14} /><select aria-label="状态筛选" value={status} onChange={(event) => setStatus(event.target.value)}><option value="all">全部状态</option><option value="queued">排队中</option><option value="running">执行中</option><option value="succeeded">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option></select></label>
-          <label className="select-control"><TerminalSquare size={14} /><select aria-label="类型筛选" value={kind} onChange={(event) => setKind(event.target.value)}><option value="all">全部类型</option>{kinds.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-        </div>
-      </div>
-      <div className="operation-body">
-      <div className="table-wrap">
-        <table className="module-table">
-          <thead><tr><th>操作</th><th>类型</th><th>状态</th><th>信息</th><th>更新时间</th><th aria-label="操作" /></tr></thead>
-          <tbody>
-            {operations.map((operation) => (
-              <tr key={operation.id} className={selectedId === operation.id ? "selected" : ""} onClick={() => setSelectedId(operation.id)}>
-                <td>{operation.label}</td>
-                <td><code>{operation.kind}</code></td>
-                <td><span className={`status-badge ${operation.status}`}>{statusLabel[operation.status] ?? operation.status}</span></td>
-                <td>{operation.message}</td>
-                <td>{new Date(operation.updatedAt).toLocaleString("zh-CN")}</td>
-                <td className="row-actions inline-actions">
-                  {matchesActiveOperation(operation.status) && <button className="icon-button danger" type="button" title="取消" aria-label={`取消 ${operation.label}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void run(`cancel:${operation.id}`, () => cancelOperation(operation.id)); }}><Square size={14} /></button>}
-                  {matchesRetryableOperation(operation.status) && <button className="icon-button" type="button" title="重试" aria-label={`重试 ${operation.label}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void run(`retry:${operation.id}`, () => retryOperation(operation.id)); }}><RotateCcw size={14} /></button>}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {operations.length === 0 && <div className="environment-empty"><TerminalSquare size={18} /><span>没有匹配操作</span></div>}
-      </div>
-      {selected && <aside className="environment-detail operation-detail"><div className="detail-heading"><div><small>操作日志</small><h2>{selected.label}</h2></div><button className="icon-button" type="button" title="关闭详情" aria-label="关闭详情" onClick={() => setSelectedId(null)}><X size={16} /></button></div><dl className="detail-list compact"><DetailRow label="Operation ID" value={selected.id} /><DetailRow label="Kind" value={selected.kind} /><DetailRow label="Environment" value={selected.envId ?? "-"} /><DetailRow label="ReqId" value={selected.requestId === null ? "-" : String(selected.requestId)} /><DetailRow label="Generation" value={String(selected.generation)} /><DetailRow label="错误码" value={selected.errorCode ?? "-"} /><DetailRow label="创建时间" value={formatTime(selected.createdAt)} /><DetailRow label="更新时间" value={formatTime(selected.updatedAt)} /></dl><JsonPreview label="请求快照" value={selected.request} /></aside>}
-      </div>
-    </section>
-  );
-}
-
 function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, credentialBusy }: {
   snapshot: DashboardSnapshot | null;
   onRefresh: () => Promise<void>;
@@ -1022,6 +957,4 @@ function errorMessage(error: unknown, fallback: string) { return error instanceo
 function credentialSourceLabel(source?: string) { return ({ environment: "系统环境", "secure-storage": "系统安全存储", none: "未设置" } as Record<string, string>)[source ?? "none"] ?? "未知"; }
 function formatTime(value: string) { return new Date(value).toLocaleString("zh-CN"); }
 function proxyDisplayUrl(profile: ProxyProfile) { return `${profile.scheme}://${profile.username ? `${profile.username}@` : ""}${profile.host}:${profile.port}`; }
-function matchesActiveOperation(status: string) { return status === "queued" || status === "running"; }
-function matchesRetryableOperation(status: string) { return status === "failed" || status === "cancelled"; }
 function kernelStatus(status: string) { return ({ installed: "已安装", available: "可安装", "update-available": "可更新", unknown: "未知" } as Record<string, string>)[status] ?? status; }

@@ -340,3 +340,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 2026-07-26 Dashboard 功能 E2E 补充：`npm run e2e:dashboard` 只验证无后端浏览器预览的布局、身份和选择交互，不能作为 SDK mutation 验收。新增 `npm run e2e:dashboard:desktop`，在 Windows 可访问性树中驱动真实 Tauri 环境表，验证启动按钮可用、点击后出现可用停止按钮、再停止并恢复启动按钮；可复用已初始化窗口，干净环境下会启动前端/桌面进程并通过隐藏 API Key 完成首次初始化。报告不输出 API Key、envId、名称、CDP 或页面内容。
 
 2026-07-26 指纹展示回归：指纹详情只展示服务端 DTO 中有明确用户语义的浏览器、系统、设备和主要指纹表面字段。Canvas、WebGL、WebRTC、AudioContext、字体等枚举转换为可读模式；对象或 JSON 编码对象只显示“已配置”。未知字段、“其它”分组、MAC、WebRTC IP、字体列表和 perturb 等内部参数不进入 DOM、title 或对比单元格。
+
+## 18. 阶段 15 操作中心与故障恢复验收
+
+- 操作中心使用 `envId` 筛选和绑定环境，同名环境的 option、表格单元格、详情和测试属性必须保留不同 envId。
+- 用户取消只允许 queued operation。Manager 与 Store 都必须拒绝 running -> cancelled，防止 SDK/DLL 请求继续执行时界面误报取消。
+- 重试入口只对应 Manager `retry_operation` 已实现的类型；未知类型、详情刷新、MCP、诊断和清理等失败 operation 不显示重试。
+- 浏览器预览只验证筛选、详情和禁用态；真实 mutation 继续由 `npm run e2e:dashboard:desktop` 执行。
+
+2026-07-26 阶段 15 结果：新增 3 个操作中心组件测试和 1 个 Manager 状态策略测试。Browser 插件确认同名环境按 envId 过滤为 2/4、详情显示精确环境身份且 console 无 warning/error；截图能力仍不可用。`npm run e2e:dashboard` 在桌面与 390x844 共 10 项通过；真实 Tauri 启停 E2E 返回 `operationIdentityObserved=true`，不输出真实 envId、名称或凭据。最终 Dashboard 36 项、Rust workspace 82 项、Playwright 10 项测试，以及 `npm run check`、Clippy 和 production build 全部通过。

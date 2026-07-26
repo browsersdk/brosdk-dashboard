@@ -92,6 +92,24 @@ test("environment pickers expose envId instead of relying on names", async ({ pa
   expect(issues).toEqual([]);
 });
 
+test("operation center filters by envId and protects unsupported actions", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  await page.goto(`/?${scenario}&page=operations`);
+  await expectHealthyDashboard(page, "操作");
+  await expect(page.getByLabel("操作摘要")).toContainText("显示 4/4");
+
+  await page.getByLabel("环境筛选").selectOption("env-demo-02");
+  await expect(page.getByLabel("操作摘要")).toContainText("显示 2/4");
+  await expect(page.locator('tr[data-operation-id="op-preview-refresh-02"]')).toBeVisible();
+  await expect(page.locator('tr[data-operation-id="op-preview-stop-02"]')).toBeVisible();
+  await expect(page.getByRole("button", { name: /重试.*刷新.*env-demo-02/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /取消.*停止.*env-demo-02/ })).toBeDisabled();
+
+  await page.locator('tr[data-operation-id="op-preview-refresh-02"]').click();
+  await expect(page.locator("aside.operation-detail")).toContainText("共享工作环境 · env-demo-02");
+  expect(issues).toEqual([]);
+});
+
 async function expectHealthyDashboard(page: Page, pageHeading: string) {
   await expect(page).toHaveTitle("BroSDK Dashboard");
   await expect(page.getByRole("heading", { level: 1, name: pageHeading })).toBeVisible();

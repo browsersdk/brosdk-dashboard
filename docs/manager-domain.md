@@ -42,10 +42,11 @@ Manager 使用 `runtime/data/manager.sqlite3` 持久化设置、operation、本�
 
 ```text
 queued -> running -> succeeded
-   |         |----> failed
-   |         +----> cancelled
+   |         +----> failed
    +--------------> cancelled / failed
 ```
+
+用户取消只允许 `queued` operation。进入 `running` 后，Manager 和 SQLite 状态机都拒绝转为 `cancelled`，因为底层 SDK/DLL 请求已经开始，单纯修改数据库状态不能终止实际调用。失败或取消后的重试也只开放给 Manager 有确定重放实现的 `environment.sync`、`runtime.reconcile`、`environment.start`、`environment.stop` 和 `kernel.install`；其它 operation 不显示误导性的重试入口。
 
 ## 3. Environment generation
 

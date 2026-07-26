@@ -1626,8 +1626,7 @@ fn valid_transition(from: &str, to: &str) -> bool {
     from == to
         || matches!(
             (from, to),
-            ("queued", "running" | "cancelled" | "failed")
-                | ("running", "succeeded" | "failed" | "cancelled")
+            ("queued", "running" | "cancelled" | "failed") | ("running", "succeeded" | "failed")
         )
 }
 

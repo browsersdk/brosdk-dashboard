@@ -704,6 +704,30 @@ h2 {
   margin-left: auto;
 }
 
+.operation-toolbar {
+  flex-wrap: wrap;
+}
+
+.operation-summary {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  gap: 12px;
+  color: #7a8494;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.operation-summary strong {
+  color: #344054;
+  font-size: 13px;
+}
+
+.operation-summary .has-failures,
+.operation-summary .has-failures strong {
+  color: #ad343b;
+}
+
 .toolbar-title {
   flex: 0 0 auto;
   color: #344054;
@@ -1081,6 +1105,18 @@ h2 {
 
 .operation-detail .json-preview {
   margin-top: 12px;
+}
+
+.operation-environment {
+  display: grid;
+  min-width: 136px;
+  gap: 2px;
+}
+
+.operation-environment small {
+  color: #8b95a4;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 10px;
 }
 
 .settings-layout {

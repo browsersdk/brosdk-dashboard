@@ -19,6 +19,7 @@
 | 12. 首次初始化与环境工作台 | P0 | 已完成 | API Key 安全初始化、环境详情、远端指纹、运维动作和真实生命周期 E2E 完成 |
 | 13. 多环境工作流 | P0 | 已完成 | 批量启停、受限远端元数据编辑、跨环境指纹对比和双环境 E2E |
 | 14. Dashboard envId 身份与 E2E | P0 | 已完成 | envId 唯一主键、同名环境可辨识交互和桌面/移动浏览器 E2E |
+| 15. 操作中心与故障恢复 | P0 | 已完成 | 按 envId 追踪 operation，取消/重试策略与真实执行能力一致 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -593,3 +594,29 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - `npm run e2e:environment` 在设置 `BROSDK_EMBEDDED_PORT` 时会实际调用 `/sdk/v1/mcp/env/{envId}` 的 `tabs(list)`，不再只检查 TCP 监听。
 - 2026-07-25 使用真实测试配置完成 DeepSeek smoke 和环境 E2E；报告确认 `readySource=sdk_callback`、`runtimeEvaluateVerified=true`、`embeddedMcpToolVerified=true`、`manualCloseVerified=true`。
 - Dashboard AI/MCP 页面通过 1440x900 与 390x844 Playwright 检查：导航与 Chat/Agent 模式切换有效、预览态写按钮保持禁用、控制台无应用错误、页面无横向溢出。
+
+## 18. 阶段 15：操作中心与故障恢复
+
+目标：让多环境 operation 的展示、取消和重试与 Manager 实际执行语义一致，避免 UI 状态与 DLL 调用脱节。
+
+任务：
+
+- 操作中心按精确 `envId` 筛选，环境名称重复时仍显示“名称 · envId”。
+- 增加当前结果、进行中和失败数量摘要，并在详情中保留 operation id、kind、envId、generation、reqId 和错误码。
+- 取消只允许 queued operation；running operation 不提供取消入口，Manager 与 SQLite 状态机双重拒绝。
+- 重试只开放 `environment.sync`、`runtime.reconcile`、`environment.start`、`environment.stop` 和 `kernel.install`，其它失败操作不显示不可执行的重试。
+- 浏览器 E2E 覆盖同名环境筛选、动作保护和移动布局；真实 Tauri E2E 在环境启停后验证操作中心能看到同一 envId。
+
+验收：
+
+- running operation 不能被标记为 cancelled。
+- 环境筛选不依赖名称，操作表、详情和自动化定位都使用 envId。
+- 浏览器预览不执行 mutation，取消/重试按钮保持禁用。
+- `npm run check`、`npm test`、`npm run build`、`npm run e2e:dashboard` 和 `npm run e2e:dashboard:desktop` 通过。
+
+阶段 15 实现结果（2026-07-26）：
+
+- `OperationsPage` 从单体 `App.tsx` 拆分，新增环境筛选、环境身份列、状态摘要和稳定 operation/envId 测试属性。
+- Manager 新增 `OPERATION_NOT_CANCELLABLE`，只允许 queued operation 取消；SQLite 状态机移除 `running -> cancelled`。
+- Dashboard 只对 Manager 已支持的失败/取消类型显示重试，指纹刷新、MCP、诊断等无重放契约的 operation 不再显示误导入口。
+- Browser 插件验证页面身份、筛选、详情和 console；Playwright 在 1440x900 与 390x844 完成 10 项测试。真实 Tauri E2E 完成 start -> ready -> stop -> stopped，并报告 `operationIdentityObserved=true`。最终 Dashboard 36 项、Rust workspace 82 项测试，`npm run check`、Clippy 和 production build 全部通过。

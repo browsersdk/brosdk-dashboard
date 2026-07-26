@@ -172,6 +172,8 @@ pub enum ManagerError {
     Json(#[from] serde_json::Error),
     #[error("operation cannot be retried from its current state")]
     OperationNotRetryable,
+    #[error("operation can only be cancelled while queued")]
+    OperationNotCancellable,
     #[error("kernel is not known to the local manager")]
     KernelNotFound,
     #[error("kernel cannot be used to create an environment: {0}")]
@@ -2357,6 +2359,14 @@ impl Manager {
     }
 
     pub fn cancel_operation(&self, operation_id: &str) -> Result<OperationRecord, ManagerError> {
+        let operation = self
+            .inner
+            .store
+            .operation(operation_id)?
+            .ok_or(ManagerError::OperationNotCancellable)?;
+        if operation.status != "queued" {
+            return Err(ManagerError::OperationNotCancellable);
+        }
         Ok(self
             .inner
             .operations
@@ -3603,6 +3613,7 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::Zip(_) => "ZIP_ERROR",
         ManagerError::Json(_) => "JSON_ERROR",
         ManagerError::OperationNotRetryable => "OPERATION_NOT_RETRYABLE",
+        ManagerError::OperationNotCancellable => "OPERATION_NOT_CANCELLABLE",
         ManagerError::KernelNotFound => "KERNEL_NOT_FOUND",
         ManagerError::KernelNotUsable(_) => "KERNEL_NOT_USABLE",
         ManagerError::ProxyNotFound => "PROXY_NOT_FOUND",
@@ -3627,6 +3638,7 @@ fn environment_api_key_present() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::StoreError;
 
     fn usable_kernel() -> KernelRecord {
         KernelRecord {
@@ -3836,6 +3848,52 @@ mod tests {
         assert_eq!(
             manager.inner.last_runtime_status.blocking_read().state,
             RuntimeHostState::Stopped
+        );
+    }
+
+    #[test]
+    fn manager_cancels_only_queued_operations() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = ManagerStore::open(
+            directory.path().join("manager.sqlite3"),
+            &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
+                work_dir: "work".into(),
+                extension_dir: "extensions".into(),
+                log_dir: "logs".into(),
+                sdk_api_url: None,
+                debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: None,
+            },
+        )
+        .expect("store");
+        let manager = Manager::with_store(store.clone()).expect("manager");
+        let queued = store
+            .create_operation("environment.stop", Some("env-1"), "stop", 1, None)
+            .expect("queued operation");
+        let cancelled = manager
+            .cancel_operation(&queued.id)
+            .expect("queued operation can be cancelled");
+        assert_eq!(cancelled.status, "cancelled");
+
+        let running = store
+            .create_operation("environment.start", Some("env-1"), "start", 2, None)
+            .expect("running operation");
+        store
+            .transition_operation(&running.id, "running", "started", None)
+            .expect("running transition");
+        assert!(matches!(
+            manager.cancel_operation(&running.id),
+            Err(ManagerError::OperationNotCancellable)
+        ));
+        assert!(matches!(
+            store.transition_operation(&running.id, "cancelled", "cancelled", None),
+            Err(StoreError::InvalidTransition { .. })
+        ));
+        assert_eq!(
+            manager_error_code(&ManagerError::OperationNotCancellable),
+            "OPERATION_NOT_CANCELLABLE"
         );
     }
 

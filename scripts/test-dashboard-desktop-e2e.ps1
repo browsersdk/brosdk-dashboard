@@ -12,6 +12,7 @@ Add-Type -AssemblyName UIAutomationClient
 
 $initializeLabel = -join ([char[]](0x521D, 0x59CB, 0x5316))
 $environmentLabel = -join ([char[]](0x73AF, 0x5883))
+$operationsLabel = -join ([char[]](0x64CD, 0x4F5C))
 $startPattern = (-join ([char[]](0x542F, 0x52A8))) + " *"
 $stopPattern = (-join ([char[]](0x505C, 0x6B62))) + " *"
 
@@ -37,6 +38,8 @@ $startInvoked = $false
 $readyObserved = $false
 $stopInvoked = $false
 $stoppedObserved = $false
+$operationIdentityObserved = $false
+$targetEnvId = $null
 
 function Get-DashboardWindow([int]$AppProcessId) {
     $root = [System.Windows.Automation.AutomationElement]::RootElement
@@ -188,6 +191,12 @@ try {
     $startButton = Wait-ForDashboardValue {
         Find-DashboardButton $window $startPattern -Like -Enabled
     } "enabled environment start button"
+    if ($startButton.Current.Name -match "\(([^)]+)\)$") {
+        $targetEnvId = $Matches[1]
+    }
+    if ([string]::IsNullOrWhiteSpace($targetEnvId)) {
+        throw "Could not extract target envId from the environment control"
+    }
     Invoke-DashboardButton $startButton
     $startInvoked = $true
 
@@ -203,6 +212,18 @@ try {
     } "restored stopped environment" | Out-Null
     $stoppedObserved = $true
 
+    $operationsButton = Wait-ForDashboardValue {
+        Find-DashboardButton $window $operationsLabel -Enabled
+    } "operations navigation"
+    Invoke-DashboardButton $operationsButton
+    Wait-ForDashboardValue {
+        $elements = Get-DashboardElements $window
+        @($elements) | Where-Object {
+            $_.Current.Name -like "*$targetEnvId*"
+        } | Select-Object -First 1
+    } "operation center environment identity" | Out-Null
+    $operationIdentityObserved = $true
+
     [ordered]@{
         status = "passed"
         desktopLaunchedByTest = $ownsDesktop
@@ -211,6 +232,7 @@ try {
         readyObservedInDashboard = $readyObserved
         stopInvokedFromDashboard = $stopInvoked
         stoppedObservedInDashboard = $stoppedObserved
+        operationIdentityObserved = $operationIdentityObserved
     } | ConvertTo-Json
 }
 finally {
