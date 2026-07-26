@@ -67,6 +67,7 @@ import {
   systemProxyDiagnostics,
   uninstallKernel,
   updateSettings,
+  updateEnvironmentMetadata,
 } from "./api";
 import { EnvironmentCreatePanel } from "./features/environments/EnvironmentCreatePanel";
 import { EnvironmentBatchBar } from "./features/environments/EnvironmentBatchBar";
@@ -603,6 +604,10 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           onStart={() => void runAction(`start:${selected.envId}`, () => startEnvironment(selected.envId))}
           onStop={() => void runAction(`stop:${selected.envId}`, () => stopEnvironment(selected.envId))}
           onRefresh={() => void runAction(`detail:${selected.envId}`, () => refreshEnvironmentDetail(selected.envId))}
+          onUpdateMetadata={async (input) => Boolean(await runAction(
+            `metadata:${selected.envId}`,
+            () => updateEnvironmentMetadata({ envId: selected.envId, ...input }),
+          ))}
           onOpenCheck={() => void runAction(`check:${selected.envId}`, () => openFingerprintCheck(selected.envId))}
           onCaptureDiagnostic={() => void (async () => {
             const result = await runAction(`diagnostic:${selected.envId}`, () => captureEnvironmentDiagnostic(selected.envId));

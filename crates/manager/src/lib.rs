@@ -13,11 +13,12 @@ use domain::{
     AiAgentExecuteRequest, AiAgentExecution, AiAgentPlan, AiAgentPlanRequest, AiChatRequest,
     AiChatResponse, ApiKeyInitializationResult, ApiKeyStatus, BrowserCommandExecution,
     DashboardSnapshot, EnvironmentBatchAction, EnvironmentBatchInput, EnvironmentBatchResult,
-    EnvironmentCreateInput, EnvironmentRecord, FingerprintProfile, FingerprintProfileInput,
-    HostCommand, KernelInstallInput, KernelRecord, ManagerEvent, ManagerSettings, McpPanel,
-    McpToolCallExecution, McpToolCallRequest, McpToolDiscovery, McpToolDiscoveryRequest,
-    McpToolScope, McpToolSummary, OperationExecution, OperationRecord, ProxyParseResult,
-    ProxyProfile, ProxyProfileInput, RuntimeHostState, RuntimeHostStatus, SdkPanel, SmokeReport,
+    EnvironmentCreateInput, EnvironmentMetadataUpdateInput, EnvironmentRecord, FingerprintProfile,
+    FingerprintProfileInput, HostCommand, KernelInstallInput, KernelRecord, ManagerEvent,
+    ManagerSettings, McpPanel, McpToolCallExecution, McpToolCallRequest, McpToolDiscovery,
+    McpToolDiscoveryRequest, McpToolScope, McpToolSummary, OperationExecution, OperationRecord,
+    ProxyParseResult, ProxyProfile, ProxyProfileInput, RuntimeHostState, RuntimeHostStatus,
+    SdkPanel, SmokeReport,
 };
 use operation::OperationQueue;
 use sdk_client::{RuntimeHost, SdkHostClient};
@@ -153,6 +154,8 @@ pub enum ManagerError {
     EnvironmentNotReady(String),
     #[error("environment batch request is invalid: {0}")]
     InvalidEnvironmentBatch(String),
+    #[error("environment metadata is invalid: {0}")]
+    InvalidEnvironmentMetadata(String),
     #[error("environment cannot {action} from state {state}")]
     InvalidEnvironmentTransition { action: String, state: String },
     #[error("browser command method must not be empty")]
@@ -382,6 +385,7 @@ impl Manager {
                 .iter()
                 .map(|environment| environment.env_id.clone())
                 .collect::<Vec<_>>(),
+            &self.inner.store.environment_remote_values()?,
             &self.inner.store.environment_details()?,
             &fingerprints
                 .iter()
@@ -1263,6 +1267,124 @@ impl Manager {
             Ok((_env_id, false)) => Ok(self.inner.operations.succeed(
                 &operation.id,
                 "environment created; full mirror refresh deferred",
+            )?),
+            Err(error) => Ok(self.inner.operations.fail(
+                &operation.id,
+                manager_error_code(&error),
+                &error.to_string(),
+            )?),
+        }
+    }
+
+    pub async fn update_environment_metadata(
+        &self,
+        input: EnvironmentMetadataUpdateInput,
+    ) -> Result<OperationRecord, ManagerError> {
+        let request = build_environment_metadata_update_request(&input)?;
+        let generation = self
+            .inner
+            .store
+            .environment(&input.env_id)?
+            .map(|environment| environment.generation)
+            .unwrap_or_default();
+        let operation = self.inner.operations.enqueue(
+            "environment.metadata-update",
+            Some(&input.env_id),
+            "更新环境信息",
+            generation,
+            Some(&request),
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "validating environment state")?;
+
+        let result = async {
+            let environment = self
+                .inner
+                .store
+                .environment(&input.env_id)?
+                .ok_or(ManagerError::EnvironmentNotFound)?;
+            if environment.status != "stopped" {
+                return Err(ManagerError::EnvironmentNotReady(environment.status));
+            }
+
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            let response = host
+                .call(
+                    HostCommand::EnvUpdate {
+                        request: request.clone(),
+                    },
+                    Some(operation.id.clone()),
+                )
+                .await?;
+            ensure_backend_success("environment metadata update", &response)?;
+            let (confirmed_name, confirmed_serial) =
+                confirmed_environment_metadata(&response, &request)?;
+
+            let mirror_synced = match self
+                .fetch_all_environments(&host, Some(operation.id.clone()))
+                .await
+            {
+                Ok(mut rows) => {
+                    merge_confirmed_environment_metadata(
+                        &mut rows,
+                        &input.env_id,
+                        &confirmed_name,
+                        &confirmed_serial,
+                    );
+                    self.inner.store.replace_remote_environments(&rows)?;
+                    true
+                }
+                Err(error) => {
+                    self.inner
+                        .store
+                        .mark_environment_cache_stale(&redacted_response_text(
+                            &error.to_string(),
+                        ))?;
+                    false
+                }
+            };
+            let detail_synced = match host
+                .call(
+                    HostCommand::EnvGetInfo {
+                        request: json!({ "envId": input.env_id }),
+                    },
+                    Some(operation.id.clone()),
+                )
+                .await
+            {
+                Ok(detail) if ensure_backend_success("environment detail", &detail).is_ok() => {
+                    self.inner.store.save_environment_detail(
+                        &input.env_id,
+                        &profiles::safe_environment_detail(&detail),
+                    )?;
+                    true
+                }
+                _ => false,
+            };
+            self.inner.store.append_event(
+                "environment.metadata-updated",
+                Some(&input.env_id),
+                Some(&operation.id),
+                &json!({
+                    "mirrorSynced": mirror_synced,
+                    "detailSynced": detail_synced,
+                }),
+            )?;
+            Ok::<(bool, bool), ManagerError>((mirror_synced, detail_synced))
+        }
+        .await;
+
+        match result {
+            Ok((true, true)) => Ok(self.inner.operations.succeed(
+                &operation.id,
+                "environment metadata updated and synchronized",
+            )?),
+            Ok(_) => Ok(self.inner.operations.succeed(
+                &operation.id,
+                "environment metadata updated; mirror refresh deferred",
             )?),
             Err(error) => Ok(self.inner.operations.fail(
                 &operation.id,
@@ -2603,6 +2725,106 @@ fn environment_create_operation_request(input: &EnvironmentCreateInput) -> serde
     })
 }
 
+fn build_environment_metadata_update_request(
+    input: &EnvironmentMetadataUpdateInput,
+) -> Result<serde_json::Value, ManagerError> {
+    let env_id = input.env_id.trim();
+    if env_id.is_empty() {
+        return Err(ManagerError::InvalidEnvironmentMetadata(
+            "envId must not be empty".into(),
+        ));
+    }
+    let env_name = input.env_name.trim();
+    if env_name.is_empty() {
+        return Err(ManagerError::InvalidEnvironmentMetadata(
+            "environment name must not be empty".into(),
+        ));
+    }
+    if env_name.chars().count() > 32 {
+        return Err(ManagerError::InvalidEnvironmentMetadata(
+            "environment name must not exceed 32 characters".into(),
+        ));
+    }
+    let serial = input.serial.trim();
+    if serial.len() > 64 {
+        return Err(ManagerError::InvalidEnvironmentMetadata(
+            "serial must not exceed 64 UTF-8 bytes".into(),
+        ));
+    }
+    Ok(json!({
+        "envId": env_id,
+        "envName": env_name,
+        "serial": serial,
+    }))
+}
+
+fn confirmed_environment_metadata(
+    response: &serde_json::Value,
+    request: &serde_json::Value,
+) -> Result<(String, String), ManagerError> {
+    let data = response
+        .get("data")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            ManagerError::InvalidHostResponse(
+                "environment metadata update response did not contain an object data field".into(),
+            )
+        })?;
+    let confirmed_env_id = data
+        .get("envId")
+        .and_then(|value| match value {
+            serde_json::Value::String(value) => Some(value.clone()),
+            serde_json::Value::Number(value) => Some(value.to_string()),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            ManagerError::InvalidHostResponse(
+                "environment metadata update response did not confirm envId".into(),
+            )
+        })?;
+    let confirmed_name = data
+        .get("envName")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ManagerError::InvalidHostResponse(
+                "environment metadata update response did not confirm envName".into(),
+            )
+        })?;
+    let confirmed_serial = data
+        .get("serial")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            ManagerError::InvalidHostResponse(
+                "environment metadata update response did not confirm serial".into(),
+            )
+        })?;
+    if request.get("envId").and_then(serde_json::Value::as_str) != Some(confirmed_env_id.as_str())
+        || request.get("envName").and_then(serde_json::Value::as_str) != Some(confirmed_name)
+        || request.get("serial").and_then(serde_json::Value::as_str) != Some(confirmed_serial)
+    {
+        return Err(ManagerError::InvalidHostResponse(
+            "environment metadata update response did not match the requested values".into(),
+        ));
+    }
+    Ok((confirmed_name.into(), confirmed_serial.into()))
+}
+
+fn merge_confirmed_environment_metadata(
+    rows: &mut [(String, String, serde_json::Value)],
+    env_id: &str,
+    env_name: &str,
+    serial: &str,
+) {
+    let Some((_, name, remote)) = rows.iter_mut().find(|(id, _, _)| id == env_id) else {
+        return;
+    };
+    *name = env_name.into();
+    if let Some(remote) = remote.as_object_mut() {
+        remote.insert("envName".into(), env_name.into());
+        remote.insert("serial".into(), serial.into());
+    }
+}
+
 fn validate_environment_kernel(kernel: &KernelRecord) -> Result<(), ManagerError> {
     if kernel.major.is_none() {
         return Err(ManagerError::KernelNotUsable(
@@ -3372,6 +3594,7 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::EnvironmentNotFound => "ENVIRONMENT_NOT_FOUND",
         ManagerError::EnvironmentNotReady(_) => "ENVIRONMENT_NOT_READY",
         ManagerError::InvalidEnvironmentBatch(_) => "INVALID_ENVIRONMENT_BATCH",
+        ManagerError::InvalidEnvironmentMetadata(_) => "INVALID_ENVIRONMENT_METADATA",
         ManagerError::InvalidEnvironmentTransition { .. } => "INVALID_ENVIRONMENT_TRANSITION",
         ManagerError::InvalidBrowserCommand => "INVALID_BROWSER_COMMAND",
         ManagerError::Profile(_) => "PROFILE_ERROR",
@@ -3434,6 +3657,90 @@ mod tests {
             current_operation_id: None,
             updated_at: chrono::Utc::now(),
         }
+    }
+
+    #[test]
+    fn environment_metadata_update_matches_minimal_server_contract() {
+        let request = build_environment_metadata_update_request(&EnvironmentMetadataUpdateInput {
+            env_id: "  env-1  ".into(),
+            env_name: "  上海办公  ".into(),
+            serial: "  CN-001  ".into(),
+        })
+        .expect("valid metadata");
+        assert_eq!(
+            request,
+            json!({
+                "envId": "env-1",
+                "envName": "上海办公",
+                "serial": "CN-001",
+            })
+        );
+        assert_eq!(request.as_object().expect("object").len(), 3);
+    }
+
+    #[test]
+    fn environment_metadata_update_enforces_rune_and_utf8_byte_limits() {
+        let valid = EnvironmentMetadataUpdateInput {
+            env_id: "env-1".into(),
+            env_name: "界".repeat(32),
+            serial: "界".repeat(21),
+        };
+        build_environment_metadata_update_request(&valid).expect("within server limits");
+
+        for invalid in [
+            EnvironmentMetadataUpdateInput {
+                env_name: "界".repeat(33),
+                ..valid.clone()
+            },
+            EnvironmentMetadataUpdateInput {
+                serial: "界".repeat(22),
+                ..valid.clone()
+            },
+            EnvironmentMetadataUpdateInput {
+                env_name: "   ".into(),
+                ..valid
+            },
+        ] {
+            assert!(matches!(
+                build_environment_metadata_update_request(&invalid),
+                Err(ManagerError::InvalidEnvironmentMetadata(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn environment_metadata_update_requires_matching_server_confirmation() {
+        let request = json!({
+            "envId": "env-1",
+            "envName": "Server name",
+            "serial": "CN-001",
+        });
+        let confirmed = confirmed_environment_metadata(
+            &json!({ "code": 200, "data": request.clone() }),
+            &request,
+        )
+        .expect("matching confirmation");
+        assert_eq!(confirmed, ("Server name".into(), "CN-001".into()));
+        assert!(
+            confirmed_environment_metadata(
+                &json!({ "code": 200, "data": { "envName": "Other", "serial": "CN-001" } }),
+                &request,
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn confirmed_metadata_completes_environment_page_cache() {
+        let mut rows = vec![(
+            "env-1".into(),
+            "Old name".into(),
+            json!({ "envId": "env-1" }),
+        )];
+        merge_confirmed_environment_metadata(&mut rows, "env-1", "New name", "CN-002");
+        assert_eq!(rows[0].1, "New name");
+        assert_eq!(rows[0].2["envName"], "New name");
+        assert_eq!(rows[0].2["serial"], "CN-002");
     }
 
     #[test]

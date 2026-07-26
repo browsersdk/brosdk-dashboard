@@ -1229,6 +1229,21 @@ h2 {
   background: #fffafa;
 }
 
+.environment-metadata-form {
+  display: grid;
+  margin: 0 0 12px;
+  padding: 12px 0;
+  gap: 10px;
+  border-top: 1px solid #e3e7ec;
+  border-bottom: 1px solid #e3e7ec;
+}
+
+.environment-metadata-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
 .environment-confirm strong {
   color: #743137;
   font-size: 11px;

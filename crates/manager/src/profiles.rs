@@ -171,10 +171,15 @@ fn is_sensitive_remote_key(key: &str) -> bool {
 
 pub fn environment_bindings(
     env_ids: &[String],
+    remotes: &[(String, Value)],
     details: &[(String, Value, chrono::DateTime<Utc>)],
     fingerprints: &[(String, Vec<String>)],
     proxies: &[(String, Vec<String>)],
 ) -> Vec<EnvironmentBindingSummary> {
+    let remotes = remotes
+        .iter()
+        .map(|(env_id, value)| (env_id.as_str(), value))
+        .collect::<HashMap<_, _>>();
     let details = details
         .iter()
         .map(|(env_id, value, refreshed)| (env_id.as_str(), (value, *refreshed)))
@@ -186,6 +191,21 @@ pub fn environment_bindings(
                 .get(env_id.as_str())
                 .map(|(value, refreshed)| ((*value).clone(), Some(*refreshed)))
                 .unwrap_or_else(|| (json!({}), None));
+            let mut metadata = detail
+                .get("metadata")
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(remote) = remotes.get(env_id.as_str()) {
+                for key in ["envName", "serial"] {
+                    let missing = metadata.get(key).is_none_or(|value| {
+                        value.is_null() || value.as_str().is_some_and(str::is_empty)
+                    });
+                    if missing && let Some(value) = remote.get(key) {
+                        metadata.insert(key.into(), value.clone());
+                    }
+                }
+            }
             EnvironmentBindingSummary {
                 env_id: env_id.clone(),
                 fingerprint_profile_id: fingerprints
@@ -199,7 +219,7 @@ pub fn environment_bindings(
                 remote_fingerprint: detail.get("fingerprint").cloned().unwrap_or(Value::Null),
                 remote_proxy: detail.get("proxy").cloned().unwrap_or(Value::Null),
                 remote_kernel: detail.get("kernel").cloned().unwrap_or(Value::Null),
-                remote_metadata: detail.get("metadata").cloned().unwrap_or(Value::Null),
+                remote_metadata: Value::Object(metadata),
                 refreshed_at,
             }
         })
@@ -471,5 +491,26 @@ mod tests {
         }));
         assert_eq!(summary["proxy"]["configured"], true);
         assert!(!summary.to_string().contains("secret-without-a-url"));
+    }
+
+    #[test]
+    fn environment_binding_fills_metadata_from_server_page_cache() {
+        let env_ids = vec!["env-1".to_string()];
+        let bindings = environment_bindings(
+            &env_ids,
+            &[(
+                "env-1".into(),
+                json!({ "envName": "Server name", "serial": "CN-001" }),
+            )],
+            &[(
+                "env-1".into(),
+                json!({ "metadata": { "serial": "" }, "fingerprint": {} }),
+                Utc::now(),
+            )],
+            &[],
+            &[],
+        );
+        assert_eq!(bindings[0].remote_metadata["envName"], "Server name");
+        assert_eq!(bindings[0].remote_metadata["serial"], "CN-001");
     }
 }

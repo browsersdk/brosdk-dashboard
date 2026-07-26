@@ -178,6 +178,9 @@ pub enum HostCommand {
     EnvCreate {
         request: Value,
     },
+    EnvUpdate {
+        request: Value,
+    },
     EnvDestroy {
         request: Value,
     },
@@ -329,6 +332,14 @@ pub struct EnvironmentBindingSummary {
 pub struct EnvironmentCreateInput {
     pub proxy_profile_id: Option<String>,
     pub kernel_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentMetadataUpdateInput {
+    pub env_id: String,
+    pub env_name: String,
+    pub serial: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]

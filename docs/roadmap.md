@@ -414,7 +414,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 ## 16. 当前状态
 
-阶段 0-12 已完成。阶段 13 已完成契约与产品边界规划，按“批量生命周期 -> 远端元数据 -> 指纹对比 -> 双环境 E2E”独立实施、测试、更新文档并提交。
+阶段 0-12 已完成。阶段 13 已完成契约与产品边界规划、批量生命周期和远端元数据子阶段，下一步按“指纹对比 -> 双环境 E2E”独立实施、测试、更新文档并提交。
 
 阶段 13 批量生命周期子阶段完成（2026-07-26）：
 
@@ -422,6 +422,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 批量请求按顺序复用单环境 operation；每个环境继续独立推进 generation、accepted、callback ready/stopped 和错误状态。
 - 环境表增加复选框、当前结果前 20 个全选、选择计数、可启动/停止计数与清除动作；stopping/unknown 等过渡态不会显示成可启动。
 - Dashboard 22 项、Rust workspace 71 项测试、Clippy、production build 通过；应用内浏览器确认选择/清除、预览禁用态和 console 无错误。
+
+阶段 13 远端元数据子阶段完成（2026-07-26）：
+
+- FFI/Runtime Host/Manager/Tauri 补齐 `sdk_env_update`；Manager 只接受 stopped 环境和 `envId/envName/serial`，名称按最多 32 个 Unicode 字符、序号按最多 64 个 UTF-8 字节校验。
+- 更新成功必须同时满足 DLL 调用成功、后端 `code=200`、响应 `data.envName/data.serial` 与请求完全一致；operation request 不含 proxy、customerId、API Key、userSig 或原始响应。
+- 更新后重新拉取完整环境分页并刷新单环境详情。真实部署的旧版 `getEnvInfo` 会返回空序号，因此绑定摘要采用详情非空值优先，并以服务端分页或严格校验过的更新响应补全空值；SQLite 仍只是可删除缓存。
+- 环境详情增加停止态内联编辑器，运行态禁用；组件测试覆盖提交、状态限制、Unicode 字符和 UTF-8 字节边界。
+- Dashboard 25 项、Manager library 48 项和创建 E2E binary 3 项测试、Clippy、production build 通过。真实临时环境完成创建、名称/序号更新、镜像核对、本地清理、服务端删除和最终对账，账号环境数恢复到 1；桌面与 390x844 DOM 完整且控制台无 warning/error。
 
 阶段 12 安全初始化子阶段完成（2026-07-26）：
 

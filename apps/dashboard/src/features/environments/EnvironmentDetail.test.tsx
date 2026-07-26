@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardSnapshot, EnvironmentBindingSummary } from "../../types";
 import { EnvironmentDetail } from "./EnvironmentDetail";
@@ -41,6 +41,7 @@ function renderDetail(status: string, overrides: Partial<React.ComponentProps<ty
     onStart: vi.fn(),
     onStop: vi.fn(),
     onRefresh: vi.fn(),
+    onUpdateMetadata: vi.fn().mockResolvedValue(true),
     onOpenCheck: vi.fn(),
     onCaptureDiagnostic: vi.fn(),
     onCleanupLocalData: vi.fn(),
@@ -86,5 +87,32 @@ describe("EnvironmentDetail", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认" }));
     expect(props.onCleanupLocalData).toHaveBeenCalledOnce();
     expect(props.onDelete).not.toHaveBeenCalled();
+  });
+
+  it("edits only stopped-environment name and serial", async () => {
+    const onUpdateMetadata = vi.fn().mockResolvedValue(true);
+    renderDetail("stopped", { onUpdateMetadata });
+    fireEvent.click(screen.getByRole("button", { name: "编辑信息" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "环境名称" }), { target: { value: "  新环境  " } });
+    fireEvent.change(screen.getByRole("textbox", { name: "序列号" }), { target: { value: "  CN-002  " } });
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(onUpdateMetadata).toHaveBeenCalledWith({ envName: "新环境", serial: "CN-002" }));
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "环境名称" })).toBeNull());
+  });
+
+  it("disables metadata editing while an environment is running", () => {
+    renderDetail("ready");
+    expect((screen.getByRole("button", { name: "编辑信息" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("enforces server character and UTF-8 byte limits before submit", () => {
+    renderDetail("stopped");
+    fireEvent.click(screen.getByRole("button", { name: "编辑信息" }));
+    const save = screen.getByRole("button", { name: "保存" }) as HTMLButtonElement;
+    fireEvent.change(screen.getByRole("textbox", { name: "环境名称" }), { target: { value: "界".repeat(33) } });
+    expect(save.disabled).toBe(true);
+    fireEvent.change(screen.getByRole("textbox", { name: "环境名称" }), { target: { value: "合法名称" } });
+    fireEvent.change(screen.getByRole("textbox", { name: "序列号" }), { target: { value: "界".repeat(22) } });
+    expect(save.disabled).toBe(true);
   });
 });

@@ -277,6 +277,12 @@ export interface EnvironmentCreateInput {
   kernelId: string;
 }
 
+export interface EnvironmentMetadataUpdateInput {
+  envId: string;
+  envName: string;
+  serial: string;
+}
+
 export type EnvironmentBatchAction = "start" | "stop";
 
 export interface EnvironmentBatchResult {

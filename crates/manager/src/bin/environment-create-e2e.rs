@@ -1,8 +1,11 @@
 use std::{error::Error, path::Path};
 
-use domain::{EnvironmentCreateInput, KernelRecord, OperationRecord};
+use domain::{
+    EnvironmentCreateInput, EnvironmentMetadataUpdateInput, KernelRecord, OperationRecord,
+};
 use manager::Manager;
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -64,6 +67,39 @@ async fn main() -> Result<(), Box<dyn Error>> {
             return Err("created environment is missing from the local mirror".into());
         }
 
+        let suffix = Uuid::new_v4().simple().to_string()[..8].to_string();
+        let updated_name = format!("SDK E2E {suffix}");
+        let updated_serial = format!("E2E-{suffix}");
+        let update = manager
+            .update_environment_metadata(EnvironmentMetadataUpdateInput {
+                env_id: env_id.clone(),
+                env_name: updated_name.clone(),
+                serial: updated_serial.clone(),
+            })
+            .await?;
+        ensure_operation_succeeded(&update)?;
+        ensure_minimal_metadata_operation(&update, &env_id, &updated_name, &updated_serial)?;
+        let after_update = manager.snapshot().await?;
+        if after_update
+            .environments
+            .iter()
+            .find(|environment| environment.env_id == env_id)
+            .map(|environment| environment.name.as_str())
+            != Some(updated_name.as_str())
+        {
+            return Err("updated environment name is missing from the server mirror".into());
+        }
+        if after_update
+            .environment_bindings
+            .iter()
+            .find(|binding| binding.env_id == env_id)
+            .and_then(|binding| binding.remote_metadata.get("serial"))
+            .and_then(Value::as_str)
+            != Some(updated_serial.as_str())
+        {
+            return Err("updated serial is missing from the environment detail mirror".into());
+        }
+
         let local_cleanup = manager.cleanup_environment_local_data(&env_id).await?;
         ensure_operation_succeeded(&local_cleanup.operation)?;
         ensure_cleanup_summary(&local_cleanup.response)?;
@@ -92,6 +128,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "environmentCountBefore": before.environments.len(),
             "environmentCountAfter": after_destroy.environments.len(),
             "createMirrored": true,
+            "metadataUpdateSucceeded": true,
+            "metadataMirrored": true,
             "localDataCleanupSucceeded": true,
             "destroyReconciled": true,
             "cleanupAttempted": cleanup_attempted,
@@ -184,6 +222,25 @@ fn ensure_minimal_create_operation(
     });
     if operation.request.as_ref() != Some(&expected) {
         return Err("create operation persisted fields outside the minimal input contract".into());
+    }
+    Ok(())
+}
+
+fn ensure_minimal_metadata_operation(
+    operation: &OperationRecord,
+    env_id: &str,
+    env_name: &str,
+    serial: &str,
+) -> Result<(), Box<dyn Error>> {
+    let expected = json!({
+        "envId": env_id,
+        "envName": env_name,
+        "serial": serial,
+    });
+    if operation.request.as_ref() != Some(&expected) {
+        return Err(
+            "metadata operation persisted fields outside the minimal update contract".into(),
+        );
     }
     Ok(())
 }
@@ -297,5 +354,29 @@ mod tests {
             "envName": "not allowed"
         }));
         assert!(ensure_minimal_create_operation(&operation, "chrome-134").is_err());
+    }
+
+    #[test]
+    fn accepts_only_minimal_metadata_operation_request() {
+        let mut operation: OperationRecord = serde_json::from_value(json!({
+            "id": "operation-1",
+            "kind": "environment.metadata-update",
+            "envId": "env-1",
+            "label": "update",
+            "status": "succeeded",
+            "message": "updated",
+            "requestId": null,
+            "generation": 0,
+            "errorCode": null,
+            "request": { "envId": "env-1", "envName": "Work", "serial": "CN-001" },
+            "createdAt": "2026-07-26T00:00:00Z",
+            "updatedAt": "2026-07-26T00:00:00Z"
+        }))
+        .expect("operation");
+        ensure_minimal_metadata_operation(&operation, "env-1", "Work", "CN-001")
+            .expect("minimal request");
+
+        operation.request.as_mut().expect("request")["proxy"] = json!("direct://");
+        assert!(ensure_minimal_metadata_operation(&operation, "env-1", "Work", "CN-001").is_err());
     }
 }

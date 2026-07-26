@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Eraser, Globe2, LoaderCircle, Play, RefreshCw, ScanSearch, Square, Trash2, X } from "lucide-react";
+import { Eraser, Globe2, LoaderCircle, Pencil, Play, RefreshCw, ScanSearch, Square, Trash2, X } from "lucide-react";
 import type { DashboardSnapshot, EnvironmentBindingSummary } from "../../types";
 import { formatRemoteValue, readRemoteValue, remoteProxyLabel } from "./remoteDetails";
 
@@ -13,6 +13,7 @@ interface EnvironmentDetailProps {
   onStart: () => void;
   onStop: () => void;
   onRefresh: () => void;
+  onUpdateMetadata: (input: { envName: string; serial: string }) => Promise<boolean>;
   onOpenCheck: () => void;
   onCaptureDiagnostic: () => void;
   onCleanupLocalData: () => void;
@@ -38,14 +39,19 @@ export function EnvironmentDetail({
   onStart,
   onStop,
   onRefresh,
+  onUpdateMetadata,
   onOpenCheck,
   onCaptureDiagnostic,
   onCleanupLocalData,
   onDelete,
 }: EnvironmentDetailProps) {
   const [confirmAction, setConfirmAction] = useState<"cleanup" | "delete" | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [draftName, setDraftName] = useState(environment.name);
   const kernel = binding?.remoteKernel;
   const metadata = binding?.remoteMetadata;
+  const remoteSerial = readRemoteValue(metadata, ["serial"]);
+  const [draftSerial, setDraftSerial] = useState(typeof remoteSerial === "string" ? remoteSerial : "");
   const fingerprint = binding?.remoteFingerprint;
   const diagnosticPages = readRemoteValue(diagnostic, ["pages"]);
   const diagnosticOrigins = Array.isArray(diagnosticPages)
@@ -53,6 +59,11 @@ export function EnvironmentDetail({
     : [];
   const canStart = ["stopped", "failed"].includes(environment.status);
   const canStop = ["ready", "starting"].includes(environment.status);
+  const normalizedName = draftName.trim();
+  const normalizedSerial = draftSerial.trim();
+  const metadataValid = normalizedName.length > 0
+    && [...normalizedName].length <= 32
+    && new TextEncoder().encode(normalizedSerial).length <= 64;
   const rows = [
     ["内核", [readRemoteValue(kernel, ["kernel"]), readRemoteValue(kernel, ["version"])].filter(Boolean).join(" ") || "-"],
     ["系统", formatRemoteValue(readRemoteValue(kernel, ["system"]) ?? readRemoteValue(fingerprint, ["system", "platform"]))],
@@ -85,6 +96,13 @@ export function EnvironmentDetail({
         <button className="button secondary compact" type="button" disabled={!desktop || busy} onClick={onRefresh}>
           {busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}刷新详情
         </button>
+        <button className="button secondary compact" type="button" disabled={!desktop || busy || environment.status !== "stopped"} onClick={() => {
+          setDraftName(environment.name);
+          setDraftSerial(typeof remoteSerial === "string" ? remoteSerial : "");
+          setEditing(true);
+        }}>
+          <Pencil size={14} />编辑信息
+        </button>
         <button className="button secondary compact" type="button" disabled={!desktop || busy || environment.status !== "ready"} onClick={onOpenCheck}>
           <Globe2 size={14} />检查指纹
         </button>
@@ -98,6 +116,22 @@ export function EnvironmentDetail({
           <Trash2 size={14} />删除环境
         </button>
       </div>
+      {editing && (
+        <form className="environment-metadata-form" onSubmit={(event) => {
+          event.preventDefault();
+          if (!metadataValid) return;
+          void onUpdateMetadata({ envName: normalizedName, serial: normalizedSerial }).then((saved) => {
+            if (saved) setEditing(false);
+          });
+        }}>
+          <label className="field"><span>环境名称</span><input aria-label="环境名称" value={draftName} onChange={(event) => setDraftName(event.target.value)} /></label>
+          <label className="field"><span>序列号</span><input aria-label="序列号" value={draftSerial} onChange={(event) => setDraftSerial(event.target.value)} /></label>
+          <div className="environment-metadata-actions">
+            <button className="button secondary compact" type="button" disabled={busy} onClick={() => setEditing(false)}>取消</button>
+            <button className="button primary compact" type="submit" disabled={busy || !metadataValid}>{busy ? <LoaderCircle className="spin" size={14} /> : null}保存</button>
+          </div>
+        </form>
+      )}
       {confirmAction && (
         <div className="environment-confirm" role="alertdialog" aria-label={confirmAction === "delete" ? "确认删除环境" : "确认清理本地数据"}>
           <strong>{confirmAction === "delete" ? "删除服务端环境？" : "清理本地浏览数据？"}</strong>

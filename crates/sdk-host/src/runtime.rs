@@ -143,6 +143,9 @@ impl HostRuntime {
             HostCommand::EnvCreate { request } => self.with_initialized("sdk_env_create", |sdk| {
                 sdk.env_create(request).map(|output| output.value)
             }),
+            HostCommand::EnvUpdate { request } => self.with_initialized("sdk_env_update", |sdk| {
+                sdk.env_update(request).map(|output| output.value)
+            }),
             HostCommand::EnvDestroy { request } => self
                 .with_initialized("sdk_env_destroy", |sdk| {
                     sdk.env_destroy(request).map(|output| output.value)

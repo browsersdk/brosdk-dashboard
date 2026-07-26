@@ -68,6 +68,7 @@ pub struct BroSdk {
     init: InitCall,
     info: InfoCall,
     env_create: JsonOutCall,
+    env_update: JsonOutCall,
     env_destroy: JsonOutCall,
     env_page: JsonOutCall,
     env_get_info: JsonOutCall,
@@ -110,6 +111,7 @@ impl BroSdk {
                 init: required(&library, b"sdk_init\0")?,
                 info: required(&library, b"sdk_info\0")?,
                 env_create: required(&library, b"sdk_env_create\0")?,
+                env_update: required(&library, b"sdk_env_update\0")?,
                 env_destroy: required(&library, b"sdk_env_destroy\0")?,
                 env_page: required(&library, b"sdk_env_page\0")?,
                 env_get_info: required(&library, b"sdk_env_getinfo\0")?,
@@ -191,6 +193,10 @@ impl BroSdk {
 
     pub fn env_create(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
         self.call_json_out("sdk_env_create", self.env_create, request)
+    }
+
+    pub fn env_update(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
+        self.call_json_out("sdk_env_update", self.env_update, request)
     }
 
     pub fn env_destroy(&self, request: &Value) -> Result<SdkCallOutput, SdkFfiError> {
@@ -439,8 +445,10 @@ pub fn capabilities_for_path(path: impl Into<PathBuf>) -> SdkCapabilities {
             "sdk_init".into(),
             "sdk_info".into(),
             "sdk_env_create".into(),
+            "sdk_env_update".into(),
             "sdk_env_destroy".into(),
             "sdk_env_page".into(),
+            "sdk_env_getinfo".into(),
             "sdk_browser_info".into(),
             "sdk_browser_command".into(),
             "sdk_browser_snapshot".into(),
@@ -687,6 +695,7 @@ mod tests {
         let capabilities = capabilities_for_path(default_library_path());
         if capabilities.dll_exists {
             assert!(capabilities.sync_calls.contains(&"sdk_env_create".into()));
+            assert!(capabilities.sync_calls.contains(&"sdk_env_update".into()));
             assert!(capabilities.sync_calls.contains(&"sdk_env_destroy".into()));
         }
     }

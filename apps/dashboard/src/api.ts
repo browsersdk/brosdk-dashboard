@@ -8,6 +8,7 @@ import type {
   EnvironmentBatchAction,
   EnvironmentBatchResult,
   EnvironmentCreateInput,
+  EnvironmentMetadataUpdateInput,
   FingerprintProfile,
   FingerprintProfileInput,
   ManagerEvent,
@@ -75,6 +76,12 @@ export async function batchEnvironmentAction(
   return invoke<EnvironmentBatchResult>("manager_batch_environment_action", {
     input: { action, envIds },
   });
+}
+
+export async function updateEnvironmentMetadata(
+  input: EnvironmentMetadataUpdateInput,
+): Promise<OperationRecord> {
+  return invoke<OperationRecord>("manager_update_environment_metadata", { input });
 }
 
 export async function destroyEnvironment(envId: string): Promise<OperationRecord> {
@@ -264,7 +271,7 @@ function demoSnapshot(): DashboardSnapshot {
       embeddedMcp: true,
       supportsInitPort: true,
       callbacks: ["result", "log", "cookies-storage", "security-decision"],
-      syncCalls: ["sdk_get_user_sig", "sdk_init", "sdk_info", "sdk_env_create", "sdk_env_destroy", "sdk_env_page"],
+      syncCalls: ["sdk_get_user_sig", "sdk_init", "sdk_info", "sdk_env_create", "sdk_env_update", "sdk_env_destroy", "sdk_env_page", "sdk_env_getinfo"],
       asyncCalls: ["sdk_browser_open", "sdk_browser_close"],
       cdpCalls: ["sdk_browser_command", "sdk_browser_snapshot"],
       dllPath: "libs/windows_x64/brosdk.dll",

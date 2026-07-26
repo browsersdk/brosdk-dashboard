@@ -90,6 +90,8 @@ queued -> initialize SDK once -> sdk_env_page(page=1..N) -> atomic replace -> su
 
 `manager_refresh_environment_detail(envId)` 只读取一个缓存中存在的环境，调用 `sdk_env_getinfo` 并校验 `code=200`。持久化采用显式响应边界：保留递归脱敏后的 `finger`、从 `browser` 直接读取的内核、去除密码的代理摘要，以及 `envName/serial/enableDevtools/enableStorage` 元数据；不递归猜测 `kernel`，不保存 Cookie、Storage、上传路径或 DEK。operation 与事件都绑定该 `envId`，因此多环境界面不会因为查看一个环境而串行读取全部环境。
 
+`manager_update_environment_metadata` 只接受 `envId/envName/serial`，要求环境处于 stopped，并按服务端规则校验名称最多 32 个 Unicode 字符、序号最多 64 个 UTF-8 字节。远端写入成功还必须校验业务 `code=200` 和响应回显与请求完全一致，之后重新分页并刷新详情。若旧版 `getEnvInfo` 把序号返回为空，snapshot 只用环境分页或已确认的更新响应补全；表单值不会直接成为本地事实。
+
 环境本地数据清理与服务端删除是两个不同 operation。`environment.local-data-cleanup` 要求 stopped，调用 `sdk_browser_cleanup({envs:[envId]})`，只返回计数摘要；DLL 原响应中的 userDataDir、cleanupPath 和逐项 envId 不进入 Dashboard/event。`environment.destroy` 同样要求 stopped，调用 `sdk_env_destroy` 并删除本地镜像。两者都不自动代替另一个动作。
 
 `environment.page-diagnostic` 要求 ready，调用 `sdk_browser_snapshot` 时固定关闭 HTML、截图和 callback chunks。Manager 将结果压成 pageCount、failedPages、page status 和 URL origin；页面标题、完整 URL、snapshotId、targetId、sessionId 与 chunks 不持久化也不返回前端。
@@ -98,7 +100,7 @@ queued -> initialize SDK once -> sdk_env_page(page=1..N) -> atomic replace -> su
 
 批量环境启停不创建共享生命周期 operation。Manager 先拒绝空列表、重复 envId、超过 20 个以及状态不允许的整批请求，再按输入顺序调用单环境 start/stop；每个子项拥有独立 operation、generation、pending callback 和失败状态。批量返回只汇总 requested/accepted/failed 与子 operation，不把 DLL 原生 batch 的一个 operation 绑定到多个环境。
 
-创建 operation 的 request snapshot 只保存 `proxyProfileId` 和 `kernelId`。后端 DTO、完整代理 URL、API Key、userSig 和原始响应均不进入 operation request。测试清理使用 `sdk_env_destroy`，成功后事务删除本地 environment/runtime snapshot，environment detail 通过外键级联删除。
+创建 operation 的 request snapshot 只保存 `proxyProfileId` 和 `kernelId`；元数据更新 snapshot 只保存 `envId/envName/serial`。后端完整 DTO、代理 URL、customerId、API Key、userSig 和原始响应均不进入 operation request。测试清理使用 `sdk_env_destroy`，成功后事务删除本地 environment/runtime snapshot，environment detail 通过外键级联删除。
 
 数据库和事件 payload 不保存 API Key、userSig、代理密码、Cookie 或完整 Authorization。SDK 数据在 host 出口和 Manager 持久化入口都执行脱敏。
 

@@ -386,6 +386,21 @@ impl ManagerStore {
             .map_err(Into::into)
     }
 
+    pub fn environment_remote_values(&self) -> Result<Vec<(String, Value)>, StoreError> {
+        let connection = self.connection()?;
+        let mut statement =
+            connection.prepare("SELECT env_id, remote_json FROM environments ORDER BY env_id")?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .map(|row| {
+                let (env_id, remote) = row?;
+                Ok((env_id, serde_json::from_str(&remote)?))
+            })
+            .collect()
+    }
+
     pub fn upsert_remote_environments(
         &self,
         environments: &[(String, String, Value)],
