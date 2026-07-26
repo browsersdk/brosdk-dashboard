@@ -56,7 +56,7 @@ pub async fn call_global_tool(
     tool: &str,
     arguments: Value,
 ) -> Result<McpToolResult, McpClientError> {
-    call_tool(global_endpoint(port)?, tool, arguments).await
+    call_scoped_tool(port, None, tool, arguments).await
 }
 
 pub async fn call_env_tool(
@@ -65,18 +65,34 @@ pub async fn call_env_tool(
     tool: &str,
     arguments: Value,
 ) -> Result<McpToolResult, McpClientError> {
-    call_tool(env_endpoint(port, env_id)?, tool, arguments).await
+    call_scoped_tool(port, Some(env_id), tool, arguments).await
 }
 
 pub async fn discover_global_tools(port: u16) -> Result<McpToolDiscovery, McpClientError> {
-    discover_tools(global_endpoint(port)?).await
+    discover_scoped_tools(port, None).await
 }
 
 pub async fn discover_env_tools(
     port: u16,
     env_id: &str,
 ) -> Result<McpToolDiscovery, McpClientError> {
-    discover_tools(env_endpoint(port, env_id)?).await
+    discover_scoped_tools(port, Some(env_id)).await
+}
+
+pub async fn call_scoped_tool(
+    port: u16,
+    env_id: Option<&str>,
+    tool: &str,
+    arguments: Value,
+) -> Result<McpToolResult, McpClientError> {
+    call_tool(scoped_endpoint(port, env_id)?, tool, arguments).await
+}
+
+pub async fn discover_scoped_tools(
+    port: u16,
+    env_id: Option<&str>,
+) -> Result<McpToolDiscovery, McpClientError> {
+    discover_tools(scoped_endpoint(port, env_id)?).await
 }
 
 async fn call_tool(
@@ -135,12 +151,11 @@ fn global_endpoint(port: u16) -> Result<Url, McpClientError> {
     Ok(Url::parse(&format!("http://127.0.0.1:{port}/sdk/v1/mcp"))?)
 }
 
-fn env_endpoint(port: u16, env_id: &str) -> Result<Url, McpClientError> {
-    let mut endpoint = Url::parse(&format!("http://127.0.0.1:{port}/"))?;
-    endpoint
-        .path_segments_mut()
-        .expect("HTTP URLs support path segments")
-        .extend(["sdk", "v1", "mcp", "env", env_id]);
+fn scoped_endpoint(port: u16, env_id: Option<&str>) -> Result<Url, McpClientError> {
+    let mut endpoint = global_endpoint(port)?;
+    if let Some(env_id) = env_id.filter(|value| !value.is_empty()) {
+        endpoint.query_pairs_mut().append_pair("envId", env_id);
+    }
     Ok(endpoint)
 }
 
@@ -381,15 +396,15 @@ mod tests {
     };
 
     #[test]
-    fn endpoint_percent_encodes_environment_id() {
+    fn scoped_endpoint_uses_optional_encoded_environment_id() {
         assert_eq!(
-            env_endpoint(9222, "env/one two")
+            scoped_endpoint(9222, Some("env/one two"))
                 .expect("endpoint")
                 .as_str(),
-            "http://127.0.0.1:9222/sdk/v1/mcp/env/env%2Fone%20two"
+            "http://127.0.0.1:9222/sdk/v1/mcp?envId=env%2Fone+two"
         );
         assert_eq!(
-            global_endpoint(9222).expect("endpoint").as_str(),
+            scoped_endpoint(9222, None).expect("endpoint").as_str(),
             "http://127.0.0.1:9222/sdk/v1/mcp"
         );
     }
@@ -468,7 +483,7 @@ mod tests {
         server.await.expect("server");
         let methods = methods.lock().expect("methods");
         assert_eq!(methods.len(), 5);
-        assert!(methods[0].starts_with("POST "));
+        assert!(methods[0].starts_with("POST /sdk/v1/mcp?envId=env-1 "));
         assert!(methods[4].starts_with("DELETE "));
     }
 

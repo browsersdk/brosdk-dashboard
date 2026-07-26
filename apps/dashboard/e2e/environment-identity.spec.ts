@@ -79,6 +79,10 @@ test("environment pickers expose envId instead of relying on names", async ({ pa
   ]);
   await runtimeEnvironment.selectOption("env-demo-02");
   await expect(runtimeEnvironment).toHaveValue("env-demo-02");
+  await page.getByLabel("工具", { exact: true }).selectOption("navigate");
+  await expect(page.getByLabel("MCP JSON 参数")).toHaveValue("{}");
+  await page.getByLabel("MCP JSON 参数").fill('{"url":"https://example.com"}');
+  await expect(page.getByRole("button", { name: "运行工具" })).toBeDisabled();
 
   await page.goto(`/?${scenario}&page=proxies`);
   await expectHealthyDashboard(page, "代理");
@@ -97,24 +101,59 @@ test("AI context exposes the selected envId and local CDP with a settings entry"
   await page.goto(`/?${scenario}&page=ai`);
   await expectHealthyDashboard(page, "AI 助手");
 
-  const environment = page.getByLabel("AI 环境上下文");
+  const environment = page.getByLabel("AI 关联环境", { exact: true });
   await expect(environment.locator("option")).toHaveText([
+    "全部环境",
     "共享工作环境 · env-demo-01",
     "共享工作环境 · env-demo-02",
   ]);
-  await expect(page.getByRole("region", { name: "AI 环境详情" })).toContainText("TCP CDP");
-  await expect(page.getByRole("region", { name: "AI 环境详情" })).toContainText("ws://127.0.0.1/preview/env-demo-01");
+  await expect(page.getByRole("region", { name: "AI 关联环境详情" })).toContainText("TCP CDP");
+  await expect(page.getByRole("region", { name: "AI 关联环境详情" })).toContainText("ws://127.0.0.1/preview/env-demo-01");
+
+  await page.getByRole("button", { name: "Agent" }).click();
+  await expect(page.getByRole("button", { name: "每次批准" })).toHaveClass(/active/);
+  await page.getByRole("button", { name: "自动执行" }).click();
+  await expect(page.getByRole("button", { name: "自动执行" })).toHaveClass(/active/);
 
   await environment.selectOption("env-demo-02");
-  const context = page.getByRole("region", { name: "AI 环境详情" });
+  const context = page.getByRole("region", { name: "AI 关联环境详情" });
   await expect(context).toContainText("env-demo-02");
   await expect(context).toContainText("TCP CDP");
   await expect(context).toContainText("ws://127.0.0.1/preview/env-demo-02");
+
+  await page.getByRole("button", { name: "新建会话" }).click();
+  await expect(page.locator(".ai-conversation-row")).toHaveCount(2);
+  await environment.selectOption("");
+  await expect(context).toContainText("全部环境");
+  await page.reload();
+  await expect(page.getByLabel("AI 关联环境", { exact: true })).toHaveValue("");
+  await expect(page.locator(".ai-conversation-row")).toHaveCount(2);
+  await expect(page.getByRole("button", { name: "自动执行" })).toHaveClass(/active/);
 
   await page.getByRole("button", { name: "AI Provider 设置" }).click();
   await expectHealthyDashboard(page, "设置");
   await expect(page.getByRole("heading", { name: "AI Provider" })).toBeVisible();
   await expect(page.getByLabel("OpenAI-compatible Base URL")).toHaveValue("https://api.deepseek.com");
+  expect(issues).toEqual([]);
+});
+
+test("Agent approval mode and MCP runtime controls fit the viewport", async ({ page }, testInfo) => {
+  const issues = monitorPageIssues(page);
+  await page.goto(`/?${scenario}&page=ai`);
+  await expectHealthyDashboard(page, "AI 助手");
+  await page.getByRole("button", { name: "Agent" }).click();
+  await page.getByRole("button", { name: "自动执行" }).click();
+  await expect(page.getByRole("button", { name: "自动执行" })).toHaveClass(/active/);
+  await page.screenshot({ path: testInfo.outputPath("ai-agent-automatic.png"), fullPage: true });
+
+  await page.goto(`/?${scenario}&page=mcp`);
+  await expectHealthyDashboard(page, "MCP");
+  await page.getByRole("button", { name: "单环境" }).click();
+  await page.getByLabel("工具", { exact: true }).selectOption("navigate");
+  await page.getByLabel("MCP JSON 参数").fill('{"url":"https://example.com"}');
+  await expect(page.getByText("18 个可用工具")).toBeVisible();
+  await expectHealthyDashboard(page, "MCP");
+  await page.screenshot({ path: testInfo.outputPath("mcp-environment-tool.png"), fullPage: true });
   expect(issues).toEqual([]);
 });
 

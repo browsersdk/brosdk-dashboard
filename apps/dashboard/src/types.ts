@@ -155,6 +155,11 @@ export interface AiChatResponse {
   readOnly: boolean;
 }
 
+export interface AiConversationTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 export interface AiAgentPlan {
   summary: string;
   action: string;

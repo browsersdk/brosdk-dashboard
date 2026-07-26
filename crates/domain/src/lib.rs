@@ -596,9 +596,18 @@ pub struct AiProviderConfigInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AiConversationMessage {
+    pub role: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiChatRequest {
     pub prompt: String,
     pub context_env_id: Option<String>,
+    #[serde(default)]
+    pub history: Vec<AiConversationMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -614,6 +623,8 @@ pub struct AiChatResponse {
 pub struct AiAgentPlanRequest {
     pub prompt: String,
     pub context_env_id: Option<String>,
+    #[serde(default)]
+    pub history: Vec<AiConversationMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -623,6 +634,7 @@ pub struct AiAgentPlan {
     pub action: String,
     pub env_id: Option<String>,
     pub expected_state: Option<String>,
+    #[serde(default)]
     pub idempotency_key: String,
     #[serde(default)]
     pub arguments: Value,
@@ -633,6 +645,8 @@ pub struct AiAgentPlan {
 pub struct AiAgentExecuteRequest {
     pub plan: AiAgentPlan,
     pub approved: bool,
+    #[serde(default)]
+    pub automatic: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

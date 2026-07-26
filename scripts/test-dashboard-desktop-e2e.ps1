@@ -1,7 +1,9 @@
 param(
     [int]$TimeoutSeconds = 120,
     [string]$DesktopExecutable = "",
-    [switch]$FirstRunOnly
+    [switch]$FirstRunOnly,
+    [switch]$AgentLifecycle,
+    [string]$TargetEnvironmentId = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +20,10 @@ $operationsLabel = -join ([char[]](0x64CD, 0x4F5C))
 $reconcileLabel = -join ([char[]](0x5BF9, 0x8D26))
 $aiLabel = "AI " + (-join ([char[]](0x52A9, 0x624B)))
 $aiProviderSettingsLabel = "AI Provider " + (-join ([char[]](0x8BBE, 0x7F6E)))
+$aiRequestLabel = "AI " + (-join ([char[]](0x8BF7, 0x6C42)))
+$generatePlanLabel = -join ([char[]](0x751F, 0x6210, 0x8BA1, 0x5212))
+$approvePlanLabel = -join ([char[]](0x6279, 0x51C6, 0x5E76, 0x6267, 0x884C))
+$newConversationLabel = -join ([char[]](0x65B0, 0x5EFA, 0x4F1A, 0x8BDD))
 $runningLabel = -join ([char[]](0x8FD0, 0x884C, 0x4E2D))
 $cdpUnavailableLabel = (-join ([char[]](0x672A, 0x66B4, 0x9732))) + " TCP " + (-join ([char[]](0x5730, 0x5740)))
 $internalCdpLabel = "DLL " + (-join ([char[]](0x5185, 0x90E8))) + " CDP / MCP"
@@ -50,6 +56,9 @@ $operationIdentityObserved = $false
 $aiEnvironmentContextObserved = $false
 $cdpEndpointObserved = $false
 $aiProviderSettingsObserved = $false
+$agentPlanObserved = $false
+$agentApprovalInvoked = $false
+$agentOperationObserved = $false
 $targetEnvId = $null
 
 function Get-DashboardWindow([int]$AppProcessId) {
@@ -89,6 +98,40 @@ function Find-DashboardButton($DashboardWindow, [string]$Name, [switch]$Like, [s
             $matchesName -and
             (-not $Enabled -or $_.Current.IsEnabled)
     } | Select-Object -First 1
+}
+
+function Find-DashboardEdit($DashboardWindow, [string]$Name, [switch]$Enabled) {
+    $elements = Get-DashboardElements $DashboardWindow
+    return @($elements) | Where-Object {
+        $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and
+            $_.Current.Name -eq $Name -and
+            (-not $Enabled -or $_.Current.IsEnabled)
+    } | Select-Object -First 1
+}
+
+function Find-ReadyEnvironmentStopButton($DashboardWindow, [string]$NamePattern) {
+    $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+    $buttons = @(Get-DashboardElements $DashboardWindow) | Where-Object {
+        $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
+            $_.Current.Name -like $NamePattern -and
+            $_.Current.IsEnabled
+    }
+    foreach ($button in $buttons) {
+        $ancestor = $button
+        for ($depth = 0; $depth -lt 8 -and $ancestor; $depth++) {
+            if ($ancestor.Current.ControlType -eq [System.Windows.Automation.ControlType]::DataItem) {
+                $rowElements = $ancestor.FindAll(
+                    [System.Windows.Automation.TreeScope]::Descendants,
+                    [System.Windows.Automation.Condition]::TrueCondition
+                )
+                if (@($rowElements) | Where-Object { $_.Current.Name -eq $runningLabel } | Select-Object -First 1) {
+                    return $button
+                }
+            }
+            $ancestor = $walker.GetParent($ancestor)
+        }
+    }
+    return $null
 }
 
 function Invoke-DashboardButton($Button) {
@@ -219,16 +262,29 @@ try {
     } "environment navigation"
     Invoke-DashboardButton $environmentButton
 
-    $existingStop = Find-DashboardButton $window $stopPattern -Like -Enabled
+    $targetStartPattern = if ([string]::IsNullOrWhiteSpace($TargetEnvironmentId)) {
+        $startPattern
+    }
+    else {
+        "$startPattern($TargetEnvironmentId)"
+    }
+    $targetStopPattern = if ([string]::IsNullOrWhiteSpace($TargetEnvironmentId)) {
+        $stopPattern
+    }
+    else {
+        "$stopPattern($TargetEnvironmentId)"
+    }
+
+    $existingStop = Find-DashboardButton $window $targetStopPattern -Like -Enabled
     if ($existingStop) {
         Invoke-DashboardButton $existingStop
         Wait-ForDashboardValue {
-            Find-DashboardButton $window $startPattern -Like -Enabled
+            Find-DashboardButton $window $targetStartPattern -Like -Enabled
         } "stopped baseline environment" | Out-Null
     }
 
     $startButton = Wait-ForDashboardValue {
-        Find-DashboardButton $window $startPattern -Like -Enabled
+        Find-DashboardButton $window $targetStartPattern -Like -Enabled
     } "enabled environment start button"
     if ($startButton.Current.Name -match "\(([^)]+)\)$") {
         $targetEnvId = $Matches[1]
@@ -236,21 +292,69 @@ try {
     if ([string]::IsNullOrWhiteSpace($targetEnvId)) {
         throw "Could not extract target envId from the environment control"
     }
-    Invoke-DashboardButton $startButton
-    $startInvoked = $true
+    if (-not [string]::IsNullOrWhiteSpace($TargetEnvironmentId) -and $targetEnvId -ne $TargetEnvironmentId) {
+        throw "Resolved environment $targetEnvId does not match requested target"
+    }
+    $targetStartPattern = "$startPattern($targetEnvId)"
+    $targetStopPattern = "$stopPattern($targetEnvId)"
+
+    if ($AgentLifecycle) {
+        $aiButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window $aiLabel -Enabled
+        } "AI navigation for Agent lifecycle"
+        Invoke-DashboardButton $aiButton
+
+        $newConversationButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window $newConversationLabel -Enabled
+        } "new AI conversation"
+        Invoke-DashboardButton $newConversationButton
+        $agentModeButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window "Agent" -Enabled
+        } "Agent mode"
+        Invoke-DashboardButton $agentModeButton
+        $agentRequest = Wait-ForDashboardValue {
+            Find-DashboardEdit $window $aiRequestLabel -Enabled
+        } "Agent request input"
+        $startEnvironmentPrompt = (-join ([char[]](0x542F, 0x52A8, 0x73AF, 0x5883))) + " " + $targetEnvId
+        $agentRequest.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($startEnvironmentPrompt)
+        $generatePlanButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window $generatePlanLabel -Enabled
+        } "enabled Agent plan button"
+        Invoke-DashboardButton $generatePlanButton
+
+        $approvePlanButton = Wait-ForDashboardValue {
+            $approve = Find-DashboardButton $window $approvePlanLabel -Enabled
+            $elements = Get-DashboardElements $window
+            $stoppedPrecondition = @($elements) | Where-Object {
+                $_.Current.Name -eq "stopped"
+            } | Select-Object -First 1
+            if ($approve -and $stoppedPrecondition) { return $approve }
+            return $null
+        } "Agent plan with stopped precondition"
+        $agentPlanObserved = $true
+        Invoke-DashboardButton $approvePlanButton
+        $agentApprovalInvoked = $true
+        $startInvoked = $true
+        Wait-ForDashboardValue {
+            $elements = Get-DashboardElements $window
+            @($elements) | Where-Object {
+                $_.Current.Name -like "Operation *"
+            } | Select-Object -First 1
+        } "Agent operation result" | Out-Null
+        $agentOperationObserved = $true
+
+        $environmentButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window $environmentLabel -Enabled
+        } "environment navigation after Agent approval"
+        Invoke-DashboardButton $environmentButton
+    }
+    else {
+        Invoke-DashboardButton $startButton
+        $startInvoked = $true
+    }
 
     $stopButton = Wait-ForDashboardValue {
-        $elements = Get-DashboardElements $window
-        $readyStatus = @($elements) | Where-Object {
-            $_.Current.Name -eq $runningLabel
-        } | Select-Object -First 1
-        $enabledStop = @($elements) | Where-Object {
-            $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
-                $_.Current.Name -like $stopPattern -and
-                $_.Current.IsEnabled
-        } | Select-Object -First 1
-        if ($readyStatus -and $enabledStop) { return $enabledStop }
-        return $null
+        Find-ReadyEnvironmentStopButton $window $targetStopPattern
     } "ready environment state"
     $readyObserved = $true
 
@@ -306,13 +410,13 @@ try {
     } "environment navigation after AI verification"
     Invoke-DashboardButton $environmentButton
     $stopButton = Wait-ForDashboardValue {
-        Find-DashboardButton $window $stopPattern -Like -Enabled
+        Find-DashboardButton $window $targetStopPattern -Like -Enabled
     } "ready environment stop button after AI verification"
     Invoke-DashboardButton $stopButton
     $stopInvoked = $true
 
     Wait-ForDashboardValue {
-        Find-DashboardButton $window $startPattern -Like -Enabled
+        Find-DashboardButton $window $targetStartPattern -Like -Enabled
     } "restored stopped environment" | Out-Null
     $stoppedObserved = $true
 
@@ -340,6 +444,10 @@ try {
         aiEnvironmentContextObserved = $aiEnvironmentContextObserved
         cdpEndpointObserved = $cdpEndpointObserved
         aiProviderSettingsObserved = $aiProviderSettingsObserved
+        agentLifecycleRequested = [bool]$AgentLifecycle
+        agentPlanObserved = $agentPlanObserved
+        agentApprovalInvoked = $agentApprovalInvoked
+        agentOperationObserved = $agentOperationObserved
     } | ConvertTo-Json
 }
 finally {
@@ -350,7 +458,8 @@ finally {
                 Invoke-DashboardButton $cleanupEnvironment
                 Start-Sleep -Seconds 1
             }
-            $cleanupStop = Find-DashboardButton $window $stopPattern -Like -Enabled
+            $cleanupPattern = if ([string]::IsNullOrWhiteSpace($targetEnvId)) { $stopPattern } else { "$stopPattern($targetEnvId)" }
+            $cleanupStop = Find-DashboardButton $window $cleanupPattern -Like -Enabled
             if ($cleanupStop) {
                 Invoke-DashboardButton $cleanupStop
                 Start-Sleep -Seconds 2

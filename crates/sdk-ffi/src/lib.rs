@@ -434,12 +434,7 @@ pub fn capabilities_for_path(path: impl Into<PathBuf>) -> SdkCapabilities {
         ..SdkCapabilities::default()
     };
     if exists {
-        capabilities.callbacks = vec![
-            "result".into(),
-            "log".into(),
-            "cookies-storage".into(),
-            "security-decision".into(),
-        ];
+        capabilities.callbacks = vec!["result".into(), "log".into()];
         capabilities.sync_calls = vec![
             "sdk_get_user_sig".into(),
             "sdk_init".into(),
@@ -458,7 +453,6 @@ pub fn capabilities_for_path(path: impl Into<PathBuf>) -> SdkCapabilities {
             "sdk_browser_open".into(),
             "sdk_browser_close".into(),
             "sdk_browser_install".into(),
-            "sdk_token_update".into(),
         ];
         capabilities.cdp_calls = vec![
             "sdk_browser_command".into(),

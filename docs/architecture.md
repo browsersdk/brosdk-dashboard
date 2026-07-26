@@ -140,7 +140,7 @@ DLL 的 `/sdk/v1/env/create` 与第三方服务端 `/api/v2/browser/create` 复�
 
 `brosdk.dll` 本身已经包含内嵌 MCP / HTTP 能力。新客户端把它作为 `sdk-host` 的 platform capability 暴露：当 Manager 明确配置端口时，由 `sdk_init` 的 `port` 字段启用 DLL 内嵌端点；Dashboard 不直接依赖该端点，仍通过 Manager 统一处理 envId 路由、operation 状态、安全策略和未来审批。
 
-Manager MCP adapter 同时支持 DLL 的 Streamable HTTP 全局端点 `/sdk/v1/mcp` 和单环境端点 `/sdk/v1/mcp/env/{envId}`，严格执行 `initialize -> notifications/initialized -> tools/list -> tools/call -> DELETE`；仅发现工具时省略 `tools/call`。全局写工具仍由 Manager 对应 operation 代替，单环境工具按 DLL annotations 和 Manager 白名单分层。每次发现与调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。设置端口只代表下次 init 的配置，只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。
+Manager MCP adapter 使用 DLL Streamable HTTP 全局端点 `/sdk/v1/mcp`，并通过可选查询参数 `/sdk/v1/mcp?envId={envId}` 路由单环境；DLL 的 `/sdk/v1/mcp/env/{envId}` 路径仍是协议兼容面，但 Dashboard client 统一使用可选 envId。adapter 严格执行 `initialize -> notifications/initialized -> tools/list -> tools/call -> DELETE`；仅发现工具时省略 `tools/call`。全局写工具仍由 Manager 对应 operation 代替，ready 单环境工具以当次 DLL `tools/list` 为事实来源，不固定工具数量。每次发现与调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。设置端口只代表下次 init 的配置，只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。
 
 ## 8. 运行状态语义
 
@@ -246,7 +246,9 @@ Windows x64 是首个完成平台。macOS/Linux 不在没有动态库和平台�
 AI Agent 边界：
 
 - Chat 只能读取 Manager 生成的脱敏快照，模型没有 SDK 或本地文件工具。
-- Chat/Agent 的环境上下文只包含用户选中的精确 `envId`。外部 CDP endpoint 只发送 origin；pipe-only 环境只发送 `sdk-browser-command` 控制通道类型。完整 CDP 地址仅在本地 Dashboard 显示。
-- Agent 模型只生成结构化计划；Manager 再校验 action 白名单、显式批准、`envId`、`expectedState` 和 `idempotencyKey`。
+- AI 会话历史保存在 WebView 本地存储，与服务端环境缓存分离；请求只发送有界 user/assistant 历史。Dashboard 不主动注入 API Key、userSig 和 SDK 原始响应，但用户手动输入的文本会保存在未加密会话中。
+- Chat/Agent 的关联环境只包含用户选中或文本明确指定的精确 `envId`。外部 CDP endpoint 只发送 origin；pipe-only 环境只发送 `sdk-browser-command` 控制通道类型。完整 CDP 地址仅在本地 Dashboard 显示。
+- Agent 模型只提出结构化动作；Manager 解析文本中的已知 envId，并根据最新镜像写入 `expectedState` 和 UUID `idempotencyKey`，再校验 action 白名单。会话默认逐次批准，用户可显式选择自动执行；两种方式都通过同一个 Manager reservation 与二次状态校验。
 - Agent 写操作统一复用现有 operation 队列，返回 operation id 和 accepted/ready 的状态语义。
+- `mcp.call` 使用可选 envId 选择全局读取或单环境工具；单环境必须 ready，并在执行时再次用 DLL `tools/list` 验证工具存在。旧 `mcp.read` 继续提供严格的 7 工具读取兼容策略。
 - DLL 内嵌 MCP 仍是 `sdk-host` capability，由 Manager 配置生命周期和路由，不把 DLL 端口暴露为 Dashboard 的直接写入口。

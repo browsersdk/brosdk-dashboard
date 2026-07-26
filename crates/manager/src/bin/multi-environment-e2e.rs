@@ -1,9 +1,12 @@
 use std::{collections::HashSet, error::Error, path::Path, time::Duration};
 
 use domain::{
-    EnvironmentBatchAction, EnvironmentBatchInput, EnvironmentBatchResult, EnvironmentCreateInput,
-    EnvironmentMetadataUpdateInput, EnvironmentRecord, KernelRecord, OperationRecord,
+    AiAgentExecuteRequest, AiAgentPlan, AiAgentPlanRequest, EnvironmentCreateInput,
+    EnvironmentMetadataUpdateInput, EnvironmentRecord, KernelRecord, McpToolDiscoveryRequest,
+    McpToolScope, OperationRecord,
 };
+#[cfg(test)]
+use domain::{EnvironmentBatchAction, EnvironmentBatchResult};
 use manager::Manager;
 use serde_json::{Value, json};
 use tokio::time::{Instant, sleep};
@@ -15,13 +18,6 @@ const STOP_TIMEOUT: Duration = Duration::from_secs(90);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    if non_empty_env("BROSDK_API_KEY").is_none() {
-        print_report(json!({
-            "status": "skipped",
-            "reason": "BROSDK_API_KEY is not set",
-        }))?;
-        return Ok(());
-    }
     if !env_flag("BROSDK_E2E_ALLOW_MUTATION") {
         print_report(json!({
             "status": "skipped",
@@ -39,8 +35,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut created_environment_count = 0;
     let mut cleanup_attempted = 0;
     let mut cleanup_succeeded = 0;
+    let mut mcp_advertised_count = 0;
+    let mut mcp_allowed_count = 0;
+    let mut mcp_browser_state_present = false;
+    let mut mcp_call_succeeded = false;
 
     let result = async {
+        if !manager.api_key_status()?.present {
+            return Err(
+                "BroSDK API key is not available from environment or secure storage".into(),
+            );
+        }
+        if !manager.ai_provider_status()?.api_key_present {
+            return Err("AI API key is not available from environment or secure storage".into());
+        }
         manager.start_runtime().await?;
         runtime_started = true;
 
@@ -94,18 +102,96 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ensure_metadata_mirrored(&manager, env_id, &name, &serial).await?;
         }
 
-        failed_stage = "batch-start";
-        let start = manager
-            .batch_environment_action(EnvironmentBatchInput {
-                action: EnvironmentBatchAction::Start,
-                env_ids: owned_env_ids.clone(),
-            })
-            .await?;
-        validate_batch_result(&start, EnvironmentBatchAction::Start, &owned_env_ids)?;
+        failed_stage = "agent-start";
+        let mut start_operation_ids = HashSet::new();
+        for (index, env_id) in owned_env_ids.iter().enumerate() {
+            let other_env_id = &owned_env_ids[(index + 1) % owned_env_ids.len()];
+            let plan = manager
+                .ai_plan_agent(AiAgentPlanRequest {
+                    prompt: format!("Start environment {env_id}"),
+                    context_env_id: Some(other_env_id.clone()),
+                    history: Vec::new(),
+                })
+                .await?;
+            validate_agent_plan(&plan, "environment.start", env_id, "stopped")?;
+            let execution = manager
+                .ai_execute_agent(AiAgentExecuteRequest {
+                    plan,
+                    approved: true,
+                    automatic: index % 2 == 1,
+                })
+                .await?;
+            let operation = execution
+                .operation
+                .ok_or("Agent start did not return an operation")?;
+            ensure_agent_operation(&operation, "environment.start", env_id)?;
+            if !start_operation_ids.insert(operation.id) {
+                return Err("Agent reused a start operation across environments".into());
+            }
+        }
 
         failed_stage = "ready";
         for env_id in &owned_env_ids {
             wait_for_state(&manager, env_id, "ready", READY_TIMEOUT).await?;
+        }
+
+        let mut discovered_tool_counts = Vec::new();
+        for env_id in &owned_env_ids {
+            failed_stage = "environment-mcp-discovery";
+            let discovery = manager
+                .discover_embedded_mcp_tools(McpToolDiscoveryRequest {
+                    scope: McpToolScope::Environment,
+                    env_id: Some(env_id.clone()),
+                })
+                .await?;
+            mcp_advertised_count = discovery.advertised_tools.len();
+            mcp_allowed_count = discovery.allowed_tools.len();
+            mcp_browser_state_present = discovery
+                .allowed_tools
+                .iter()
+                .any(|tool| tool == "browser_state");
+            failed_stage = "environment-mcp-catalog";
+            if mcp_advertised_count < 17
+                || mcp_allowed_count != mcp_advertised_count
+                || !mcp_browser_state_present
+                || !discovery.allowed_tools.iter().any(|tool| tool == "tabs")
+            {
+                return Err(
+                    "single-environment MCP did not expose its runtime tool catalog".into(),
+                );
+            }
+            discovered_tool_counts.push(discovery.advertised_tools.len());
+            failed_stage = "environment-mcp-call";
+            let plan = manager
+                .ai_plan_agent(AiAgentPlanRequest {
+                    prompt: format!("Use mcp.call with tabs action list for environment {env_id}"),
+                    context_env_id: None,
+                    history: Vec::new(),
+                })
+                .await?;
+            validate_agent_plan(&plan, "mcp.call", env_id, "ready")?;
+            if plan.arguments.get("tool").and_then(Value::as_str) != Some("tabs")
+                || plan
+                    .arguments
+                    .get("arguments")
+                    .and_then(|arguments| arguments.get("action"))
+                    .and_then(Value::as_str)
+                    != Some("list")
+            {
+                return Err("Agent MCP plan did not preserve the requested tool arguments".into());
+            }
+            let execution = manager
+                .ai_execute_agent(AiAgentExecuteRequest {
+                    plan,
+                    approved: true,
+                    automatic: true,
+                })
+                .await?;
+            let operation = execution
+                .operation
+                .ok_or("Agent MCP call did not return an operation")?;
+            ensure_agent_operation(&operation, "mcp.environment-tool-call", env_id)?;
+            mcp_call_succeeded = true;
         }
 
         failed_stage = "fingerprint-details";
@@ -114,14 +200,33 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         ensure_fingerprint_details(&manager, &owned_env_ids).await?;
 
-        failed_stage = "batch-stop";
-        let stop = manager
-            .batch_environment_action(EnvironmentBatchInput {
-                action: EnvironmentBatchAction::Stop,
-                env_ids: owned_env_ids.clone(),
-            })
-            .await?;
-        validate_batch_result(&stop, EnvironmentBatchAction::Stop, &owned_env_ids)?;
+        failed_stage = "agent-stop";
+        let mut stop_operation_ids = HashSet::new();
+        for (index, env_id) in owned_env_ids.iter().enumerate() {
+            let other_env_id = &owned_env_ids[(index + 1) % owned_env_ids.len()];
+            let plan = manager
+                .ai_plan_agent(AiAgentPlanRequest {
+                    prompt: format!("Stop environment {env_id}"),
+                    context_env_id: Some(other_env_id.clone()),
+                    history: Vec::new(),
+                })
+                .await?;
+            validate_agent_plan(&plan, "environment.stop", env_id, "ready")?;
+            let execution = manager
+                .ai_execute_agent(AiAgentExecuteRequest {
+                    plan,
+                    approved: true,
+                    automatic: index % 2 == 0,
+                })
+                .await?;
+            let operation = execution
+                .operation
+                .ok_or("Agent stop did not return an operation")?;
+            ensure_agent_operation(&operation, "environment.stop", env_id)?;
+            if !stop_operation_ids.insert(operation.id) {
+                return Err("Agent reused a stop operation across environments".into());
+            }
+        }
 
         failed_stage = "stopped";
         for env_id in &owned_env_ids {
@@ -160,8 +265,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "temporaryEnvironmentCount": ENVIRONMENT_COUNT,
             "uniqueEnvironmentIds": true,
             "metadataUpdated": true,
+            "agentManualModeCovered": true,
+            "agentAutomaticModeCovered": true,
+            "agentExplicitEnvIdOverridesContext": true,
             "independentStartOperations": true,
             "bothReady": true,
+            "environmentMcpOptionalEnvId": true,
+            "agentMcpCallCovered": true,
+            "minimumDiscoveredEnvironmentTools": discovered_tool_counts.into_iter().min(),
             "fingerprintDetailsReady": true,
             "independentStopOperations": true,
             "bothStopped": true,
@@ -194,6 +305,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "status": "failed",
                     "failedStage": failed_stage,
                     "temporaryEnvironmentCount": created_environment_count,
+                    "mcpAdvertisedToolCount": mcp_advertised_count,
+                    "mcpAllowedToolCount": mcp_allowed_count,
+                    "mcpBrowserStatePresent": mcp_browser_state_present,
+                    "mcpCallSucceeded": mcp_call_succeeded,
                     "cleanupAttempted": cleanup_attempted,
                     "cleanupSucceeded": cleanup_succeeded,
                 }))?
@@ -336,6 +451,37 @@ async fn ensure_fingerprint_details(
     Ok(())
 }
 
+fn validate_agent_plan(
+    plan: &AiAgentPlan,
+    action: &str,
+    env_id: &str,
+    expected_state: &str,
+) -> Result<(), Box<dyn Error>> {
+    if plan.action != action
+        || plan.env_id.as_deref() != Some(env_id)
+        || plan.expected_state.as_deref() != Some(expected_state)
+        || Uuid::parse_str(&plan.idempotency_key).is_err()
+    {
+        return Err("Agent plan did not retain the explicit envId and current state".into());
+    }
+    Ok(())
+}
+
+fn ensure_agent_operation(
+    operation: &OperationRecord,
+    kind: &str,
+    env_id: &str,
+) -> Result<(), Box<dyn Error>> {
+    if operation.kind != kind
+        || operation.env_id.as_deref() != Some(env_id)
+        || !matches!(operation.status.as_str(), "running" | "succeeded")
+    {
+        return Err("Agent execution returned an operation for the wrong environment".into());
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn validate_batch_result(
     result: &EnvironmentBatchResult,
     expected_action: EnvironmentBatchAction,

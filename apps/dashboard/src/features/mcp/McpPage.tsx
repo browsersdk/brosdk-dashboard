@@ -31,12 +31,29 @@ const toolLabels: Record<string, string> = {
   "mcp.endpoint": "环境端点",
   browser_state: "浏览器空间",
   tabs: "标签页",
+  bookmarks: "书签",
+  history: "历史记录",
+  tab_groups: "标签组",
+  navigate: "导航",
   snapshot: "页面快照",
   diff: "页面变化",
+  act: "页面操作",
+  download: "下载",
+  upload: "上传",
   read: "页面文本",
   grep: "页面搜索",
   screenshot: "页面截图",
+  pdf: "导出 PDF",
+  wait: "等待条件",
+  windows: "窗口",
+  evaluate: "脚本执行",
 };
+
+const structuredTools = new Set([
+  "sdk.health", "sdk.info", "env.list", "env.resolve", "env.get",
+  "browser.status", "task.list", "task.get", "mcp.endpoint", "browser_state",
+  "tabs", "snapshot", "diff", "read", "grep", "screenshot",
+]);
 
 type FormState = {
   page: string;
@@ -86,6 +103,7 @@ export function McpPage({
   const [globalEnvId, setGlobalEnvId] = useState("");
   const [tool, setTool] = useState("sdk.health");
   const [form, setForm] = useState<FormState>(initialForm);
+  const [rawArguments, setRawArguments] = useState("{}");
   const [discoveryState, setDiscoveryState] = useState<{ key: string; value: McpToolDiscovery } | null>(null);
   const [result, setResult] = useState<McpToolCallExecution | null>(null);
   const [outputView, setOutputView] = useState<"tools" | "response">("tools");
@@ -115,8 +133,14 @@ export function McpPage({
     && Boolean(snapshot?.mcp.active)
     && !busy
     && (scope === "global" || Boolean(selectedEnvId));
-  const arguments_ = buildArguments(selectedTool, form, selectedGlobalEnvId);
-  const canRun = canDiscover && Boolean(selectedTool) && validArguments(selectedTool, form, selectedGlobalEnvId);
+  const usesRawArguments = !structuredTools.has(selectedTool);
+  const arguments_ = usesRawArguments
+    ? parseRawArguments(rawArguments)
+    : buildArguments(selectedTool, form, selectedGlobalEnvId);
+  const canRun = canDiscover
+    && Boolean(selectedTool)
+    && arguments_ !== null
+    && validArguments(selectedTool, form, selectedGlobalEnvId);
 
   function chooseScope(nextScope: McpToolScope) {
     setScope(nextScope);
@@ -155,7 +179,7 @@ export function McpPage({
         scope,
         scope === "environment" ? selectedEnvId : null,
         selectedTool,
-        arguments_,
+        arguments_ ?? {},
       );
       setResult(execution);
       setOutputView("response");
@@ -189,16 +213,16 @@ export function McpPage({
       </div>
 
       <div className="mcp-console-body">
-        <form className="mcp-builder" aria-label="MCP 只读调用" onSubmit={(event) => void runTool(event)}>
+        <form className="mcp-builder" aria-label="MCP 工具调用" onSubmit={(event) => void runTool(event)}>
           <div className="mcp-section-heading">
-            <div><ShieldCheck size={16} /><h2>只读调用</h2></div>
+            <div><ShieldCheck size={16} /><h2>工具调用</h2></div>
             <span>{availableTools.length} 个可用工具</span>
           </div>
 
           {scope === "environment" && (
             <label className="field">
               <span>运行环境</span>
-              <select value={selectedEnvId} disabled={Boolean(busy)} onChange={(event) => setEnvId(event.target.value)}>
+              <select aria-label="运行环境" value={selectedEnvId} disabled={Boolean(busy)} onChange={(event) => setEnvId(event.target.value)}>
                 {readyEnvironments.length === 0 && <option value="">没有 ready 环境</option>}
                 {readyEnvironments.map((environment) => (
                   <option key={environment.envId} value={environment.envId}>{environmentLabel(environment)}</option>
@@ -209,7 +233,7 @@ export function McpPage({
 
           <label className="field">
             <span>工具</span>
-            <select value={selectedTool} disabled={Boolean(busy) || availableTools.length === 0} onChange={(event) => setTool(event.target.value)}>
+            <select aria-label="工具" value={selectedTool} disabled={Boolean(busy) || availableTools.length === 0} onChange={(event) => setTool(event.target.value)}>
               {availableTools.length === 0 && <option value="">未发现可用工具</option>}
               {availableTools.map((name) => <option key={name} value={name}>{toolLabel(name)} · {name}</option>)}
             </select>
@@ -223,11 +247,13 @@ export function McpPage({
             disabled={Boolean(busy)}
             onFormChange={setForm}
             onGlobalEnvironmentChange={setGlobalEnvId}
+            rawArguments={rawArguments}
+            onRawArgumentsChange={setRawArguments}
           />
 
           <button className="button primary full-width mcp-run-button" type="submit" disabled={!canRun}>
             {busy === "run" ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
-            运行只读调用
+            运行工具
           </button>
         </form>
 
@@ -268,6 +294,8 @@ function McpArgumentFields({
   disabled,
   onFormChange,
   onGlobalEnvironmentChange,
+  rawArguments,
+  onRawArgumentsChange,
 }: {
   tool: string;
   form: FormState;
@@ -276,6 +304,8 @@ function McpArgumentFields({
   disabled: boolean;
   onFormChange: React.Dispatch<React.SetStateAction<FormState>>;
   onGlobalEnvironmentChange: (envId: string) => void;
+  rawArguments: string;
+  onRawArgumentsChange: (value: string) => void;
 }) {
   const update = <Key extends keyof FormState>(key: Key, value: FormState[Key]) => {
     onFormChange((current) => ({ ...current, [key]: value }));
@@ -321,7 +351,20 @@ function McpArgumentFields({
   if (tool === "screenshot") {
     return <div className="mcp-parameter-grid">{pageField}<label className="field"><span>格式</span><select value={form.screenshotFormat} disabled={disabled} onChange={(event) => update("screenshotFormat", event.target.value as FormState["screenshotFormat"])}><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WebP</option></select></label></div>;
   }
-  return null;
+  return (
+    <label className="field">
+      <span>参数 JSON</span>
+      <textarea
+        aria-label="MCP JSON 参数"
+        className="mcp-json-arguments"
+        value={rawArguments}
+        disabled={disabled}
+        maxLength={65_536}
+        spellCheck={false}
+        onChange={(event) => onRawArgumentsChange(event.target.value)}
+      />
+    </label>
+  );
 }
 
 function EnvironmentField({
@@ -423,6 +466,17 @@ function validArguments(tool: string, form: FormState, envId: string) {
     case "screenshot": return positivePage;
     case "grep": return positivePage && Boolean(form.pattern.trim());
     default: return true;
+  }
+}
+
+function parseRawArguments(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
   }
 }
 

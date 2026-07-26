@@ -122,7 +122,7 @@ describe("McpPage", () => {
     api.call.mockResolvedValue(execution("global", null, "env.get"));
     renderPage();
     fireEvent.change(screen.getByLabelText("工具"), { target: { value: "env.get" } });
-    fireEvent.click(screen.getByRole("button", { name: "运行只读调用" }));
+    fireEvent.click(screen.getByRole("button", { name: "运行工具" }));
 
     await waitFor(() => expect(api.call).toHaveBeenCalledWith(
       "global",
@@ -141,13 +141,45 @@ describe("McpPage", () => {
     fireEvent.change(screen.getByLabelText("Page"), { target: { value: "7" } });
     fireEvent.change(screen.getByLabelText("搜索范围"), { target: { value: "content" } });
     fireEvent.change(screen.getByLabelText("搜索文本"), { target: { value: "invoice" } });
-    fireEvent.click(screen.getByRole("button", { name: "运行只读调用" }));
+    fireEvent.click(screen.getByRole("button", { name: "运行工具" }));
 
     await waitFor(() => expect(api.call).toHaveBeenCalledWith(
       "environment",
       "10001",
       "grep",
       { page: 7, pattern: "invoice", over: "content" },
+    ));
+  });
+
+  it("uses runtime discovery and JSON arguments for every environment tool", async () => {
+    api.discover.mockResolvedValue({
+      operation,
+      scope: "environment",
+      envId: "10001",
+      protocolVersion: "2025-11-25",
+      advertisedTools: [
+        { name: "browser_state", description: null, readOnlyHint: true, destructiveHint: false },
+        { name: "navigate", description: null, readOnlyHint: false, destructiveHint: false },
+      ],
+      allowedTools: ["browser_state", "navigate"],
+    } satisfies McpToolDiscovery);
+    api.call.mockResolvedValue(execution("environment", "10001", "navigate"));
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "单环境" }));
+    fireEvent.click(screen.getByRole("button", { name: "发现工具" }));
+    await waitFor(() => expect(api.discover).toHaveBeenCalledWith("environment", "10001"));
+    fireEvent.change(screen.getByLabelText("工具"), { target: { value: "navigate" } });
+    fireEvent.change(screen.getByLabelText("MCP JSON 参数"), {
+      target: { value: '{"url":"https://example.com"}' },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "运行工具" }));
+
+    await waitFor(() => expect(api.call).toHaveBeenCalledWith(
+      "environment",
+      "10001",
+      "navigate",
+      { url: "https://example.com" },
     ));
   });
 
@@ -160,7 +192,7 @@ describe("McpPage", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: "单环境" }));
     expect((screen.getByRole("button", { name: "发现工具" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "运行只读调用" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "运行工具" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("distinguishes same-name environments by envId in every picker", () => {

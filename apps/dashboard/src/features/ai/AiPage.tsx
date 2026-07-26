@@ -4,21 +4,40 @@ import {
   BrainCircuit,
   CheckCircle2,
   Copy,
+  Eraser,
   LoaderCircle,
+  MessageSquarePlus,
   Play,
   Settings,
+  Trash2,
+  UserRound,
 } from "lucide-react";
 import { aiChat, aiExecuteAgent, aiPlanAgent, isDesktopRuntime } from "../../api";
 import type {
   AiAgentExecution,
   AiAgentPlan,
-  AiChatResponse,
   DashboardSnapshot,
 } from "../../types";
-import { environmentCdpAddress, environmentCdpLabel, environmentControlChannel } from "../../environmentIdentity";
+import {
+  environmentCdpAddress,
+  environmentCdpLabel,
+  environmentControlChannel,
+} from "../../environmentIdentity";
+import {
+  conversationHistory,
+  conversationTitle,
+  createConversation,
+  createConversationMessage,
+  loadConversationState,
+  saveConversationState,
+  type AiConversation,
+  type AiConversationMessage,
+  type AiMode,
+} from "./conversations";
 
 const statusLabel: Record<string, string> = {
   stopped: "已停止",
+  preparing: "准备中",
   starting: "启动中",
   ready: "运行中",
   stopping: "停止中",
@@ -36,52 +55,201 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
   onError: (message: string) => void;
   onOpenSettings: () => void;
 }) {
-  const [mode, setMode] = useState<"chat" | "agent">("chat");
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState("");
-  const [selectedEnvId, setSelectedEnvId] = useState<string | null>(() => preferredEnvironmentId(snapshot));
-  const [chatResponse, setChatResponse] = useState<AiChatResponse | null>(null);
-  const [plan, setPlan] = useState<AiAgentPlan | null>(null);
-  const [execution, setExecution] = useState<AiAgentExecution | null>(null);
-
-  useEffect(() => {
-    const environments = snapshot?.environments ?? [];
-    if (selectedEnvId && environments.some((environment) => environment.envId === selectedEnvId)) return;
-    setSelectedEnvId(preferredEnvironmentId(snapshot));
-  }, [selectedEnvId, snapshot]);
-
+  const [conversationState, setConversationState] = useState(() => (
+    loadConversationState(preferredEnvironmentId(snapshot))
+  ));
+  const activeConversation = conversationState.conversations.find(
+    (conversation) => conversation.id === conversationState.activeConversationId,
+  ) ?? conversationState.conversations[0];
+  const mode = activeConversation.mode;
+  const selectedEnvId = activeConversation.contextEnvId;
   const environment = snapshot?.environments.find((item) => item.envId === selectedEnvId) ?? null;
 
+  useEffect(() => {
+    saveConversationState(conversationState);
+  }, [conversationState]);
+
+  useEffect(() => {
+    if (!selectedEnvId) return;
+    const environments = snapshot?.environments ?? [];
+    if (environments.some((item) => item.envId === selectedEnvId)) return;
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      contextEnvId: preferredEnvironmentId(snapshot),
+    }));
+  }, [activeConversation.id, selectedEnvId, snapshot]);
+
+  function updateConversation(
+    conversationId: string,
+    update: (conversation: AiConversation) => AiConversation,
+  ) {
+    setConversationState((current) => ({
+      ...current,
+      conversations: current.conversations.map((conversation) => (
+        conversation.id === conversationId ? update(conversation) : conversation
+      )),
+    }));
+  }
+
+  function appendMessage(conversationId: string, message: AiConversationMessage) {
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      title: conversation.messages.some((item) => item.role === "user")
+        ? conversation.title
+        : conversationTitle(message.content),
+      updatedAt: message.createdAt,
+      messages: [...conversation.messages, message].slice(-80),
+    }));
+  }
+
+  function createNewConversation() {
+    const conversation = createConversation(
+      selectedEnvId,
+      mode,
+      activeConversation.executionMode,
+    );
+    setConversationState((current) => ({
+      activeConversationId: conversation.id,
+      conversations: [conversation, ...current.conversations].slice(0, 20),
+    }));
+    setPrompt("");
+    onError("");
+  }
+
+  function clearCurrentConversation() {
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      title: "新会话",
+      messages: [],
+      updatedAt: new Date().toISOString(),
+    }));
+    setPrompt("");
+    onError("");
+  }
+
+  function deleteConversation(conversationId: string) {
+    setConversationState((current) => {
+      const remaining = current.conversations.filter((conversation) => conversation.id !== conversationId);
+      if (remaining.length === 0) {
+        const replacement = createConversation(
+          selectedEnvId,
+          mode,
+          activeConversation.executionMode,
+        );
+        return { activeConversationId: replacement.id, conversations: [replacement] };
+      }
+      return {
+        activeConversationId: current.activeConversationId === conversationId
+          ? remaining[0].id
+          : current.activeConversationId,
+        conversations: remaining,
+      };
+    });
+  }
+
+  function setMode(mode: AiMode) {
+    updateConversation(activeConversation.id, (conversation) => ({ ...conversation, mode }));
+  }
+
+  function setExecutionMode(executionMode: AiConversation["executionMode"]) {
+    updateConversation(activeConversation.id, (conversation) => ({
+      ...conversation,
+      executionMode,
+    }));
+  }
+
   async function submit() {
-    if (!prompt.trim()) return;
+    const requestPrompt = prompt.trim();
+    if (!requestPrompt) return;
+    const conversationId = activeConversation.id;
+    const history = conversationHistory(activeConversation.messages);
+    const contextEnvId = activeConversation.contextEnvId;
+    const requestMode = activeConversation.mode;
+    const executionMode = activeConversation.executionMode;
+    appendMessage(conversationId, createConversationMessage({
+      role: "user",
+      mode: requestMode,
+      content: requestPrompt,
+    }));
+    setPrompt("");
     setBusy("submit");
     onError("");
     try {
-      if (mode === "chat") {
-        setChatResponse(await aiChat(prompt, selectedEnvId));
-        setPlan(null);
-        setExecution(null);
+      if (requestMode === "chat") {
+        const response = await aiChat(requestPrompt, contextEnvId, history);
+        appendMessage(conversationId, createConversationMessage({
+          role: "assistant",
+          mode: requestMode,
+          content: response.answer,
+        }));
       } else {
-        setPlan(await aiPlanAgent(prompt, selectedEnvId));
-        setChatResponse(null);
-        setExecution(null);
+        const plan = await aiPlanAgent(requestPrompt, contextEnvId, history);
+        const planMessage = createConversationMessage({
+          role: "assistant",
+          mode: requestMode,
+          content: plan.summary,
+          plan,
+        });
+        appendMessage(conversationId, planMessage);
+        if (executionMode === "automatic") {
+          await executePlanFor(conversationId, planMessage, true);
+        }
       }
     } catch (requestError) {
-      onError(errorMessage(requestError, "AI 请求失败"));
+      const message = errorMessage(requestError, "AI 请求失败");
+      appendMessage(conversationId, createConversationMessage({
+        role: "assistant",
+        mode: requestMode,
+        content: message,
+        error: true,
+      }));
+      onError(message);
     } finally {
       setBusy("");
     }
   }
 
-  async function executePlan() {
-    if (!plan) return;
-    setBusy("execute");
+  async function executePlan(message: AiConversationMessage) {
+    if (!message.plan) return;
+    await executePlanFor(activeConversation.id, message, false);
+  }
+
+  async function executePlanFor(
+    conversationId: string,
+    message: AiConversationMessage,
+    automatic: boolean,
+  ) {
+    if (!message.plan) return;
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      updatedAt: new Date().toISOString(),
+      messages: conversation.messages.map((item) => (
+        item.id === message.id ? { ...item, executionAttempted: true } : item
+      )),
+    }));
+    setBusy(`execute:${message.id}`);
     onError("");
     try {
-      setExecution(await aiExecuteAgent(plan));
+      const execution = await aiExecuteAgent(message.plan, automatic);
+      updateConversation(conversationId, (conversation) => ({
+        ...conversation,
+        updatedAt: new Date().toISOString(),
+        messages: conversation.messages.map((item) => (
+          item.id === message.id ? { ...item, execution } : item
+        )),
+      }));
       await onRefresh();
     } catch (requestError) {
-      onError(errorMessage(requestError, "Agent 执行失败"));
+      const error = errorMessage(requestError, "Agent 执行失败");
+      appendMessage(conversationId, createConversationMessage({
+        role: "assistant",
+        mode: "agent",
+        content: error,
+        error: true,
+      }));
+      onError(error);
     } finally {
       setBusy("");
     }
@@ -90,11 +258,22 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
   return (
     <section className="ai-workspace">
       <div className="module-toolbar ai-toolbar">
-        <div className="segmented-control" aria-label="AI 模式">
-          <button type="button" className={mode === "chat" ? "active" : ""} onClick={() => setMode("chat")}>Chat</button>
-          <button type="button" className={mode === "agent" ? "active" : ""} onClick={() => setMode("agent")}>Agent</button>
+        <div className="ai-mode-controls">
+          <div className="segmented-control" aria-label="AI 模式">
+            <button type="button" className={mode === "chat" ? "active" : ""} onClick={() => setMode("chat")}>Chat</button>
+            <button type="button" className={mode === "agent" ? "active" : ""} onClick={() => setMode("agent")}>Agent</button>
+          </div>
+          {mode === "agent" && (
+            <div className="segmented-control" aria-label="Agent 执行方式">
+              <button type="button" disabled={Boolean(busy)} className={activeConversation.executionMode === "manual" ? "active" : ""} onClick={() => setExecutionMode("manual")}>每次批准</button>
+              <button type="button" disabled={Boolean(busy)} className={activeConversation.executionMode === "automatic" ? "active" : ""} onClick={() => setExecutionMode("automatic")}>自动执行</button>
+            </div>
+          )}
         </div>
         <div className="ai-toolbar-provider">
+          <button className="icon-button" type="button" title="清空当前会话" aria-label="清空当前会话" disabled={activeConversation.messages.length === 0 || Boolean(busy)} onClick={clearCurrentConversation}>
+            <Eraser size={15} />
+          </button>
           <div className="ai-provider-status">
             <span className={`service-dot ${snapshot?.ai.apiKeyPresent ? "ready" : "error"}`} />
             <strong>{snapshot?.ai.model ?? "-"}</strong>
@@ -106,77 +285,157 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
         </div>
       </div>
 
-      <section className="ai-environment-context" aria-label="AI 环境详情">
-        <div className="ai-context-selector">
-          <label htmlFor="ai-context-environment">环境上下文</label>
-          <select
-            id="ai-context-environment"
-            aria-label="AI 环境上下文"
-            value={selectedEnvId ?? ""}
-            onChange={(event) => setSelectedEnvId(event.target.value || null)}
-          >
-            {(snapshot?.environments ?? []).length === 0 && <option value="">无环境</option>}
-            {(snapshot?.environments ?? []).map((item) => (
-              <option key={item.envId} value={item.envId}>{item.name} · {item.envId}</option>
-            ))}
-          </select>
-        </div>
-        <dl className="ai-context-details">
-          <ContextRow label="状态" value={environment ? statusLabel[environment.status] ?? environment.status : "-"} />
-          <ContextRow label="envId" value={environment?.envId ?? "-"} mono />
-          <ContextRow label="Generation" value={environment ? String(environment.generation) : "-"} />
-          <ContextRow label="Request" value={environment?.requestId === null || environment?.requestId === undefined ? "-" : String(environment.requestId)} />
-          <ContextRow label="Operation" value={environment?.currentOperationId ?? "-"} mono />
-          <ContextRow label="最近事件" value={environment?.lastEvent || "-"} />
-          <ContextRow label="控制通道" value={environment ? environmentControlChannel(environment) : "-"} />
-          <div className="ai-context-cdp">
-            <dt>CDP 地址</dt>
-            <dd title={environment ? environmentCdpLabel(environment) : "-"}>
-              <code>{environment ? environmentCdpLabel(environment) : "-"}</code>
-              {environment && environmentCdpAddress(environment) && (
-                <button className="icon-button" type="button" title="复制 CDP 地址" aria-label="复制 CDP 地址" onClick={() => void navigator.clipboard?.writeText(environmentCdpAddress(environment) ?? "")}>
-                  <Copy size={13} />
-                </button>
-              )}
-            </dd>
-          </div>
-        </dl>
-      </section>
-
-      <div className="ai-grid">
-        <div className="panel ai-compose">
-          <div className="panel-heading"><BrainCircuit size={17} /><h2>{mode === "chat" ? "只读 Chat" : "受控 Agent"}</h2></div>
-          <textarea aria-label="AI 请求" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={mode === "chat" ? "询问当前环境、操作、能力或诊断状态" : "描述当前环境的启动、停止、同步或诊断目标"} />
-          <button className="button primary" type="button" disabled={!isDesktopRuntime() || !prompt.trim() || Boolean(busy) || !snapshot?.ai.apiKeyPresent} onClick={() => void submit()}>
-            {busy === "submit" ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
-            {mode === "chat" ? "发送" : "生成计划"}
-          </button>
-        </div>
-        <div className="panel ai-result">
-          <div className="panel-heading"><Bot size={17} /><h2>{mode === "chat" ? "回答" : "计划与执行"}</h2></div>
-          {chatResponse && <div className="ai-answer"><p>{chatResponse.answer}</p><small>{chatResponse.model} · read-only</small></div>}
-          {plan && <>
-            <dl className="detail-list compact">
-              <ContextRow label="Action" value={plan.action} />
-              <ContextRow label="Environment" value={plan.envId ?? "-"} />
-              <ContextRow label="Expected state" value={plan.expectedState ?? "-"} />
-              <ContextRow label="Idempotency" value={plan.idempotencyKey} />
-            </dl>
-            <p className="agent-summary">{plan.summary}</p>
-            <JsonPreview label="参数" value={plan.arguments} />
-            <button className="button primary full-width" type="button" disabled={Boolean(busy)} onClick={() => void executePlan()}>
-              {busy === "execute" ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}批准并执行
+      <div className="ai-conversation-layout">
+        <aside className="ai-conversation-sidebar" aria-label="AI 会话历史">
+          <div className="ai-conversation-heading">
+            <strong>会话</strong>
+            <button className="icon-button" type="button" title="新建会话" aria-label="新建会话" onClick={createNewConversation}>
+              <MessageSquarePlus size={15} />
             </button>
-          </>}
-          {execution && <div className="agent-execution">
-            <strong>{execution.operation ? `Operation ${execution.operation.id}` : execution.action}</strong>
-            <p>{execution.statusSemantics}</p>
-            {execution.operation && <span className={`status-badge ${execution.operation.status}`}>{statusLabel[execution.operation.status] ?? execution.operation.status}</span>}
-          </div>}
-          {!chatResponse && !plan && !execution && <div className="empty-state"><BrainCircuit size={22} /><span>等待请求</span></div>}
+          </div>
+          <div className="ai-conversation-list">
+            {conversationState.conversations.map((conversation) => (
+              <div className={`ai-conversation-row ${conversation.id === activeConversation.id ? "active" : ""}`} key={conversation.id}>
+                <button className="ai-conversation-select" type="button" onClick={() => setConversationState((current) => ({ ...current, activeConversationId: conversation.id }))}>
+                  <strong>{conversation.title}</strong>
+                  <small>{conversation.mode === "agent" ? "Agent" : "Chat"} · {formatDate(conversation.updatedAt)}</small>
+                </button>
+                <button className="icon-button" type="button" title="删除会话" aria-label={`删除会话 ${conversation.title}`} disabled={Boolean(busy)} onClick={() => deleteConversation(conversation.id)}>
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <div className="ai-conversation-main">
+          <section className="ai-environment-context" aria-label="AI 关联环境详情">
+            <div className="ai-context-selector">
+              <label htmlFor="ai-context-environment">关联环境</label>
+              <select
+                id="ai-context-environment"
+                aria-label="AI 关联环境"
+                value={selectedEnvId ?? ""}
+                onChange={(event) => updateConversation(activeConversation.id, (conversation) => ({
+                  ...conversation,
+                  contextEnvId: event.target.value || null,
+                }))}
+              >
+                <option value="">全部环境</option>
+                {(snapshot?.environments ?? []).map((item) => (
+                  <option key={item.envId} value={item.envId}>{item.name} · {item.envId}</option>
+                ))}
+              </select>
+            </div>
+            {environment ? (
+              <dl className="ai-context-details">
+                <ContextRow label="状态" value={statusLabel[environment.status] ?? environment.status} />
+                <ContextRow label="envId" value={environment.envId} mono />
+                <ContextRow label="Operation" value={environment.currentOperationId ?? "-"} mono />
+                <ContextRow label="最近事件" value={environment.lastEvent || "-"} />
+                <ContextRow label="控制通道" value={environmentControlChannel(environment)} />
+                <div className="ai-context-cdp">
+                  <dt>CDP 地址</dt>
+                  <dd title={environmentCdpLabel(environment)}>
+                    <code>{environmentCdpLabel(environment)}</code>
+                    {environmentCdpAddress(environment) && (
+                      <button className="icon-button" type="button" title="复制 CDP 地址" aria-label="复制 CDP 地址" onClick={() => void navigator.clipboard?.writeText(environmentCdpAddress(environment) ?? "")}>
+                        <Copy size={13} />
+                      </button>
+                    )}
+                  </dd>
+                </div>
+              </dl>
+            ) : (
+              <div className="ai-context-all"><BrainCircuit size={16} /><span>全部环境</span></div>
+            )}
+          </section>
+
+          <div className="ai-message-list" aria-label="当前会话消息">
+            {activeConversation.messages.map((message) => (
+              <article className={`ai-message ${message.role} ${message.error ? "error" : ""}`} key={message.id}>
+                <header>
+                  {message.role === "user" ? <UserRound size={15} /> : <Bot size={15} />}
+                  <strong>{message.role === "user" ? "你" : "AI"}</strong>
+                  <small>{message.mode === "agent" ? "Agent" : "Chat"} · {formatDate(message.createdAt)}</small>
+                </header>
+                <p>{message.content}</p>
+                {message.plan && (
+                  <AgentPlanCard
+                    plan={message.plan}
+                    execution={message.execution}
+                    attempted={message.executionAttempted}
+                    busy={busy === `execute:${message.id}`}
+                    disabled={Boolean(busy)}
+                    onExecute={() => void executePlan(message)}
+                  />
+                )}
+              </article>
+            ))}
+            {activeConversation.messages.length === 0 && (
+              <div className="empty-state ai-conversation-empty"><BrainCircuit size={22} /><span>当前会话为空</span></div>
+            )}
+          </div>
+
+          <div className="ai-composer">
+            <textarea
+              aria-label="AI 请求"
+              value={prompt}
+              onChange={(event) => setPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                  event.preventDefault();
+                  void submit();
+                }
+              }}
+              placeholder={mode === "chat" ? "询问环境、操作、能力或诊断状态" : "描述环境启动、停止、同步或诊断目标"}
+            />
+            <button className="button primary" type="button" disabled={!isDesktopRuntime() || !prompt.trim() || Boolean(busy) || !snapshot?.ai.apiKeyPresent} onClick={() => void submit()}>
+              {busy === "submit" ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
+              {mode === "chat" ? "发送" : activeConversation.executionMode === "automatic" ? "运行 Agent" : "生成计划"}
+            </button>
+          </div>
         </div>
       </div>
     </section>
+  );
+}
+
+function AgentPlanCard({ plan, execution, attempted, busy, disabled, onExecute }: {
+  plan: AiAgentPlan;
+  execution?: AiAgentExecution;
+  attempted?: boolean;
+  busy: boolean;
+  disabled: boolean;
+  onExecute: () => void;
+}) {
+  return (
+    <div className="agent-plan">
+      <dl className="detail-list compact">
+        <ContextRow label="动作" value={plan.action} />
+        <ContextRow label="环境" value={plan.envId ?? "-"} mono />
+        <ContextRow label="前置状态" value={plan.expectedState ?? "-"} />
+      </dl>
+      <JsonPreview label="参数" value={plan.arguments} />
+      {!execution && !attempted && (
+        <button className="button primary" type="button" disabled={disabled} onClick={onExecute}>
+          {busy ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}
+          批准并执行
+        </button>
+      )}
+      {!execution && attempted && (
+        <div className={`agent-execution ${busy ? "" : "error"}`}>
+          <strong>{busy ? <><LoaderCircle className="spin" size={15} />正在执行</> : "执行未完成"}</strong>
+        </div>
+      )}
+      {execution && (
+        <div className="agent-execution">
+          <strong>{execution.operation ? `Operation ${execution.operation.id}` : execution.action}</strong>
+          <p>{execution.statusSemantics}</p>
+          {execution.operation && <span className={`status-badge ${execution.operation.status}`}>{statusLabel[execution.operation.status] ?? execution.operation.status}</span>}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -194,6 +453,18 @@ function providerKeyLabel(present?: boolean, source?: string) {
   return "API Key 已配置";
 }
 
+function formatDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
 function ContextRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
   return <div><dt>{label}</dt><dd className={mono ? "mono" : ""} title={value}>{value}</dd></div>;
 }
@@ -203,5 +474,11 @@ function JsonPreview({ label, value }: { label: string; value: unknown }) {
 }
 
 function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback;
+  if (typeof error === "string" && error.trim()) return error;
+  if (error instanceof Error && error.message) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === "string" && message.trim()) return message;
+  }
+  return fallback;
 }

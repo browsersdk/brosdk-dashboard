@@ -13,7 +13,7 @@
 | 6. 完整菜单 | P1 | 已完成 | 指纹、代理、内核、操作、设置菜单与 Manager API 已补齐 |
 | 7. 打包发布 | P1 | 已完成 | Windows 便携包、Tauri 资源、图标、WebView2、签名准备、升级策略 |
 | 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
-| 9. AI Agent | P2 | 已完成 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、持久化幂等、DLL MCP 只读 adapter |
+| 9. AI Agent | P2 | 已完成 | DeepSeek/OpenAI 兼容 Chat、受控 Agent、持久化幂等；MCP 能力在阶段 20 扩展 |
 | 10. 环境创建交互收敛 | P0 | 已完成 | 创建环境只要求选择代理和内核版本，真实 DLL 创建/删除及镜像对账通过 |
 | 11. 远端事实源与 MCP 双层路由 | P0 | 已完成 | 环境配置以 SDK 服务端为准，本地仅保留可丢弃缓存；DLL 全局与单环境 MCP 已接通并通过真实验收 |
 | 12. 首次初始化与环境工作台 | P0 | 已完成 | API Key 安全初始化、环境详情、远端指纹、运维动作和真实生命周期 E2E 完成 |
@@ -23,6 +23,8 @@
 | 16. AI 配置与环境上下文 | P0 | 已完成 | Dashboard 安全配置 AI Provider，并向用户和模型提供边界明确的环境运行摘要 |
 | 17. CDP 运行态多源回填 | P0 | 已完成 | callback/getEnvInfo/BrowserInfo 三路回填，端口 0 保持内部控制通道 |
 | 18. Windows 安装交付闭环 | P0 | 已完成 | NSIS、便携包、可选 MSI、哈希清单、安装版 Dashboard E2E 与静默卸载 |
+| 19. AI 会话与 Agent 执行可靠性 | P0 | 已完成 | 会话历史、新建/清空、envId 目标校正、真实状态前置条件和接口覆盖审计 |
+| 20. 多环境 Agent 与完整单环境 MCP | P0 | 已完成 | 可选 envId 路由、运行时全工具目录、会话级自动执行和双环境 Agent/MCP E2E |
 
 ## 2. 阶段 0：项目骨架
 
@@ -450,7 +452,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 ## 17. 当前状态
 
-阶段 0-18 已完成。Dashboard 已形成以 envId 为唯一主键的多环境工作台、受控 AI/MCP 能力和经过真实安装 E2E 的 Windows 交付链路；环境配置仍以 SDK 服务端为事实来源，本地只保存可删除的脱敏缓存和运行态。
+阶段 0-20 已完成。Dashboard 已形成以 envId 为唯一主键的多环境工作台、具备会话历史和手动/自动执行语义的受控 AI、按可选 envId 路由的 DLL MCP 能力，以及经过真实安装 E2E 的 Windows 交付链路；环境配置仍以 SDK 服务端为事实来源，本地只保存可删除的脱敏缓存和运行态。接口覆盖不再用单一“完成”描述，详见 [interface-coverage.md](interface-coverage.md)。
 
 阶段 14 envId 身份子阶段完成（2026-07-26）：
 
@@ -704,3 +706,61 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - NSIS 首次启动烟雾测试通过；使用安全提示输入真实测试凭据后，已安装 release 完成初始化、环境 ready、AI 环境上下文、Provider 设置、停止和操作中心验收，随后静默卸载成功。
 - 两个 MSI 均通过无产品注册的 administrative extraction，并包含 Dashboard、`sdk-host.exe` 和 `brosdk.dll`。
 - 当前 DLL 仍返回 `remoteDebuggingPort=0`，安装版 E2E 正确报告 `cdpEndpointObserved=false` 并保留 DLL 内部 CDP/MCP 显示，没有伪造 TCP 地址。
+
+## 22. 阶段 19：AI 会话与 Agent 执行可靠性
+
+目标：把 AI 从一次性请求面板补齐为可追溯会话，并确保用户批准的环境动作使用明确 envId 和 Manager 最新状态，而不是模型猜测的前置条件。
+
+任务：
+
+- 会话与关联环境分离；支持本地历史、新建、切换、清空、删除和页面重载恢复。
+- Chat/Agent 携带有界历史，Manager 拒绝非法角色、空消息和超限输入。
+- 用户文本明确包含一个已同步 envId 时优先绑定该环境；多 envId 单计划 fail closed。
+- Manager 在计划返回 UI 前写入真实 `expectedState` 和 UUID 幂等键，批准时再次校验状态。
+- 显示 Tauri 返回的具体错误，不用“Agent 执行失败”覆盖真实原因。
+- 对照服务端 browser API、DLL C API、全局/单环境 MCP 建立产品覆盖矩阵并纠正 capability 误报。
+
+验收：
+
+- 精确复现 `启动环境 2044366881367789568`：即使旧关联环境为另一个 ready 环境，计划仍绑定目标 envId 和其当前 stopped 状态。
+- 批准后必须创建 `environment.start` operation；DLL accepted 后继续等待 callback/browser info 才能报告 ready。
+- 第二轮请求带上第一轮 user/assistant 历史；重载后历史存在，清空和删除立即生效。
+- 未绑定的 cookie/security callbacks 与 `sdk_token_update` 不再出现在 capability。
+- 全量 Dashboard、Rust、Playwright、production build 和真实桌面 Agent 生命周期通过。
+
+实现结果（2026-07-26）：
+
+- AI 页面已将会话历史与关联环境拆开；会话在本机支持新建、切换、清空、删除和重载恢复，Chat/Agent 第二轮请求携带有界历史。
+- Manager 已覆盖精确指令 `启动环境 2044366881367789568`：文本 envId 覆盖旧选择，计划状态从最新镜像写为 `stopped`，幂等键由 Manager 生成；多个已知 envId 的单动作请求 fail closed。
+- Windows Tauri Agent E2E 真实点击生成计划和批准按钮，观察到 operation、目标 ready、`browser-open-success` 和最终 stopped；当前 DLL 继续报告端口 0，未伪造 CDP TCP 地址。
+- Dashboard 46 项、Rust workspace 92 项、Playwright 12 项和 production build 通过；测试结束后无桌面测试进程或 `sdk-host` 残留。
+
+## 23. 阶段 20：多环境 Agent 与完整单环境 MCP
+
+目标：让 Agent 和 MCP 控制台按精确 envId 操作任意 ready 环境，单环境工具能力跟随 DLL 运行时目录，并提供用户显式选择的免逐次批准模式。
+
+任务：
+
+- MCP client 增加统一 `Option<envId>` 入口，使用 `/sdk/v1/mcp?envId=...` 路由单环境，保留原 global/env Rust 函数兼容调用方。
+- 全局 mutation 继续走 Manager operation；单环境允许当次 DLL `tools/list` 广告的全部工具，参数实施总大小、深度和字符串长度门禁。
+- MCP 页面常用读取工具继续使用结构化控件，其余工具使用高级 JSON 参数区；目录和数量不得写死。
+- Agent 新增 `mcp.call`，Manager 继续重写 envId、expectedState 和幂等键，并在执行时验证环境 ready 与工具仍被广告。
+- AI 会话新增“每次批准/自动执行”分段选择，默认每次批准；自动模式在计划返回后立即执行，但不跳过 Manager 状态和 reservation 校验。
+- 扩展双环境真实 E2E，自动使用当前用户安全存储中的加密 SDK/AI 凭据，覆盖 Agent 生命周期、MCP 调用和补偿清理。
+
+验收：
+
+- `mcp-client` 单元测试确认无 envId 为全局 URL，有 envId 时查询参数正确编码，并完成完整 Streamable HTTP session。
+- 真实 ready 环境的 `allowedTools` 与 `advertisedTools` 数量一致，当前 DLL 每环境实测至少 18 个；未广告工具仍由 client fail closed。
+- Agent 在错误关联环境下仍根据文本精确 envId 启停目标；手动与自动模式分别覆盖，失败计划不可复用同一批准按钮。
+- Agent 自己规划并执行 `mcp.call -> tabs(list)`，operation 绑定正确 envId。
+- 两个临时环境最终 stopped、本地清理、服务端删除，测试前后账号环境总数一致。
+- Dashboard 组件、桌面/移动 Playwright、Rust、production build 和敏感信息扫描通过。
+
+实现结果（2026-07-26）：
+
+- MCP transport 已统一为可选 envId；查询别名在真实 DLL 上完成 discovery 和 call。全局保持 9 个读取策略，ready 单环境目录完全跟随 `tools/list`，当前发现 18/18。
+- MCP 控制台显示动态目录，已知读取工具用表单，其余工具用 64 KiB JSON 参数区；Agent 支持 `mcp.call`，旧 `mcp.read` 保留严格读取兼容。
+- 每个 AI 会话独立持久化执行方式，自动模式直接执行新计划；首次尝试后计划按钮锁定，防止状态不确定时重放幂等键。
+- 真实 E2E 创建两个临时环境，Agent 手动/自动启停、显式 envId 覆盖错误上下文、Agent MCP tabs 调用、指纹详情和 2/2 清理均通过，环境数 1 -> 1。
+- Dashboard 49 项组件测试、Playwright 14 项、Rust workspace 93 项、check 与 production build 通过；桌面和 390x844 截图无重叠或横向溢出。

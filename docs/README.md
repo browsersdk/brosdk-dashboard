@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-26，阶段 0-18 已完成：
+截至 2026-07-26，阶段 0-20 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-18 的仓库内规划已全部实施并通过当前平台验收。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/环境上下文、CDP 运行态回填和 Windows 安装交付已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
+[roadmap.md](roadmap.md) 中阶段 0-20 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/会话与关联环境、Agent 手动/自动执行、DLL MCP 全单环境工具路由、CDP 运行态回填和 Windows 安装交付已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -81,7 +81,7 @@ brosdk-dashboard/
 
 阶段 13 多环境工作流已完成。环境表支持最多 20 个多选、全选当前结果和按状态拆分的启动/停止；Manager 为每个环境编排独立 operation/generation，不复用一个 batch callback。stopped 环境只能修改名称和序号，Manager 校验 Unicode/UTF-8 长度、`code=200` 和服务端回显后刷新列表与详情；旧版 `getEnvInfo` 返回空序号时，只能用 SDK 服务端分页或已确认更新响应补全缓存，不能从表单乐观覆盖。指纹页提供详情/对比模式，最多选择 4 个服务端环境，按固定脱敏字段显示相同、不同或未知。服务端没有环境分组/标签契约，因此不新增本地覆盖，也不把 customerId 误用为分组。
 
-阶段 13 真实双环境验收也已完成：`npm run e2e:multi-environment` 使用隐藏 API Key 和唯一临时 Manager 数据目录，创建两个临时环境，分别更新元数据，再通过批量入口生成两组独立启停 operation；两个环境均到达 callback ready、刷新各自远端指纹详情、停止、清理本地数据并删除服务端记录。测试前后账号环境数均为 1，成功报告只包含数量和布尔值；异常路径会先对账运行态，再补偿停止、清理和删除。Dashboard 28 项、Rust workspace 80 项测试及 Clippy、production build 全部通过。
+阶段 13 原始双环境验收完成了批量启停、远端元数据和指纹链路；阶段 20 已将同一 `npm run e2e:multi-environment` runner 升级为从平台安全存储复制加密凭据，并以 Agent 手动/自动模式完成两组独立启停和单环境 MCP 调用。两个环境均到达 callback ready、刷新各自远端指纹详情、停止、清理本地数据并删除服务端记录；测试前后账号环境数均为 1，报告只包含数量和布尔值，异常路径会补偿停止、清理和删除。
 
 阶段 14 Dashboard 身份验收已完成：`envId` 是环境、详情、指纹列、批量选择、代理绑定和 MCP 单环境选择的唯一关联键，环境名称允许重复；snapshot 对空/重复 envId、重复详情绑定和悬空详情绑定 fail closed。`npm run e2e:dashboard` 在 1440x900 与 390x844 下执行 8 项同名环境和只读预览 Playwright 流程；`npm run e2e:dashboard:desktop` 另外通过真实 Tauri 环境表按钮完成启动/ready/停止/stopped。真实双环境 runner 也显式断言两个临时 envId 非空且唯一。最终 Dashboard 33 项、Playwright 8 项、Rust workspace 81 项测试及 Clippy、production build 全部通过；真实 E2E 前后环境数均为 1，清理 2/2，退出后无临时目录或 `sdk-host` 残留。
 
@@ -93,15 +93,19 @@ brosdk-dashboard/
 
 阶段 18 Windows 安装交付已完成：`npm run release:windows` 默认生成 NSIS 和便携 ZIP，`npm run release:windows:msi` 提供 `zh-CN/en-US` 双语可选 MSI；官方 Tauri NSIS/WiX 工具由脚本按固定哈希准备到用户级缓存。`npm run release:verify` 校验统一清单、ZIP 内容、版本、大小、SHA-256 和签名状态，两个 MSI 还通过 administrative extraction 与资源检查。真实 NSIS 测试完成临时静默安装、首次 API Key 页面、使用安全输入凭据的完整 Dashboard 环境启停/AI/操作中心流程，以及无阻塞静默卸载；当前内部产物未签名，只用于测试，正式交付必须注入代码签名证书并启用签名强制校验。
 
+阶段 19 AI 会话与批准执行修复已完成：AI 工作台提供本地会话历史、新建、切换、清空和删除，“关联环境”不再与会话混为一谈。Chat/Agent 请求携带有界历史；用户文本中明确出现的已同步 envId 优先于旧选择，Manager 根据最新镜像写入计划的真实 `expectedState` 和幂等键。批准时仍做二次状态校验，Tauri 字符串错误会显示具体原因。真实 Tauri 已用目标 `2044366881367789568` 完成 Agent 计划、批准、operation、ready 和恢复 stopped 验收；Dashboard 46 项、Rust 92 项、Playwright 12 项及 production build 通过。服务端、DLL C API 与 MCP 的覆盖矩阵见 [interface-coverage.md](interface-coverage.md)，项目不再把未接 Cookie callback、token update 等能力误报为已完成。
+
+阶段 20 多环境 Agent 与完整单环境 MCP 已完成：MCP client 统一使用 `/sdk/v1/mcp`，可选 `envId` 通过 `?envId=` 路由到对应环境；全局仍只开放 9 个管理读取，ready 单环境则以 DLL 运行时 `tools/list` 为准开放全部广告工具，不写死 17/18。MCP 页面为常用读取保留结构化表单，其余工具提供 64 KiB 上限的 JSON 参数入口；Agent 新增 `mcp.call`，并允许每个会话选择默认“每次批准”或显式“自动执行”。真实隔离 E2E 创建两个临时环境，覆盖 Agent 手动/自动启停、错误关联环境下的精确 envId 解析、每环境 18 个工具发现、Agent 自动 `mcp.call -> tabs(list)`、指纹刷新及 2/2 清理，测试前后账号环境数均为 1。Dashboard 49 项组件测试、Playwright 14 项、Rust workspace 93 项、production build 全部通过。
+
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 
 Manager/Runtime Host 创建链路、Dashboard 双字段交互和真实创建/删除验收均已完成：FFI 已加载 `sdk_env_create`/`sdk_env_destroy`，Runtime Host 继续统一脱敏，Manager 校验本地内核、后端业务 `code=200`、创建结果 `data.envId`，并把结果写入本地镜像和 operation。环境页的创建带只显示代理与内核版本，默认本机网络并预选最新本地内核；无可用内核时跳转内核页。`getUserSig` 请求固定使用 `role=user`。真实 DLL 验收使用 Chrome 134 和本机网络完成创建、镜像确认、删除及 `env_page` 对账，测试环境已清理。
 
 阶段 11 的缓存边界：API Key 只用于换取 userSig，环境列表和详情仍由 DLL 向 SDK 服务端读取；SQLite 环境数据不是可独立编辑的本地事实，只是完整分页成功后的可丢弃缓存。Manager 首次 snapshot 在 API Key 可用时自动刷新，按 `page/pageSize` 拉取完整集合，全部成功才原子替换；失败保留旧值并标记 stale。旧 `local_label/tags_json` 会在迁移时清空，Dashboard 只显示服务端名称、envId 和缓存状态；本机 generation、reqId、CDP 和 ready 状态继续作为运行态叠加。DLL 源码审计确认全局 `/sdk/v1/mcp` 已能管理和定位环境，单环境 `/sdk/v1/mcp/env/{envId}` 已包含完整页面工具。
 
-阶段 11 的 MCP 边界：Manager 现在按 `global`/`environment` 显式路由，复用严格的 `initialize -> initialized -> tools/list -> tools/call -> DELETE` 生命周期，并把工具发现写入 operation。全局仅放行 9 个健康、环境查询、浏览器状态和任务查询工具；单环境仅放行 `browser_state`、`tabs`、`snapshot`、`diff`、`read`、`grep`、`screenshot` 的受限只读参数。环境创建/更新/删除、浏览器启停、导航、脚本执行、上传下载等 mutation 不能从该通道直通。真实 DLL smoke 已发现 16 个全局工具并验证 `sdk.health`、`env.list`、`mcp.endpoint`，协议为 `2025-11-25`。
+当前 MCP 边界：Manager 按 `global`/`environment` 显式路由，复用严格的 `initialize -> initialized -> tools/list -> tools/call -> DELETE` 生命周期，并把工具发现与调用写入 operation。全局仅放行 9 个健康、环境查询、浏览器状态和任务查询工具；环境创建、更新、删除和浏览器启停继续走 Manager 状态机。ready 单环境以 DLL 当次 `tools/list` 为事实来源，运行时广告工具均可调用；参数必须是有界 JSON object，响应继续脱敏并降低 URL 精度。真实 DLL 当前发现 16 个全局工具和 18 个单环境工具，协议为 `2025-11-25`，数量不作为产品常量。
 
-Dashboard MCP 页面使用“全局/单环境”作用域、ready 环境选择、动态工具状态和按工具生成的最小表单，不提供任意 JSON 透传。真实单环境 E2E 发现 DLL 广告 18 个工具、Manager 放行 7 个，并完成 `tabs(list)` 与 `read(page)`；1440x900 和 390x844 交互/视觉验收无应用控制台错误或 MCP 控件横向溢出。
+Dashboard MCP 页面使用“全局/单环境”作用域、ready 环境选择和动态工具状态；常用读取工具使用最小表单，其余 DLL 工具使用受大小限制的 JSON 参数区。真实双环境 E2E 在每个环境发现并放行 18 个工具，并由 Agent 完成 `mcp.call -> tabs(list)`；1440x900 和 390x844 交互/视觉验收无应用控制台错误、重叠或横向溢出。
 
 阶段 5 已用真实账号完成 `getUserSig(role=user) -> init -> env_page -> browser_open -> browser-open-success -> Runtime.evaluate -> browser_close -> browser-close-success`。DLL 自带 MCP capability 已验证可用；只有设置 `BROSDK_EMBEDDED_PORT` 时才在 runtime host 初始化中启用端口。
 
@@ -109,6 +113,6 @@ Dashboard MCP 页面使用“全局/单环境”作用域、ready 环境选择�
 
 阶段 8 已完成平台路径、UDS、系统 keyring 和 capability 边界；Windows、Linux x64 和 macOS x64 的核心平台 crates 均通过编译检查。仓库当前仍只携带 Windows x64 SDK 动态库，因此其他平台会明确显示 unavailable，直到对应库加入 `libs/<platform>_<arch>`。
 
-阶段 9 已完成 DeepSeek/OpenAI 兼容 AI 与 DLL MCP 只读 adapter：使用 `BROSDK_AI_API_KEY`、`BROSDK_AI_BASE_URL`、`BROSDK_AI_MODEL`，默认模型为 `deepseek-v4-flash`。Chat 为只读，Agent 需要显式批准并通过 Manager 的 action、状态和持久化幂等校验；MCP 只允许 ready 环境执行 `browser_state(get)` 和 `tabs(list/current)`，所有调用都有 operation。
+阶段 9 建立的 DeepSeek/OpenAI 兼容 AI 与 DLL MCP adapter 已在阶段 20 扩展：Chat 仍为只读；Agent 默认逐次批准，也可按会话显式选择自动执行，两种模式都必须通过 Manager 的 action、状态和持久化幂等校验。MCP 对 ready 环境使用运行时工具目录，所有发现和调用都有 operation。
 
-2026-07-25 最终验收已完成：DeepSeek smoke、`getUserSig(role=user) -> init -> env_page`、runtime/Manager smoke、环境 ready、页面级 CDP、DLL MCP `tabs(list)`、手动关闭对账、workspace 测试/Clippy、Dashboard production build，以及 1440x900 与 390x844 的 AI/MCP 页面交互和无横向溢出检查均通过。测试凭据未写入仓库。
+2026-07-26 最终验收已完成：DeepSeek smoke、`getUserSig(role=user) -> init -> env_page`、runtime/Manager smoke、环境 ready、页面级 CDP、DLL MCP `tabs(list)`、手动关闭对账、workspace 测试/Clippy、Dashboard production build，以及 1440x900 与 390x844 的 AI/MCP 页面交互和无横向溢出检查均通过。测试凭据未写入仓库。

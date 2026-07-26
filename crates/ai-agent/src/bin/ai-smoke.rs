@@ -7,6 +7,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .chat(
             "Reply with a short health-check sentence. Do not call tools or request secrets.",
             &serde_json::json!({ "test": "ai-smoke", "readOnly": true }),
+            &[],
         )
         .await?;
     println!(

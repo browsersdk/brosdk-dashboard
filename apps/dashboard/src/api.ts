@@ -4,6 +4,7 @@ import type {
   AiAgentExecution,
   AiAgentPlan,
   AiChatResponse,
+  AiConversationTurn,
   AiProviderConfigInput,
   AiProviderStatus,
   ApiKeyInitializationResult,
@@ -195,16 +196,29 @@ export async function createDiagnosticBundle(outputPath: string) {
   return invoke("manager_create_diagnostic_bundle", { outputPath });
 }
 
-export async function aiChat(prompt: string, contextEnvId: string | null): Promise<AiChatResponse> {
-  return invoke<AiChatResponse>("manager_ai_chat", { request: { prompt, contextEnvId } });
+export async function aiChat(
+  prompt: string,
+  contextEnvId: string | null,
+  history: AiConversationTurn[] = [],
+): Promise<AiChatResponse> {
+  return invoke<AiChatResponse>("manager_ai_chat", { request: { prompt, contextEnvId, history } });
 }
 
-export async function aiPlanAgent(prompt: string, contextEnvId: string | null): Promise<AiAgentPlan> {
-  return invoke<AiAgentPlan>("manager_ai_plan_agent", { request: { prompt, contextEnvId } });
+export async function aiPlanAgent(
+  prompt: string,
+  contextEnvId: string | null,
+  history: AiConversationTurn[] = [],
+): Promise<AiAgentPlan> {
+  return invoke<AiAgentPlan>("manager_ai_plan_agent", { request: { prompt, contextEnvId, history } });
 }
 
-export async function aiExecuteAgent(plan: AiAgentPlan): Promise<AiAgentExecution> {
-  return invoke<AiAgentExecution>("manager_ai_execute_agent", { request: { plan, approved: true } });
+export async function aiExecuteAgent(
+  plan: AiAgentPlan,
+  automatic = false,
+): Promise<AiAgentExecution> {
+  return invoke<AiAgentExecution>("manager_ai_execute_agent", {
+    request: { plan, approved: true, automatic },
+  });
 }
 
 export async function callEmbeddedMcp(
@@ -360,7 +374,7 @@ function demoSnapshot(): DashboardSnapshot {
       embeddedWebApi: true,
       embeddedMcp: true,
       supportsInitPort: true,
-      callbacks: ["result", "log", "cookies-storage", "security-decision"],
+      callbacks: ["result", "log"],
       syncCalls: ["sdk_get_user_sig", "sdk_init", "sdk_info", "sdk_env_create", "sdk_env_update", "sdk_env_destroy", "sdk_env_page", "sdk_env_getinfo"],
       asyncCalls: ["sdk_browser_open", "sdk_browser_close"],
       cdpCalls: ["sdk_browser_command", "sdk_browser_snapshot"],
@@ -388,11 +402,22 @@ function demoSnapshot(): DashboardSnapshot {
         "global:mcp.endpoint",
         "environment:browser_state",
         "environment:tabs",
+        "environment:bookmarks",
+        "environment:history",
+        "environment:tab_groups",
+        "environment:navigate",
         "environment:snapshot",
         "environment:diff",
+        "environment:act",
+        "environment:download",
+        "environment:upload",
         "environment:read",
         "environment:grep",
         "environment:screenshot",
+        "environment:pdf",
+        "environment:wait",
+        "environment:windows",
+        "environment:evaluate",
       ],
       managerRoute: "Manager routes envId and operation state; DLL embedded MCP remains a capability.",
       endpointHint: "not enabled",

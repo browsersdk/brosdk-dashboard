@@ -1,4 +1,4 @@
-use domain::{AiAgentPlan, AiChatResponse};
+use domain::{AiAgentPlan, AiChatResponse, AiConversationMessage};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
@@ -106,11 +106,17 @@ impl AiClient {
         }
     }
 
-    pub async fn chat(&self, prompt: &str, context: &Value) -> Result<AiChatResponse, AiError> {
+    pub async fn chat(
+        &self,
+        prompt: &str,
+        context: &Value,
+        history: &[AiConversationMessage],
+    ) -> Result<AiChatResponse, AiError> {
         let context_text = serde_json::to_string(context).unwrap_or_else(|_| "{}".into());
-        let system = "You are the read-only BroSDK Dashboard assistant. Use only the supplied redacted snapshot. Never claim an accepted browser start is ready. Do not propose hidden write actions. Reply concisely in the user's language.";
-        let user = format!("Dashboard snapshot:\n{context_text}\n\nUser question:\n{prompt}");
-        let answer = self.complete(system, &user, 0.2).await?;
+        let system = format!(
+            "You are the read-only BroSDK Dashboard assistant. Use only the supplied redacted snapshot. Never claim an accepted browser start is ready. Do not propose hidden write actions. Reply concisely in the user's language.\n\nCurrent Dashboard snapshot:\n{context_text}"
+        );
+        let answer = self.complete(&system, prompt, history, 0.2).await?;
         Ok(AiChatResponse {
             answer,
             model: self.model.clone(),
@@ -118,36 +124,47 @@ impl AiClient {
         })
     }
 
-    pub async fn plan(&self, prompt: &str, context: &Value) -> Result<AiAgentPlan, AiError> {
+    pub async fn plan(
+        &self,
+        prompt: &str,
+        context: &Value,
+        history: &[AiConversationMessage],
+    ) -> Result<AiAgentPlan, AiError> {
         let context_text = serde_json::to_string(context).unwrap_or_else(|_| "{}".into());
-        let system = "You plan one controlled BroSDK Dashboard action. Return JSON only with keys: summary, action, envId, expectedState, idempotencyKey, arguments. Allowed action values: none, environment.start, environment.stop, environment.sync, runtime.reconcile, proxy.diagnose, environment.diagnose, mcp.read. mcp.read requires envId and arguments with tool=browser_state or tabs; browser_state only allows action=get, tabs only allows action=list or current. envId is required for environment actions and mcp.read. expectedState must match the supplied snapshot. Never say accepted means ready.";
-        let user = format!("Dashboard snapshot:\n{context_text}\n\nUser request:\n{prompt}");
-        let content = self.complete(system, &user, 0.0).await?;
+        let system = format!(
+            "You plan one controlled BroSDK Dashboard action. Return JSON only with keys: summary, action, envId, arguments. Allowed action values: none, environment.start, environment.stop, environment.sync, runtime.reconcile, proxy.diagnose, environment.diagnose, mcp.read, mcp.call. mcp.read is the compatibility action for bounded reads. mcp.call invokes one DLL-advertised tool and requires arguments shaped as {{\"tool\":\"tool_name\",\"arguments\":{{...}}}}. Set envId for a single-environment browser tool; omit envId only for a global management read. Current normal single-environment tools include browser_state, tabs, bookmarks, history, tab_groups, navigate, snapshot, diff, act, download, upload, read, grep, screenshot, pdf, wait, windows, and evaluate, but runtime tools/list is authoritative. envId is required for environment actions and single-environment MCP. The Manager resolves the final target, expected state, and idempotency key from current local state. Never say accepted means ready.\n\nCurrent Dashboard snapshot:\n{context_text}"
+        );
+        let content = self.complete(&system, prompt, history, 0.0).await?;
         parse_plan(&content)
     }
 
     async fn complete(
         &self,
         system: &str,
-        user: &str,
+        prompt: &str,
+        history: &[AiConversationMessage],
         temperature: f32,
     ) -> Result<String, AiError> {
+        let mut messages = Vec::with_capacity(history.len() + 2);
+        messages.push(Message {
+            role: "system",
+            content: system,
+        });
+        messages.extend(history.iter().map(|message| Message {
+            role: message.role.as_str(),
+            content: message.content.as_str(),
+        }));
+        messages.push(Message {
+            role: "user",
+            content: prompt,
+        });
         let response = self
             .http
             .post(format!("{}/chat/completions", self.base_url))
             .bearer_auth(&self.api_key)
             .json(&ChatCompletionRequest {
                 model: &self.model,
-                messages: vec![
-                    Message {
-                        role: "system",
-                        content: system,
-                    },
-                    Message {
-                        role: "user",
-                        content: user,
-                    },
-                ],
+                messages,
                 temperature,
                 stream: false,
             })

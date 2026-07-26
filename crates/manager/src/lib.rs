@@ -11,9 +11,9 @@ use std::{
 
 use domain::{
     AiAgentExecuteRequest, AiAgentExecution, AiAgentPlan, AiAgentPlanRequest, AiChatRequest,
-    AiChatResponse, AiProviderConfigInput, AiProviderStatus, ApiKeyInitializationResult,
-    ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot, EnvironmentBatchAction,
-    EnvironmentBatchInput, EnvironmentBatchResult, EnvironmentCreateInput,
+    AiChatResponse, AiConversationMessage, AiProviderConfigInput, AiProviderStatus,
+    ApiKeyInitializationResult, ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot,
+    EnvironmentBatchAction, EnvironmentBatchInput, EnvironmentBatchResult, EnvironmentCreateInput,
     EnvironmentMetadataUpdateInput, EnvironmentRecord, FingerprintProfile, FingerprintProfileInput,
     HostCommand, KernelInstallInput, KernelRecord, ManagerEvent, ManagerSettings, McpPanel,
     McpToolCallExecution, McpToolCallRequest, McpToolDiscovery, McpToolDiscoveryRequest,
@@ -42,6 +42,12 @@ const API_KEY_SECRET_ID: &str = "sdk-api-key";
 const API_KEY_SECRET_REFERENCE: &str = "sdk-api-key.bin";
 const AI_API_KEY_SECRET_ID: &str = "ai-api-key";
 const AI_API_KEY_SECRET_REFERENCE: &str = "ai-api-key.bin";
+const MAX_AI_HISTORY_MESSAGES: usize = 40;
+const MAX_AI_HISTORY_MESSAGE_BYTES: usize = 16 * 1024;
+const MAX_AI_HISTORY_BYTES: usize = 128 * 1024;
+const MAX_MCP_ARGUMENT_BYTES: usize = 64 * 1024;
+const MAX_MCP_ARGUMENT_DEPTH: usize = 16;
+const MAX_MCP_STRING_CHARS: usize = 16 * 1024;
 const GLOBAL_MCP_READ_TOOLS: &[&str] = &[
     "sdk.health",
     "sdk.info",
@@ -426,11 +432,6 @@ impl Manager {
                 allowed_tools: GLOBAL_MCP_READ_TOOLS
                     .iter()
                     .map(|tool| format!("global:{tool}"))
-                    .chain(
-                        ENVIRONMENT_MCP_READ_TOOLS
-                            .iter()
-                            .map(|tool| format!("environment:{tool}")),
-                    )
                     .collect(),
                 manager_route: "Manager owns the runtime host process, envId routing and operation state; only sdk-host can enable the DLL embedded MCP port.".into(),
                 endpoint_hint: active_mcp_port
@@ -441,7 +442,7 @@ impl Manager {
                     "Dashboard communicates with Manager through Tauri commands.".into(),
                     "Manager communicates with sdk-host through a supervised named pipe/UDS.".into(),
                     "Global MCP is limited to management reads; lifecycle mutations continue through Manager operations.".into(),
-                    "Environment MCP is limited to bounded browser reads for ready environments.".into(),
+                    "Environment MCP tools are discovered dynamically from the DLL for each ready envId.".into(),
                     "Unexpected host exit becomes degraded state and never exits the desktop UI.".into(),
                 ],
             },
@@ -722,8 +723,12 @@ impl Manager {
 
     pub async fn ai_chat(&self, request: AiChatRequest) -> Result<AiChatResponse, ManagerError> {
         let prompt = require_prompt(&request.prompt)?;
+        validate_ai_history(&request.history)?;
         let context = self.ai_context(request.context_env_id.as_deref()).await?;
-        Ok(self.ai_client()?.chat(prompt, &context).await?)
+        Ok(self
+            .ai_client()?
+            .chat(prompt, &context, &request.history)
+            .await?)
     }
 
     pub async fn ai_plan_agent(
@@ -731,8 +736,16 @@ impl Manager {
         request: AiAgentPlanRequest,
     ) -> Result<AiAgentPlan, ManagerError> {
         let prompt = require_prompt(&request.prompt)?;
-        let context = self.ai_context(request.context_env_id.as_deref()).await?;
-        let plan = self.ai_client()?.plan(prompt, &context).await?;
+        validate_ai_history(&request.history)?;
+        let environments = self.inner.store.list_environments()?;
+        let target_env_id =
+            resolve_agent_target(prompt, request.context_env_id.as_deref(), &environments)?;
+        let context = self.ai_context(target_env_id.as_deref()).await?;
+        let mut plan = self
+            .ai_client()?
+            .plan(prompt, &context, &request.history)
+            .await?;
+        prepare_agent_plan(&mut plan, target_env_id.as_deref(), &environments)?;
         validate_agent_plan(&plan)?;
         Ok(plan)
     }
@@ -782,6 +795,7 @@ impl Manager {
             &json!({
                 "action": request.plan.action,
                 "idempotencyKey": request.plan.idempotency_key,
+                "approvalMode": if request.automatic { "automatic" } else { "manual" },
             }),
         )?;
 
@@ -873,6 +887,7 @@ impl Manager {
                     .get("arguments")
                     .cloned()
                     .unwrap_or_else(|| json!({}));
+                let arguments = validate_environment_mcp_read_tool_call(tool, arguments)?;
                 let result = self
                     .call_embedded_mcp(McpToolCallRequest {
                         scope: McpToolScope::Environment,
@@ -886,6 +901,44 @@ impl Manager {
                     operation: Some(result.operation),
                     response: Some(result.response),
                     status_semantics: "The read-only MCP operation completed; no browser lifecycle state was inferred from this result.".into(),
+                    replayed: false,
+                }
+            }
+            "mcp.call" => {
+                let tool = request
+                    .plan
+                    .arguments
+                    .get("tool")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        ManagerError::InvalidAgentPlan(
+                            "mcp.call requires arguments.tool".into(),
+                        )
+                    })?;
+                let arguments = request
+                    .plan
+                    .arguments
+                    .get("arguments")
+                    .cloned()
+                    .unwrap_or_else(|| json!({}));
+                let scope = if request.plan.env_id.is_some() {
+                    McpToolScope::Environment
+                } else {
+                    McpToolScope::Global
+                };
+                let result = self
+                    .call_embedded_mcp(McpToolCallRequest {
+                        scope,
+                        env_id: request.plan.env_id.clone(),
+                        tool: tool.into(),
+                        arguments,
+                    })
+                    .await?;
+                AiAgentExecution {
+                    action: request.plan.action.clone(),
+                    operation: Some(result.operation),
+                    response: Some(result.response),
+                    status_semantics: "The MCP tool completed for the selected scope; runtime tools/list was used as the availability authority.".into(),
                     replayed: false,
                 }
             }
@@ -3485,6 +3538,145 @@ fn require_prompt(prompt: &str) -> Result<&str, ManagerError> {
     Ok(prompt)
 }
 
+fn validate_ai_history(history: &[AiConversationMessage]) -> Result<(), ManagerError> {
+    if history.len() > MAX_AI_HISTORY_MESSAGES {
+        return Err(ManagerError::InvalidAgentPlan(format!(
+            "conversation history exceeds {MAX_AI_HISTORY_MESSAGES} messages"
+        )));
+    }
+    let mut total_bytes = 0usize;
+    for message in history {
+        if !matches!(message.role.as_str(), "user" | "assistant") {
+            return Err(ManagerError::InvalidAgentPlan(
+                "conversation history role must be user or assistant".into(),
+            ));
+        }
+        let content = message.content.trim();
+        if content.is_empty() {
+            return Err(ManagerError::InvalidAgentPlan(
+                "conversation history content must not be empty".into(),
+            ));
+        }
+        let bytes = content.len();
+        if bytes > MAX_AI_HISTORY_MESSAGE_BYTES {
+            return Err(ManagerError::InvalidAgentPlan(format!(
+                "conversation message exceeds {MAX_AI_HISTORY_MESSAGE_BYTES} bytes"
+            )));
+        }
+        total_bytes = total_bytes.saturating_add(bytes);
+    }
+    if total_bytes > MAX_AI_HISTORY_BYTES {
+        return Err(ManagerError::InvalidAgentPlan(format!(
+            "conversation history exceeds {MAX_AI_HISTORY_BYTES} bytes"
+        )));
+    }
+    Ok(())
+}
+
+fn resolve_agent_target(
+    prompt: &str,
+    selected_env_id: Option<&str>,
+    environments: &[EnvironmentRecord],
+) -> Result<Option<String>, ManagerError> {
+    let mentioned = environments
+        .iter()
+        .filter(|environment| prompt_mentions_env_id(prompt, &environment.env_id))
+        .map(|environment| environment.env_id.clone())
+        .collect::<Vec<_>>();
+    if mentioned.len() > 1 {
+        return Err(ManagerError::InvalidAgentPlan(
+            "one Agent plan can target only one environment".into(),
+        ));
+    }
+    if let Some(env_id) = mentioned.into_iter().next() {
+        return Ok(Some(env_id));
+    }
+    let Some(env_id) = selected_env_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    if !environments
+        .iter()
+        .any(|environment| environment.env_id == env_id)
+    {
+        return Err(ManagerError::EnvironmentNotFound);
+    }
+    Ok(Some(env_id.into()))
+}
+
+fn prompt_mentions_env_id(prompt: &str, env_id: &str) -> bool {
+    prompt.match_indices(env_id).any(|(start, _)| {
+        let before = prompt[..start].chars().next_back();
+        let after = prompt[start + env_id.len()..].chars().next();
+        before.is_none_or(|value| !is_env_id_character(value))
+            && after.is_none_or(|value| !is_env_id_character(value))
+    })
+}
+
+fn is_env_id_character(value: char) -> bool {
+    value.is_ascii_alphanumeric() || matches!(value, '-' | '_')
+}
+
+fn prepare_agent_plan(
+    plan: &mut AiAgentPlan,
+    resolved_env_id: Option<&str>,
+    environments: &[EnvironmentRecord],
+) -> Result<(), ManagerError> {
+    let requested_env_id = resolved_env_id.or_else(|| {
+        plan.env_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    });
+    let environment_bound = matches!(
+        plan.action.as_str(),
+        "environment.start" | "environment.stop" | "environment.diagnose" | "mcp.read"
+    ) || (plan.action == "mcp.call" && requested_env_id.is_some());
+    if environment_bound {
+        let env_id = requested_env_id
+            .ok_or_else(|| ManagerError::InvalidAgentPlan("envId is required".into()))?;
+        let environment = environments
+            .iter()
+            .find(|environment| environment.env_id == env_id)
+            .ok_or(ManagerError::EnvironmentNotFound)?;
+        if plan.action == "environment.start"
+            && !environment_action_state_allowed(EnvironmentBatchAction::Start, &environment.status)
+        {
+            return Err(ManagerError::InvalidEnvironmentTransition {
+                action: "start".into(),
+                state: environment.status.clone(),
+            });
+        }
+        if plan.action == "environment.stop"
+            && !environment_action_state_allowed(EnvironmentBatchAction::Stop, &environment.status)
+        {
+            return Err(ManagerError::InvalidEnvironmentTransition {
+                action: "stop".into(),
+                state: environment.status.clone(),
+            });
+        }
+        if matches!(
+            plan.action.as_str(),
+            "environment.diagnose" | "mcp.read" | "mcp.call"
+        ) && environment.status != "ready"
+        {
+            return Err(ManagerError::AgentStateMismatch {
+                expected: "ready".into(),
+                actual: environment.status.clone(),
+            });
+        }
+        plan.env_id = Some(environment.env_id.clone());
+        plan.expected_state = Some(environment.status.clone());
+    } else {
+        plan.env_id = None;
+        plan.expected_state = None;
+    }
+    plan.idempotency_key = uuid::Uuid::new_v4().to_string();
+    Ok(())
+}
+
 fn allowed_agent_actions() -> &'static [&'static str] {
     &[
         "none",
@@ -3495,6 +3687,7 @@ fn allowed_agent_actions() -> &'static [&'static str] {
         "proxy.diagnose",
         "environment.diagnose",
         "mcp.read",
+        "mcp.call",
     ]
 }
 
@@ -3522,6 +3715,18 @@ fn validate_agent_plan(plan: &AiAgentPlan) -> Result<(), ManagerError> {
         return Err(ManagerError::InvalidAgentPlan(
             "envId is required for mcp.read".into(),
         ));
+    }
+    if matches!(plan.action.as_str(), "mcp.read" | "mcp.call")
+        && plan
+            .arguments
+            .get("tool")
+            .and_then(serde_json::Value::as_str)
+            .is_none_or(str::is_empty)
+    {
+        return Err(ManagerError::InvalidAgentPlan(format!(
+            "{} requires arguments.tool",
+            plan.action
+        )));
     }
     Ok(())
 }
@@ -3623,10 +3828,15 @@ fn validate_global_mcp_tool_call(
     }
 }
 
-fn validate_environment_mcp_tool_call(
+fn validate_environment_mcp_read_tool_call(
     tool: &str,
     arguments: serde_json::Value,
 ) -> Result<serde_json::Value, ManagerError> {
+    if !ENVIRONMENT_MCP_READ_TOOLS.contains(&tool) {
+        return Err(ManagerError::McpToolNotAllowed(format!(
+            "environment:{tool}"
+        )));
+    }
     let object = mcp_argument_object(&arguments)?;
     match tool {
         "browser_state" => {
@@ -3780,6 +3990,55 @@ fn validate_environment_mcp_tool_call(
     }
 }
 
+fn validate_environment_mcp_tool_call(
+    tool: &str,
+    arguments: serde_json::Value,
+) -> Result<serde_json::Value, ManagerError> {
+    if tool.trim().is_empty() || tool.chars().count() > 128 {
+        return Err(ManagerError::InvalidMcpArguments(
+            "tool must be a non-empty name of at most 128 characters".into(),
+        ));
+    }
+    mcp_argument_object(&arguments)?;
+    if serde_json::to_vec(&arguments)?.len() > MAX_MCP_ARGUMENT_BYTES {
+        return Err(ManagerError::InvalidMcpArguments(format!(
+            "arguments exceed {MAX_MCP_ARGUMENT_BYTES} bytes"
+        )));
+    }
+    validate_mcp_argument_value(&arguments, 0)?;
+    Ok(arguments)
+}
+
+fn validate_mcp_argument_value(
+    value: &serde_json::Value,
+    depth: usize,
+) -> Result<(), ManagerError> {
+    if depth > MAX_MCP_ARGUMENT_DEPTH {
+        return Err(ManagerError::InvalidMcpArguments(format!(
+            "arguments exceed {MAX_MCP_ARGUMENT_DEPTH} nesting levels"
+        )));
+    }
+    match value {
+        serde_json::Value::Object(object) => {
+            for child in object.values() {
+                validate_mcp_argument_value(child, depth + 1)?;
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                validate_mcp_argument_value(child, depth + 1)?;
+            }
+        }
+        serde_json::Value::String(value) if value.chars().count() > MAX_MCP_STRING_CHARS => {
+            return Err(ManagerError::InvalidMcpArguments(format!(
+                "argument strings must not exceed {MAX_MCP_STRING_CHARS} characters"
+            )));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn mcp_argument_object(
     arguments: &serde_json::Value,
 ) -> Result<&serde_json::Map<String, serde_json::Value>, ManagerError> {
@@ -3876,7 +4135,7 @@ fn mcp_scope_name(scope: McpToolScope) -> &'static str {
 fn mcp_tool_allowed(scope: McpToolScope, tool: &str) -> bool {
     match scope {
         McpToolScope::Global => GLOBAL_MCP_READ_TOOLS.contains(&tool),
-        McpToolScope::Environment => ENVIRONMENT_MCP_READ_TOOLS.contains(&tool),
+        McpToolScope::Environment => !tool.trim().is_empty(),
     }
 }
 
@@ -4557,18 +4816,130 @@ mod tests {
     }
 
     #[test]
-    fn mcp_policy_allows_bounded_reads_and_rejects_mutations() {
+    fn agent_plan_prefers_explicit_known_env_id_and_uses_current_state() {
+        let environments = vec![
+            environment_record("env-selected", "ready"),
+            environment_record("2044366881367789568", "stopped"),
+        ];
+        let target = resolve_agent_target(
+            "启动环境 2044366881367789568，完成后告诉我状态",
+            Some("env-selected"),
+            &environments,
+        )
+        .expect("target");
+        assert_eq!(target.as_deref(), Some("2044366881367789568"));
+
+        let mut plan = AiAgentPlan {
+            summary: "start".into(),
+            action: "environment.start".into(),
+            env_id: Some("env-selected".into()),
+            expected_state: Some("ready".into()),
+            idempotency_key: "model-generated".into(),
+            arguments: json!({}),
+        };
+        prepare_agent_plan(&mut plan, target.as_deref(), &environments).expect("prepared plan");
+
+        assert_eq!(plan.env_id.as_deref(), Some("2044366881367789568"));
+        assert_eq!(plan.expected_state.as_deref(), Some("stopped"));
+        assert_ne!(plan.idempotency_key, "model-generated");
+        assert!(uuid::Uuid::parse_str(&plan.idempotency_key).is_ok());
+    }
+
+    #[test]
+    fn agent_mcp_call_uses_optional_environment_scope() {
+        let environments = vec![
+            environment_record("env-selected", "stopped"),
+            environment_record("env-target", "ready"),
+        ];
+        let mut environment_plan = AiAgentPlan {
+            summary: "list tabs".into(),
+            action: "mcp.call".into(),
+            env_id: Some("env-selected".into()),
+            expected_state: None,
+            idempotency_key: "model-generated".into(),
+            arguments: json!({ "tool": "tabs", "arguments": { "action": "list" } }),
+        };
+        prepare_agent_plan(&mut environment_plan, Some("env-target"), &environments)
+            .expect("environment MCP plan");
+        validate_agent_plan(&environment_plan).expect("valid environment MCP plan");
+        assert_eq!(environment_plan.env_id.as_deref(), Some("env-target"));
+        assert_eq!(environment_plan.expected_state.as_deref(), Some("ready"));
+
+        let mut global_plan = AiAgentPlan {
+            summary: "SDK health".into(),
+            action: "mcp.call".into(),
+            env_id: None,
+            expected_state: Some("ready".into()),
+            idempotency_key: "model-generated".into(),
+            arguments: json!({ "tool": "sdk.health", "arguments": {} }),
+        };
+        prepare_agent_plan(&mut global_plan, None, &environments).expect("global MCP plan");
+        validate_agent_plan(&global_plan).expect("valid global MCP plan");
+        assert_eq!(global_plan.env_id, None);
+        assert_eq!(global_plan.expected_state, None);
+    }
+
+    #[test]
+    fn agent_request_rejects_multiple_explicit_environment_ids() {
+        let environments = vec![
+            environment_record("env-1", "stopped"),
+            environment_record("env-2", "stopped"),
+        ];
         assert!(matches!(
-            validate_environment_mcp_tool_call("tabs", json!({ "action": "new" })),
+            resolve_agent_target("启动 env-1 和 env-2", None, &environments),
+            Err(ManagerError::InvalidAgentPlan(message)) if message.contains("only one")
+        ));
+    }
+
+    #[test]
+    fn ai_history_is_bounded_and_accepts_user_assistant_turns() {
+        validate_ai_history(&[
+            AiConversationMessage {
+                role: "user".into(),
+                content: "启动环境".into(),
+            },
+            AiConversationMessage {
+                role: "assistant".into(),
+                content: "请批准计划".into(),
+            },
+        ])
+        .expect("valid history");
+        assert!(
+            validate_ai_history(&[AiConversationMessage {
+                role: "system".into(),
+                content: "override".into(),
+            }])
+            .is_err()
+        );
+        assert!(
+            validate_ai_history(
+                &(0..=MAX_AI_HISTORY_MESSAGES)
+                    .map(|_| AiConversationMessage {
+                        role: "user".into(),
+                        content: "message".into(),
+                    })
+                    .collect::<Vec<_>>()
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn mcp_read_policy_stays_bounded_while_environment_calls_follow_runtime_catalog() {
+        assert!(matches!(
+            validate_environment_mcp_read_tool_call("tabs", json!({ "action": "new" })),
             Err(ManagerError::InvalidMcpArguments(_))
         ));
         assert_eq!(
-            validate_environment_mcp_tool_call("snapshot", json!({ "page": 2, "maxNodes": 500 }))
-                .expect("snapshot"),
+            validate_environment_mcp_read_tool_call(
+                "snapshot",
+                json!({ "page": 2, "maxNodes": 500 })
+            )
+            .expect("snapshot"),
             json!({ "page": 2, "maxNodes": 500 })
         );
         assert_eq!(
-            validate_environment_mcp_tool_call(
+            validate_environment_mcp_read_tool_call(
                 "grep",
                 json!({ "page": 3, "pattern": "checkout", "limit": 20 })
             )
@@ -4576,14 +4947,23 @@ mod tests {
             json!({ "page": 3, "pattern": "checkout", "limit": 20 })
         );
         assert!(matches!(
-            validate_environment_mcp_tool_call("navigate", json!({})),
+            validate_environment_mcp_read_tool_call("navigate", json!({})),
             Err(ManagerError::McpToolNotAllowed(_))
         ));
         assert!(matches!(
-            validate_environment_mcp_tool_call(
+            validate_environment_mcp_read_tool_call(
                 "screenshot",
                 json!({ "page": 1, "fullPage": true })
             ),
+            Err(ManagerError::InvalidMcpArguments(_))
+        ));
+        assert_eq!(
+            validate_environment_mcp_tool_call("navigate", json!({ "url": "https://example.com" }))
+                .expect("runtime-advertised call"),
+            json!({ "url": "https://example.com" })
+        );
+        assert!(matches!(
+            validate_environment_mcp_tool_call("navigate", json!("https://example.com")),
             Err(ManagerError::InvalidMcpArguments(_))
         ));
     }
