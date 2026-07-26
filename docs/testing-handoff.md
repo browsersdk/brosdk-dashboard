@@ -314,3 +314,13 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 2026-07-26 指纹对比子阶段结果：详情/对比模式使用同一份服务端脱敏绑定数据，对比最多 4 个环境，只列固定白名单字段并逐行标记相同/不同/未知；缺少详情不会被推断为相同。新增 3 个组件测试后 Dashboard 28 项测试与 production build 通过，覆盖两环境比较、选择上限和所选详情刷新。应用内浏览器用两个预览环境验证桌面及 390x844 DOM，字段分组和状态完整、预览 mutation 禁用、console 无 warning/error；对比表由局部滚动容器承载，浏览器后端未提供 screenshot/element geometry 方法。真实双环境创建、启停和清理已在阶段 13 最终 E2E 完成。
 
 2026-07-26 双环境最终 E2E 结果：新增 `npm run e2e:multi-environment`，使用隐藏 API Key 和唯一临时 Manager 数据目录创建两个环境。两个环境分别完成元数据服务端确认，批量启动和停止各产生两个独立 operation，均到达 callback ready、刷新非空脱敏指纹详情、停止、本地清理和服务端删除；最终 `env_page` 对账前后环境数均为 1，清理为 2/2。报告没有 envId、名称、序号、页面内容或凭据，退出后无残留 `sdk-host` 和临时目录。Dashboard 28 项、Rust workspace 80 项测试、Clippy 与 production build 全部通过，阶段 13 完成。
+
+## 17. 阶段 14 Dashboard envId 与浏览器 E2E
+
+- `envId` 是环境表及详情缓存的唯一主键；名称允许重复。Dashboard snapshot 身份守卫拒绝空/重复环境 envId、重复详情 envId 和悬空详情绑定。
+- 普通环境标签统一显示“名称 · envId”；aria 操作名使用“动作 名称 (envId)”。测试和自动化不能再只按名称定位环境。
+- 可重复浏览器 E2E 命令为 `npm run e2e:dashboard`。它使用系统 Chrome，自动启动严格独占的 `127.0.0.1:1430` Vite 服务，并在结束时关闭服务。
+- E2E 使用 `?preview=workspace&scenario=duplicate-names` 的脱敏同名环境场景，不调用 Tauri 或 DLL mutation；测试 1440x900 和 390x844，覆盖环境表、指纹、MCP 与代理绑定。
+- Playwright 失败产物写入已忽略的 `target/playwright/dashboard`。成功运行不会把 API Key、userSig、真实账号 envId 或页面正文写入仓库。
+
+2026-07-26 Dashboard E2E 子阶段结果：组件测试 33 项、Playwright 6 项全部通过；production build 通过。应用内浏览器完成页面身份、非空 DOM、同名 envId 交互和 console 检查；当前后端没有 screenshot 方法，桌面与移动视觉/溢出由 Playwright 两个项目验证。

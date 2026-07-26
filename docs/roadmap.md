@@ -455,6 +455,13 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 同名预览场景提供两个不同 envId 的 ready 环境；环境行、指纹选择器和对比列带稳定 envId 属性，不以数组位置或名称定位。
 - 新增 5 项身份与同名交互测试；Dashboard 组件测试由 28 项增至 33 项，TypeScript 检查与 production build 通过。组件测试还修正了 MCP 有 ready 环境时仍显示无效空选项的问题。
 
+阶段 14 Dashboard E2E 子阶段完成（2026-07-26）：
+
+- 新增 `npm run e2e:dashboard`，使用项目内 Playwright、系统 Chrome 和严格独占的 `127.0.0.1:1430` Vite 服务；失败截图与 trace 只写入已忽略的 `target/playwright`。
+- 3 条身份流程分别覆盖环境表 envId 搜索/独立多选/详情、指纹两列绑定、MCP 与代理绑定下拉；在 1440x900 和 390x844 两个项目执行，共 6 项测试。
+- 每条测试都校验页面 title/H1、无 Vite overlay、无页面级横向溢出和 console/page error；预览态 SDK mutation 保持禁用。
+- 应用内浏览器复核同名环境多选计数、envId 精确搜索、两列指纹对比和 MCP 两个 envId 选项，console 无 warning/error。当前浏览器后端没有 screenshot 方法，视觉与移动视口证据由 Playwright 项目提供。
+
 阶段 13 批量生命周期子阶段完成（2026-07-26）：
 
 - Domain/Manager/Tauri 新增批量 start/stop 编排，限制 1-20 个唯一 envId，并在任何 SDK 调用前校验所有环境状态。
