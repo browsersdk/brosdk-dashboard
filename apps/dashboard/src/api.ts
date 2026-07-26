@@ -4,6 +4,8 @@ import type {
   AiAgentExecution,
   AiAgentPlan,
   AiChatResponse,
+  AiProviderConfigInput,
+  AiProviderStatus,
   ApiKeyInitializationResult,
   DashboardSnapshot,
   EnvironmentBatchAction,
@@ -41,6 +43,14 @@ export async function configureApiKey(apiKey: string): Promise<ApiKeyInitializat
 
 export async function clearApiKey(): Promise<void> {
   return invoke("manager_clear_api_key");
+}
+
+export async function configureAiProvider(input: AiProviderConfigInput): Promise<AiProviderStatus> {
+  return invoke<AiProviderStatus>("manager_configure_ai_provider", { input });
+}
+
+export async function clearAiApiKey(): Promise<AiProviderStatus> {
+  return invoke<AiProviderStatus>("manager_clear_ai_api_key");
 }
 
 export async function runSmoke(): Promise<SmokeReport> {
@@ -185,12 +195,12 @@ export async function createDiagnosticBundle(outputPath: string) {
   return invoke("manager_create_diagnostic_bundle", { outputPath });
 }
 
-export async function aiChat(prompt: string): Promise<AiChatResponse> {
-  return invoke<AiChatResponse>("manager_ai_chat", { request: { prompt } });
+export async function aiChat(prompt: string, contextEnvId: string | null): Promise<AiChatResponse> {
+  return invoke<AiChatResponse>("manager_ai_chat", { request: { prompt, contextEnvId } });
 }
 
-export async function aiPlanAgent(prompt: string): Promise<AiAgentPlan> {
-  return invoke<AiAgentPlan>("manager_ai_plan_agent", { request: { prompt } });
+export async function aiPlanAgent(prompt: string, contextEnvId: string | null): Promise<AiAgentPlan> {
+  return invoke<AiAgentPlan>("manager_ai_plan_agent", { request: { prompt, contextEnvId } });
 }
 
 export async function aiExecuteAgent(plan: AiAgentPlan): Promise<AiAgentExecution> {
@@ -393,6 +403,9 @@ function demoSnapshot(): DashboardSnapshot {
       baseUrl: "https://api.deepseek.com",
       model: "deepseek-v4-flash",
       apiKeyPresent: false,
+      apiKeySource: "none",
+      baseUrlSource: "default",
+      modelSource: "default",
     },
     environments: [
       {
@@ -533,6 +546,8 @@ function demoSnapshot(): DashboardSnapshot {
       debug: false,
       startupPolicy: "restore-none",
       embeddedMcpPort: null,
+      aiBaseUrl: null,
+      aiModel: null,
     },
     latestEventSequence: 0,
     databasePath: "runtime/data/manager.sqlite3",

@@ -31,9 +31,6 @@ import {
   TerminalSquare,
 } from "lucide-react";
 import {
-  aiChat,
-  aiExecuteAgent,
-  aiPlanAgent,
   batchEnvironmentAction,
   cancelOperation,
   captureEnvironmentDiagnostic,
@@ -68,6 +65,8 @@ import {
   updateSettings,
   updateEnvironmentMetadata,
 } from "./api";
+import { AiPage } from "./features/ai/AiPage";
+import { AiProviderSettings } from "./features/ai/AiProviderSettings";
 import { EnvironmentCreatePanel } from "./features/environments/EnvironmentCreatePanel";
 import { EnvironmentBatchBar } from "./features/environments/EnvironmentBatchBar";
 import { EnvironmentDetail } from "./features/environments/EnvironmentDetail";
@@ -75,11 +74,8 @@ import { FingerprintPage } from "./features/fingerprints/FingerprintPage";
 import { McpPage } from "./features/mcp/McpPage";
 import { OperationsPage } from "./features/operations/OperationsPage";
 import { ApiKeySetup } from "./features/setup/ApiKeySetup";
-import { environmentControlLabel, environmentLabel } from "./environmentIdentity";
+import { environmentCdpLabel, environmentControlLabel, environmentLabel } from "./environmentIdentity";
 import type {
-  AiAgentExecution,
-  AiAgentPlan,
-  AiChatResponse,
   DashboardSnapshot,
   EnvironmentBatchAction,
   ManagerSettings,
@@ -310,7 +306,7 @@ export default function App() {
         {page === "proxies" && <ProxyPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "kernels" && <KernelPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "mcp" && <McpPage snapshot={snapshot} desktop={isDesktopRuntime()} onRefresh={load} onError={setError} />}
-        {page === "ai" && <AiPage snapshot={snapshot} onRefresh={load} onError={setError} />}
+        {page === "ai" && <AiPage snapshot={snapshot} onRefresh={load} onError={setError} onOpenSettings={() => setPage("settings")} />}
         {page === "operations" && <OperationsPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "settings" && <SettingsPage snapshot={snapshot} onRefresh={load} onError={setError} onCredentialChange={initialize} credentialBusy={credentialBusy} />}
       </main>
@@ -575,7 +571,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
                 <td className="selection-cell"><input type="checkbox" aria-label={environmentControlLabel("选择", environment)} checked={selectedEnvIds.includes(environment.envId)} disabled={!selectedEnvIds.includes(environment.envId) && selectedEnvIds.length >= 20} onClick={(event) => event.stopPropagation()} onChange={(event) => toggleEnvironment(environment.envId, event.target.checked)} /></td>
                 <td><div className="resource-name"><span className="resource-icon"><Boxes size={16} /></span><div><strong>{environment.name}</strong><small>{environment.envId}</small></div></div></td>
                 <td><span className={`status-badge ${environment.status}`}>{statusLabel[environment.status] ?? environment.status}</span></td>
-                <td><code>{environment.cdp}</code></td>
+                <td><code title={environment.cdp}>{environmentCdpLabel(environment)}</code></td>
                 <td>{environment.lastEvent}</td>
                 <td className="row-actions">
                   {environment.status === "ready" || environment.status === "starting" ? (
@@ -774,103 +770,6 @@ function KernelPage({ snapshot, onRefresh, onError }: {
   );
 }
 
-function AiPage({ snapshot, onRefresh, onError }: {
-  snapshot: DashboardSnapshot | null;
-  onRefresh: () => Promise<void>;
-  onError: (message: string) => void;
-}) {
-  const [mode, setMode] = useState<"chat" | "agent">("chat");
-  const [prompt, setPrompt] = useState("");
-  const [busy, setBusy] = useState("");
-  const [chatResponse, setChatResponse] = useState<AiChatResponse | null>(null);
-  const [plan, setPlan] = useState<AiAgentPlan | null>(null);
-  const [execution, setExecution] = useState<AiAgentExecution | null>(null);
-
-  async function submit() {
-    if (!prompt.trim()) return;
-    setBusy("submit");
-    onError("");
-    try {
-      if (mode === "chat") {
-        setChatResponse(await aiChat(prompt));
-        setPlan(null);
-        setExecution(null);
-      } else {
-        setPlan(await aiPlanAgent(prompt));
-        setChatResponse(null);
-        setExecution(null);
-      }
-    } catch (requestError) {
-      onError(errorMessage(requestError, "AI 请求失败"));
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function executePlan() {
-    if (!plan) return;
-    setBusy("execute");
-    onError("");
-    try {
-      setExecution(await aiExecuteAgent(plan));
-      await onRefresh();
-    } catch (requestError) {
-      onError(errorMessage(requestError, "Agent 执行失败"));
-    } finally {
-      setBusy("");
-    }
-  }
-
-  return (
-    <section className="ai-workspace">
-      <div className="module-toolbar ai-toolbar">
-        <div className="segmented-control" aria-label="AI 模式">
-          <button type="button" className={mode === "chat" ? "active" : ""} onClick={() => setMode("chat")}>Chat</button>
-          <button type="button" className={mode === "agent" ? "active" : ""} onClick={() => setMode("agent")}>Agent</button>
-        </div>
-        <div className="ai-provider-status">
-          <span className={`service-dot ${snapshot?.ai.apiKeyPresent ? "ready" : "error"}`} />
-          <strong>{snapshot?.ai.model ?? "-"}</strong>
-          <small>{snapshot?.ai.apiKeyPresent ? "API Key present" : "BROSDK_AI_API_KEY missing"}</small>
-        </div>
-      </div>
-      <div className="ai-grid">
-        <div className="panel ai-compose">
-          <div className="panel-heading"><BrainCircuit size={17} /><h2>{mode === "chat" ? "只读 Chat" : "受控 Agent"}</h2></div>
-          <textarea aria-label="AI 请求" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={mode === "chat" ? "询问环境、操作、能力或诊断状态" : "描述一个启动、停止、同步或诊断目标"} />
-          <button className="button primary" type="button" disabled={!isDesktopRuntime() || !prompt.trim() || Boolean(busy)} onClick={() => void submit()}>
-            {busy === "submit" ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
-            {mode === "chat" ? "发送" : "生成计划"}
-          </button>
-        </div>
-        <div className="panel ai-result">
-          <div className="panel-heading"><Bot size={17} /><h2>{mode === "chat" ? "回答" : "计划与执行"}</h2></div>
-          {chatResponse && <div className="ai-answer"><p>{chatResponse.answer}</p><small>{chatResponse.model} · read-only</small></div>}
-          {plan && <>
-            <dl className="detail-list compact">
-              <DetailRow label="Action" value={plan.action} />
-              <DetailRow label="Environment" value={plan.envId ?? "-"} />
-              <DetailRow label="Expected state" value={plan.expectedState ?? "-"} />
-              <DetailRow label="Idempotency" value={plan.idempotencyKey} />
-            </dl>
-            <p className="agent-summary">{plan.summary}</p>
-            <JsonPreview label="参数" value={plan.arguments} />
-            <button className="button primary full-width" type="button" disabled={Boolean(busy)} onClick={() => void executePlan()}>
-              {busy === "execute" ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}批准并执行
-            </button>
-          </>}
-          {execution && <div className="agent-execution">
-            <strong>{execution.operation ? `Operation ${execution.operation.id}` : execution.action}</strong>
-            <p>{execution.statusSemantics}</p>
-            {execution.operation && <span className={`status-badge ${execution.operation.status}`}>{statusLabel[execution.operation.status] ?? execution.operation.status}</span>}
-          </div>}
-          {!chatResponse && !plan && !execution && <div className="empty-state"><BrainCircuit size={22} /><span>等待请求</span></div>}
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, credentialBusy }: {
   snapshot: DashboardSnapshot | null;
   onRefresh: () => Promise<void>;
@@ -937,6 +836,7 @@ function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, creden
         />
         <button className="button secondary full-width diagnostic-button" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void exportDiagnostics()}>{busy === "diagnostics" ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}导出脱敏诊断包</button>
       </div>
+      <AiProviderSettings snapshot={snapshot} onRefresh={onRefresh} onError={onError} />
     </section>
   );
 }

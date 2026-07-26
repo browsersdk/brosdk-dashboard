@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-26，阶段 0-15 已完成：
+截至 2026-07-26，阶段 0-16 已完成：
 
 ```text
 brosdk-dashboard/
@@ -53,7 +53,7 @@ brosdk-dashboard/
 - Dashboard 继续采用白色、简洁、扁平、高信息密度的管理界面。
 - Windows 首版基于 `libs/windows_x64/brosdk.dll` 管理环境、内核、代理、Cookie/Storage 和运行状态。
 - 跨平台能力通过平台 adapter 演进：Windows 先用 DLL，macOS/Linux 等对应动态库和进程/密钥库/IPC adapter 准备好后再接。
-- AI Agent 自动化作为后续阶段接入，先保证基础环境管理链路稳定。
+- AI Agent 已接入受控规划/审批链路，Provider 配置与环境上下文由 Manager 统一管理。
 
 ## 重要约束
 
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-15 的仓库内规划已全部实施并通过当前平台验收。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份和操作中心 E2E 已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
+[roadmap.md](roadmap.md) 中阶段 0-16 的仓库内规划已全部实施并通过当前平台验收。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心和 AI Provider/环境上下文 E2E 已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -86,6 +86,8 @@ brosdk-dashboard/
 阶段 14 Dashboard 身份验收已完成：`envId` 是环境、详情、指纹列、批量选择、代理绑定和 MCP 单环境选择的唯一关联键，环境名称允许重复；snapshot 对空/重复 envId、重复详情绑定和悬空详情绑定 fail closed。`npm run e2e:dashboard` 在 1440x900 与 390x844 下执行 8 项同名环境和只读预览 Playwright 流程；`npm run e2e:dashboard:desktop` 另外通过真实 Tauri 环境表按钮完成启动/ready/停止/stopped。真实双环境 runner 也显式断言两个临时 envId 非空且唯一。最终 Dashboard 33 项、Playwright 8 项、Rust workspace 81 项测试及 Clippy、production build 全部通过；真实 E2E 前后环境数均为 1，清理 2/2，退出后无临时目录或 `sdk-host` 残留。
 
 阶段 15 操作中心与故障恢复已完成：operation 列表按精确 `envId` 过滤并同时显示服务端名称和标识，摘要区显示当前结果、进行中与失败数量；失败/取消操作只有在 Manager 已实现对应重试路径时才显示重试。用户取消只允许 queued operation，Manager 和 SQLite 状态机都拒绝把 running operation 标为 cancelled，避免 SDK/DLL 调用继续执行而界面误报已取消。浏览器预览与真实 Tauri E2E 已验证操作中心能追踪环境启停记录；Dashboard 36 项、Rust 82 项、Playwright 10 项测试，以及 check、Clippy 和 production build 全部通过。
+
+阶段 16 AI 配置与环境上下文已完成：AI 页面和设置页均可进入 Provider 配置，Base URL/模型保存在 Manager settings，AI API Key 使用平台安全存储且不回显；环境变量仍可覆盖受管配置。Chat/Agent 选择精确 `envId` 作为上下文，Dashboard 本地显示运行状态、generation、reqId、operation、最近事件及 CDP 控制信息。若 DLL 暴露 `remoteDebuggingPort`，界面显示并允许复制实际地址；当前 pipe-only 环境明确显示“未暴露 TCP 地址 / DLL 内部 CDP / MCP”。模型只收到脱敏 origin 或 `sdk-browser-command` 控制通道，不接收完整 DevTools URL。最终 Dashboard 43 项、Rust workspace 86 项、Playwright 12 项、真实 Tauri 启停/AI/设置 E2E、check、Clippy 和 production build 全部通过。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

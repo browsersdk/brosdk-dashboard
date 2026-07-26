@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Eraser, Globe2, LoaderCircle, Pencil, Play, RefreshCw, ScanSearch, Square, Trash2, X } from "lucide-react";
 import type { DashboardSnapshot, EnvironmentBindingSummary } from "../../types";
+import { environmentCdpLabel, environmentControlChannel } from "../../environmentIdentity";
 import { formatRemoteValue, readRemoteValue, remoteProxyLabel } from "./remoteDetails";
 
 interface EnvironmentDetailProps {
@@ -72,7 +73,8 @@ export function EnvironmentDetail({
     ["时区", formatRemoteValue(readRemoteValue(fingerprint, ["zone", "timezone", "timeZone"]))],
     ["屏幕", formatRemoteValue(readRemoteValue(fingerprint, ["dpi", "screen", "screenResolution"]))],
     ["序列号", formatRemoteValue(readRemoteValue(metadata, ["serial"]))],
-    ["CDP", environment.cdp],
+    ["CDP 地址", environmentCdpLabel(environment)],
+    ["控制通道", environmentControlChannel(environment)],
     ["最后事件", environment.lastEvent],
     ["详情刷新", binding?.refreshedAt ? new Date(binding.refreshedAt).toLocaleString("zh-CN") : "未读取"],
   ];

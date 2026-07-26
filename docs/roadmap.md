@@ -20,6 +20,7 @@
 | 13. 多环境工作流 | P0 | 已完成 | 批量启停、受限远端元数据编辑、跨环境指纹对比和双环境 E2E |
 | 14. Dashboard envId 身份与 E2E | P0 | 已完成 | envId 唯一主键、同名环境可辨识交互和桌面/移动浏览器 E2E |
 | 15. 操作中心与故障恢复 | P0 | 已完成 | 按 envId 追踪 operation，取消/重试策略与真实执行能力一致 |
+| 16. AI 配置与环境上下文 | P0 | 已完成 | Dashboard 安全配置 AI Provider，并向用户和模型提供边界明确的环境运行摘要 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -620,3 +621,31 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - Manager 新增 `OPERATION_NOT_CANCELLABLE`，只允许 queued operation 取消；SQLite 状态机移除 `running -> cancelled`。
 - Dashboard 只对 Manager 已支持的失败/取消类型显示重试，指纹刷新、MCP、诊断等无重放契约的 operation 不再显示误导入口。
 - Browser 插件验证页面身份、筛选、详情和 console；Playwright 在 1440x900 与 390x844 完成 10 项测试。真实 Tauri E2E 完成 start -> ready -> stop -> stopped，并报告 `operationIdentityObserved=true`。最终 Dashboard 36 项、Rust workspace 82 项测试，`npm run check`、Clippy 和 production build 全部通过。
+
+## 19. 阶段 16：AI 配置与环境上下文
+
+目标：让 AI Chat/Agent 可以在 Dashboard 内完成 Provider 配置，并明确查看当前可提供给 AI 的环境运行信息。
+
+任务：
+
+- AI API Key 使用平台安全存储，不写入 SQLite、operation、事件、日志或诊断包。
+- OpenAI-compatible Base URL 和模型写入 Manager settings；`BROSDK_AI_*` 环境变量继续作为受管部署覆盖项。
+- AI 页面提供环境上下文查看器，展示环境名称、envId、状态、CDP、最近事件、generation 和当前 operation。
+- Manager AI context 增加 CDP 可用性与去除 userinfo/path/query/fragment 的 origin，不把完整 DevTools 控制路径发送给外部模型。
+- AI 页面和设置页显示配置来源、密钥状态、Base URL 与模型，并提供保存、更换和移除安全存储密钥的入口。
+
+验收：
+
+- Dashboard 可以配置、重启恢复和移除 AI API Key，磁盘中不存在明文字节。
+- Chat/Agent 使用当前有效 Provider 配置，环境变量覆盖时 UI 明确显示受管状态。
+- 用户可在 AI 页面查看实际暴露的本地 CDP 地址；pipe-only 环境明确显示 DLL 内部 CDP/MCP 控制通道且不伪造 TCP 地址。模型上下文只包含安全 origin、`cdpAvailable` 和控制通道类型。
+- 组件测试、Manager 测试、浏览器桌面/移动 E2E、真实 Tauri UI、`npm run check`、`npm test` 和 production build 通过。
+
+阶段 16 实现结果（2026-07-26）：
+
+- AI Chat/Agent 从环境变量或 Manager settings 解析 OpenAI-compatible Base URL 和模型；API Key 支持受管环境变量或平台安全存储，Dashboard 可保存、更换和清除安全存储密钥，密钥不会回显。
+- schema 升级到 v6，`settings` 增加 `ai_base_url/ai_model`。AI API Key 使用独立 secret reference；测试确认 SQLite、事件和受保护文件均不含明文字节。
+- AI 页面新增 Provider 状态和设置入口、精确 envId 环境选择器及运行上下文，显示状态、generation、reqId、operation、最近事件、CDP 地址和实际控制通道；设置页提供 Base URL、模型和 API Key 管理。
+- Manager 只向模型发送选中环境。外部 CDP 只保留去除 userinfo/path/query/fragment 的 origin；pipe-only ready 环境标记为 `sdk-browser-command`，不把 `ready` 或 `-` 误判为地址。
+- `sdk_browser_info` 与 callback 对账可为已 ready 环境补充后到的 `remoteDebuggingPort`；当前实测环境使用 DLL 内部 CDP pipe，因此 Dashboard 显示“未暴露 TCP 地址 / DLL 内部 CDP / MCP”。
+- 真实 Tauri E2E 修正了“启动中按钮可停止”被误判为 ready 的测试缺陷，最终完成 start -> 明确运行中 -> AI 环境信息 -> Provider 设置 -> stop -> 操作中心。Dashboard 43 项、Rust workspace 86 项、Playwright 12 项测试，以及 `npm run check`、Clippy、production build 和真实桌面 E2E 全部通过。

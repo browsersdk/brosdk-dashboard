@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
-const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
-const DEFAULT_MODEL: &str = "deepseek-v4-flash";
+pub const DEFAULT_BASE_URL: &str = "https://api.deepseek.com";
+pub const DEFAULT_MODEL: &str = "deepseek-v4-flash";
 
 #[derive(Debug, Error)]
 pub enum AiError {
@@ -70,12 +70,39 @@ impl AiClient {
         })
     }
 
+    pub fn from_config(api_key: String, base_url: String, model: String) -> Result<Self, AiError> {
+        Ok(Self {
+            http: reqwest::Client::builder().build()?,
+            api_key,
+            base_url: base_url.trim_end_matches('/').into(),
+            model,
+        })
+    }
+
     pub fn status() -> domain::AiProviderStatus {
         domain::AiProviderStatus {
             provider: "openai-compatible".into(),
             base_url: env_value("BROSDK_AI_BASE_URL").unwrap_or_else(|| DEFAULT_BASE_URL.into()),
             model: env_value("BROSDK_AI_MODEL").unwrap_or_else(|| DEFAULT_MODEL.into()),
             api_key_present: env_value("BROSDK_AI_API_KEY").is_some(),
+            api_key_source: if env_value("BROSDK_AI_API_KEY").is_some() {
+                "environment"
+            } else {
+                "none"
+            }
+            .into(),
+            base_url_source: if env_value("BROSDK_AI_BASE_URL").is_some() {
+                "environment"
+            } else {
+                "default"
+            }
+            .into(),
+            model_source: if env_value("BROSDK_AI_MODEL").is_some() {
+                "environment"
+            } else {
+                "default"
+            }
+            .into(),
         }
     }
 

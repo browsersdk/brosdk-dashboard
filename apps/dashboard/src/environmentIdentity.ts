@@ -10,6 +10,27 @@ export function environmentControlLabel(action: string, environment: Environment
   return `${action} ${environment.name} (${environment.envId})`;
 }
 
+export function environmentCdpAddress(environment: EnvironmentSummary) {
+  const value = environment.cdp.trim();
+  if (!value || value === "-") return null;
+  if (/^(?:https?|wss?):\/\//i.test(value)) return value;
+  if (/^(?:localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[^\]]+\]):\d+$/i.test(value)) return value;
+  return null;
+}
+
+export function environmentCdpLabel(environment: EnvironmentSummary) {
+  return environmentCdpAddress(environment)
+    ?? (environment.status === "ready" ? "未暴露 TCP 地址" : "-");
+}
+
+export function environmentControlChannel(environment: EnvironmentSummary) {
+  return environmentCdpAddress(environment)
+    ? "TCP CDP"
+    : environment.status === "ready"
+      ? "DLL 内部 CDP / MCP"
+      : "-";
+}
+
 export function assertEnvironmentIdentity(snapshot: DashboardSnapshot): DashboardSnapshot {
   const environmentIds = uniqueNonEmptyIds(
     snapshot.environments.map((environment) => environment.envId),

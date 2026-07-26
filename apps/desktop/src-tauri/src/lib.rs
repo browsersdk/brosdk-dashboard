@@ -25,6 +25,25 @@ async fn manager_clear_api_key(manager: tauri::State<'_, manager::Manager>) -> R
 }
 
 #[tauri::command]
+fn manager_configure_ai_provider(
+    manager: tauri::State<'_, manager::Manager>,
+    input: domain::AiProviderConfigInput,
+) -> Result<domain::AiProviderStatus, String> {
+    manager
+        .configure_ai_provider(input)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn manager_clear_ai_api_key(
+    manager: tauri::State<'_, manager::Manager>,
+) -> Result<domain::AiProviderStatus, String> {
+    manager
+        .clear_ai_api_key()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn run_sdk_smoke(
     manager: tauri::State<'_, manager::Manager>,
 ) -> Result<domain::SmokeReport, String> {
@@ -470,6 +489,8 @@ pub fn run() {
             manager_snapshot,
             manager_configure_api_key,
             manager_clear_api_key,
+            manager_configure_ai_provider,
+            manager_clear_ai_api_key,
             run_sdk_smoke,
             runtime_host_start,
             runtime_host_stop,

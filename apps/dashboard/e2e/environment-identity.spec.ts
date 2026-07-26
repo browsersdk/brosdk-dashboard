@@ -92,6 +92,32 @@ test("environment pickers expose envId instead of relying on names", async ({ pa
   expect(issues).toEqual([]);
 });
 
+test("AI context exposes the selected envId and local CDP with a settings entry", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  await page.goto(`/?${scenario}&page=ai`);
+  await expectHealthyDashboard(page, "AI 助手");
+
+  const environment = page.getByLabel("AI 环境上下文");
+  await expect(environment.locator("option")).toHaveText([
+    "共享工作环境 · env-demo-01",
+    "共享工作环境 · env-demo-02",
+  ]);
+  await expect(page.getByRole("region", { name: "AI 环境详情" })).toContainText("TCP CDP");
+  await expect(page.getByRole("region", { name: "AI 环境详情" })).toContainText("ws://127.0.0.1/preview/env-demo-01");
+
+  await environment.selectOption("env-demo-02");
+  const context = page.getByRole("region", { name: "AI 环境详情" });
+  await expect(context).toContainText("env-demo-02");
+  await expect(context).toContainText("TCP CDP");
+  await expect(context).toContainText("ws://127.0.0.1/preview/env-demo-02");
+
+  await page.getByRole("button", { name: "AI Provider 设置" }).click();
+  await expectHealthyDashboard(page, "设置");
+  await expect(page.getByRole("heading", { name: "AI Provider" })).toBeVisible();
+  await expect(page.getByLabel("OpenAI-compatible Base URL")).toHaveValue("https://api.deepseek.com");
+  expect(issues).toEqual([]);
+});
+
 test("operation center filters by envId and protects unsupported actions", async ({ page }) => {
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=operations`);

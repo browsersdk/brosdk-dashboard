@@ -202,6 +202,7 @@ DLL callback 函数只在回调有效期内复制 `data/len` 到无界队列，�
 ## 10. 安全边界
 
 - API Key 只来自环境变量或系统密钥库，不写入文档、仓库、SQLite 明文字段或普通日志。
+- AI API Key 同样只来自 `BROSDK_AI_API_KEY` 或平台安全存储；AI Base URL 与模型可以写入 Manager settings，密钥不会进入 settings、operation、事件、诊断包或模型上下文。
 - userSig、代理密码、Cookie、CDK/DEK、Authorization、URL query 中的敏感值统一脱敏。
 - Dashboard 不展示密钥、摘要或尾号，只显示凭据来源与初始化状态。
 - 可选 loopback API 默认只监听 `127.0.0.1`，mutation 检查 Origin。
@@ -244,6 +245,7 @@ Windows x64 是首个完成平台。macOS/Linux 不在没有动态库和平台�
 AI Agent 边界：
 
 - Chat 只能读取 Manager 生成的脱敏快照，模型没有 SDK 或本地文件工具。
+- Chat/Agent 的环境上下文只包含用户选中的精确 `envId`。外部 CDP endpoint 只发送 origin；pipe-only 环境只发送 `sdk-browser-command` 控制通道类型。完整 CDP 地址仅在本地 Dashboard 显示。
 - Agent 模型只生成结构化计划；Manager 再校验 action 白名单、显式批准、`envId`、`expectedState` 和 `idempotencyKey`。
 - Agent 写操作统一复用现有 operation 队列，返回 operation id 和 accepted/ready 的状态语义。
 - DLL 内嵌 MCP 仍是 `sdk-host` capability，由 Manager 配置生命周期和路由，不把 DLL 端口暴露为 Dashboard 的直接写入口。

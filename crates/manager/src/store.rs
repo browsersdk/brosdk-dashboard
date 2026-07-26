@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 pub struct StoredAgentExecution {
     pub plan_hash: String,
@@ -64,6 +64,8 @@ impl ManagerStore {
             debug: false,
             startup_policy: "restore-none".into(),
             embedded_mcp_port: None,
+            ai_base_url: None,
+            ai_model: None,
         };
         Self::open(data_dir.join("manager.sqlite3"), &defaults)
     }
@@ -97,6 +99,8 @@ impl ManagerStore {
                 debug INTEGER NOT NULL,
                 startup_policy TEXT NOT NULL DEFAULT 'restore-none',
                 embedded_mcp_port INTEGER,
+                ai_base_url TEXT,
+                ai_model TEXT,
                 updated_at TEXT NOT NULL
             );
 
@@ -225,6 +229,8 @@ impl ManagerStore {
             "TEXT NOT NULL DEFAULT 'restore-none'",
         )?;
         ensure_column(&connection, "settings", "embedded_mcp_port", "INTEGER")?;
+        ensure_column(&connection, "settings", "ai_base_url", "TEXT")?;
+        ensure_column(&connection, "settings", "ai_model", "TEXT")?;
         ensure_column(&connection, "operations", "request_json", "TEXT")?;
         ensure_column(
             &connection,
@@ -258,8 +264,8 @@ impl ManagerStore {
         connection.execute(
             r#"INSERT OR IGNORE INTO settings(
                 id, data_dir, work_dir, extension_dir, log_dir, sdk_api_url, debug,
-                startup_policy, embedded_mcp_port, updated_at
-            ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"#,
+                startup_policy, embedded_mcp_port, ai_base_url, ai_model, updated_at
+            ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"#,
             params![
                 defaults.data_dir,
                 defaults.work_dir,
@@ -269,6 +275,8 @@ impl ManagerStore {
                 defaults.debug,
                 defaults.startup_policy,
                 defaults.embedded_mcp_port,
+                defaults.ai_base_url,
+                defaults.ai_model,
                 now,
             ],
         )?;
@@ -321,7 +329,7 @@ impl ManagerStore {
         self.connection()?
             .query_row(
                 r#"SELECT data_dir, work_dir, extension_dir, log_dir, sdk_api_url, debug,
-                      startup_policy, embedded_mcp_port
+                      startup_policy, embedded_mcp_port, ai_base_url, ai_model
                FROM settings WHERE id = 1"#,
                 [],
                 |row| {
@@ -334,6 +342,8 @@ impl ManagerStore {
                         debug: row.get(5)?,
                         startup_policy: row.get(6)?,
                         embedded_mcp_port: row.get(7)?,
+                        ai_base_url: row.get(8)?,
+                        ai_model: row.get(9)?,
                     })
                 },
             )
@@ -345,7 +355,8 @@ impl ManagerStore {
             r#"UPDATE settings SET
                 data_dir = ?1, work_dir = ?2, extension_dir = ?3, log_dir = ?4,
                 sdk_api_url = ?5, debug = ?6, startup_policy = ?7,
-                embedded_mcp_port = ?8, updated_at = ?9
+                embedded_mcp_port = ?8, ai_base_url = ?9, ai_model = ?10,
+                updated_at = ?11
             WHERE id = 1"#,
             params![
                 settings.data_dir,
@@ -356,6 +367,8 @@ impl ManagerStore {
                 settings.debug,
                 settings.startup_policy,
                 settings.embedded_mcp_port,
+                settings.ai_base_url,
+                settings.ai_model,
                 timestamp(),
             ],
         )?;
@@ -1337,7 +1350,7 @@ impl ManagerStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         let mut statement = transaction.prepare(
-            r#"SELECT e.env_id, e.status, o.kind, o.status
+            r#"SELECT e.env_id, e.status, e.cdp, o.kind, o.status
                FROM environments e
                LEFT JOIN operations o ON o.id = e.current_operation_id"#,
         )?;
@@ -1346,13 +1359,14 @@ impl ManagerStore {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         drop(statement);
-        for (env_id, previous, operation_kind, operation_status) in candidates {
+        for (env_id, previous, previous_cdp, operation_kind, operation_status) in candidates {
             let active_start = operation_kind.as_deref() == Some("environment.start")
                 && matches!(operation_status.as_deref(), Some("queued" | "running"));
             let (status, cdp, event) = match running.get(&env_id) {
@@ -1381,7 +1395,7 @@ impl ManagerStore {
                 }
                 None => continue,
             };
-            if previous != status {
+            if previous != status || previous_cdp != cdp {
                 transaction.execute(
                     r#"UPDATE environments SET status = ?1, cdp = ?2, last_event = ?3,
                               current_operation_id = NULL, updated_at = ?4 WHERE env_id = ?5"#,
@@ -1535,7 +1549,7 @@ fn event_cdp(event: &HostEvent) -> String {
             .filter(|port| *port > 0)
             .map(|port| format!("127.0.0.1:{port}"))
     })
-    .unwrap_or_else(|| "ready".into())
+    .unwrap_or_else(|| "-".into())
 }
 
 fn find_json_value<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
@@ -1676,6 +1690,8 @@ mod tests {
                 debug: false,
                 startup_policy: "restore-none".into(),
                 embedded_mcp_port: None,
+                ai_base_url: None,
+                ai_model: None,
             },
         )
         .expect("open store")
@@ -1708,6 +1724,8 @@ mod tests {
                 debug: false,
                 startup_policy: "restore-none".into(),
                 embedded_mcp_port: None,
+                ai_base_url: None,
+                ai_model: None,
             },
         )
         .expect("reopen store");
@@ -1973,6 +1991,8 @@ mod tests {
                 debug: false,
                 startup_policy: "restore-none".into(),
                 embedded_mcp_port: None,
+                ai_base_url: None,
+                ai_model: None,
             },
         )
         .expect("reopen store");
@@ -2026,6 +2046,8 @@ mod tests {
                 debug: false,
                 startup_policy: "restore-none".into(),
                 embedded_mcp_port: None,
+                ai_base_url: None,
+                ai_model: None,
             },
         )
         .expect("reopen store");
@@ -2148,6 +2170,39 @@ mod tests {
     }
 
     #[test]
+    fn reconciliation_hydrates_cdp_for_an_already_ready_environment() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("upsert environment");
+        store
+            .set_environment_runtime(RuntimeUpdate {
+                env_id: "env-1",
+                generation: 0,
+                status: "ready",
+                request_id: Some(7),
+                operation_id: None,
+                cdp: "-",
+                last_event: "browser-open-success",
+            })
+            .expect("ready environment");
+        store
+            .reconcile_running_environments(
+                &HashMap::from([("env-1".into(), "127.0.0.1:9222".into())]),
+                &HashSet::from(["env-1".into()]),
+            )
+            .expect("reconcile");
+        let environment = store.list_environments().expect("environments").remove(0);
+        assert_eq!(environment.status, "ready");
+        assert_eq!(environment.cdp, "127.0.0.1:9222");
+    }
+
+    #[test]
     fn accepted_response_does_not_rollback_early_success_event() {
         let directory = tempfile::tempdir().expect("tempdir");
         let store = test_store(&directory);
@@ -2197,5 +2252,6 @@ mod tests {
         assert_eq!(operation.status, "succeeded");
         assert_eq!(operation.request_id, Some(42));
         assert_eq!(environment.status, "ready");
+        assert_eq!(environment.cdp, "-");
     }
 }

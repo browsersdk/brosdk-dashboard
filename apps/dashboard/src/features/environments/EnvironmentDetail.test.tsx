@@ -78,6 +78,15 @@ describe("EnvironmentDetail", () => {
     expect(onCaptureDiagnostic).toHaveBeenCalledOnce();
     expect(screen.getByText("2 页 · 0 失败")).toBeTruthy();
     expect(screen.getByText("https://example.com")).toBeTruthy();
+    expect(screen.getByText("TCP CDP")).toBeTruthy();
+  });
+
+  it("labels a pipe-only running environment without inventing a CDP address", () => {
+    renderDetail("ready", {
+      environment: { ...environment("ready"), cdp: "-" },
+    });
+    expect(screen.getByText("未暴露 TCP 地址")).toBeTruthy();
+    expect(screen.getByText("DLL 内部 CDP / MCP")).toBeTruthy();
   });
 
   it("confirms local cleanup independently from server deletion", () => {

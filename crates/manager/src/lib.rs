@@ -11,14 +11,14 @@ use std::{
 
 use domain::{
     AiAgentExecuteRequest, AiAgentExecution, AiAgentPlan, AiAgentPlanRequest, AiChatRequest,
-    AiChatResponse, ApiKeyInitializationResult, ApiKeyStatus, BrowserCommandExecution,
-    DashboardSnapshot, EnvironmentBatchAction, EnvironmentBatchInput, EnvironmentBatchResult,
-    EnvironmentCreateInput, EnvironmentMetadataUpdateInput, EnvironmentRecord, FingerprintProfile,
-    FingerprintProfileInput, HostCommand, KernelInstallInput, KernelRecord, ManagerEvent,
-    ManagerSettings, McpPanel, McpToolCallExecution, McpToolCallRequest, McpToolDiscovery,
-    McpToolDiscoveryRequest, McpToolScope, McpToolSummary, OperationExecution, OperationRecord,
-    ProxyParseResult, ProxyProfile, ProxyProfileInput, RuntimeHostState, RuntimeHostStatus,
-    SdkPanel, SmokeReport,
+    AiChatResponse, AiProviderConfigInput, AiProviderStatus, ApiKeyInitializationResult,
+    ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot, EnvironmentBatchAction,
+    EnvironmentBatchInput, EnvironmentBatchResult, EnvironmentCreateInput,
+    EnvironmentMetadataUpdateInput, EnvironmentRecord, FingerprintProfile, FingerprintProfileInput,
+    HostCommand, KernelInstallInput, KernelRecord, ManagerEvent, ManagerSettings, McpPanel,
+    McpToolCallExecution, McpToolCallRequest, McpToolDiscovery, McpToolDiscoveryRequest,
+    McpToolScope, McpToolSummary, OperationExecution, OperationRecord, ProxyParseResult,
+    ProxyProfile, ProxyProfileInput, RuntimeHostState, RuntimeHostStatus, SdkPanel, SmokeReport,
 };
 use operation::OperationQueue;
 use sdk_client::{RuntimeHost, SdkHostClient};
@@ -40,6 +40,8 @@ const MAX_ENVIRONMENTS: usize = 100_000;
 const MAX_ENVIRONMENT_BATCH_SIZE: usize = 20;
 const API_KEY_SECRET_ID: &str = "sdk-api-key";
 const API_KEY_SECRET_REFERENCE: &str = "sdk-api-key.bin";
+const AI_API_KEY_SECRET_ID: &str = "ai-api-key";
+const AI_API_KEY_SECRET_REFERENCE: &str = "ai-api-key.bin";
 const GLOBAL_MCP_READ_TOOLS: &[&str] = &[
     "sdk.health",
     "sdk.info",
@@ -144,6 +146,12 @@ pub enum ManagerError {
     ApiKeyManagedExternally,
     #[error("stored API Key is not valid UTF-8")]
     ApiKeyCorrupt,
+    #[error("AI provider configuration is invalid: {0}")]
+    InvalidAiProvider(String),
+    #[error("AI API Key is managed by BROSDK_AI_API_KEY and cannot be changed in the application")]
+    AiApiKeyManagedExternally,
+    #[error("stored AI API Key is not valid UTF-8")]
+    AiApiKeyCorrupt,
     #[error("invalid runtime host response: {0}")]
     InvalidHostResponse(String),
     #[error("SDK backend rejected the request: {0}")]
@@ -437,7 +445,7 @@ impl Manager {
                     "Unexpected host exit becomes degraded state and never exits the desktop UI.".into(),
                 ],
             },
-            ai: ai_agent::AiClient::status(),
+            ai: self.ai_provider_status()?,
             environments,
             environment_cache: self.inner.store.environment_cache_status()?,
             environment_bindings: bindings,
@@ -555,12 +563,167 @@ impl Manager {
         Ok(PathBuf::from(self.inner.store.settings()?.data_dir))
     }
 
+    pub fn ai_provider_status(&self) -> Result<AiProviderStatus, ManagerError> {
+        let settings = self.inner.store.settings()?;
+        let (base_url, base_url_source) = self.effective_ai_base_url(&settings)?;
+        let (model, model_source) = self.effective_ai_model(&settings)?;
+        let (api_key_present, api_key_source) = match environment_value("BROSDK_AI_API_KEY") {
+            Some(_) => (true, "environment"),
+            None => {
+                let data_dir = self.credential_data_dir()?;
+                let path = platform::secrets_dir(&data_dir).join(AI_API_KEY_SECRET_REFERENCE);
+                (
+                    path.is_file(),
+                    if path.is_file() {
+                        "secure-storage"
+                    } else {
+                        "none"
+                    },
+                )
+            }
+        };
+        Ok(AiProviderStatus {
+            provider: "openai-compatible".into(),
+            base_url,
+            model,
+            api_key_present,
+            api_key_source: api_key_source.into(),
+            base_url_source: base_url_source.into(),
+            model_source: model_source.into(),
+        })
+    }
+
+    pub fn configure_ai_provider(
+        &self,
+        mut input: AiProviderConfigInput,
+    ) -> Result<AiProviderStatus, ManagerError> {
+        let base_url = normalize_ai_base_url(&input.base_url)?;
+        let model = normalize_ai_model(&input.model)?;
+        let mut settings = self.inner.store.settings()?;
+        settings.ai_base_url = Some(base_url);
+        settings.ai_model = Some(model);
+
+        if let Some(api_key) = input.api_key.as_mut() {
+            if environment_value("BROSDK_AI_API_KEY").is_some() {
+                api_key.zeroize();
+                return Err(ManagerError::AiApiKeyManagedExternally);
+            }
+            let trimmed = api_key.trim().to_owned();
+            api_key.zeroize();
+            if trimmed.is_empty() {
+                return Err(ManagerError::InvalidAiProvider(
+                    "API Key must not be empty".into(),
+                ));
+            }
+            let api_key = Zeroizing::new(trimmed);
+            let data_dir = self.credential_data_dir()?;
+            platform::store_secret(&data_dir, AI_API_KEY_SECRET_ID, api_key.as_bytes())?;
+        }
+        input.api_key.zeroize();
+
+        self.inner.store.update_settings(&settings)?;
+        self.inner.store.append_event(
+            "ai.provider-configured",
+            None,
+            None,
+            &json!({
+                "apiKeyConfigured": self.ai_api_key_present()?,
+                "baseUrlConfigured": settings.ai_base_url.is_some(),
+                "modelConfigured": settings.ai_model.is_some(),
+            }),
+        )?;
+        self.ai_provider_status()
+    }
+
+    pub fn clear_ai_api_key(&self) -> Result<AiProviderStatus, ManagerError> {
+        if environment_value("BROSDK_AI_API_KEY").is_some() {
+            return Err(ManagerError::AiApiKeyManagedExternally);
+        }
+        let data_dir = self.credential_data_dir()?;
+        platform::delete_secret(&data_dir, AI_API_KEY_SECRET_REFERENCE)?;
+        self.inner.store.append_event(
+            "ai.api-key-cleared",
+            None,
+            None,
+            &json!({ "apiKeyConfigured": false }),
+        )?;
+        self.ai_provider_status()
+    }
+
+    fn ai_api_key_present(&self) -> Result<bool, ManagerError> {
+        if environment_value("BROSDK_AI_API_KEY").is_some() {
+            return Ok(true);
+        }
+        let data_dir = self.credential_data_dir()?;
+        Ok(platform::secrets_dir(&data_dir)
+            .join(AI_API_KEY_SECRET_REFERENCE)
+            .is_file())
+    }
+
+    fn resolve_ai_api_key(&self) -> Result<Option<Zeroizing<String>>, ManagerError> {
+        if let Some(value) = environment_value("BROSDK_AI_API_KEY") {
+            return Ok(Some(Zeroizing::new(value)));
+        }
+        let data_dir = self.credential_data_dir()?;
+        let path = platform::secrets_dir(&data_dir).join(AI_API_KEY_SECRET_REFERENCE);
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let value = String::from_utf8(platform::read_secret(
+            &data_dir,
+            AI_API_KEY_SECRET_REFERENCE,
+        )?)
+        .map_err(|_| ManagerError::AiApiKeyCorrupt)?;
+        if value.trim().is_empty() {
+            return Err(ManagerError::AiApiKeyCorrupt);
+        }
+        Ok(Some(Zeroizing::new(value)))
+    }
+
+    fn effective_ai_base_url(
+        &self,
+        settings: &ManagerSettings,
+    ) -> Result<(String, &'static str), ManagerError> {
+        if let Some(value) = environment_value("BROSDK_AI_BASE_URL") {
+            return Ok((normalize_ai_base_url(&value)?, "environment"));
+        }
+        if let Some(value) = settings.ai_base_url.as_deref() {
+            return Ok((normalize_ai_base_url(value)?, "settings"));
+        }
+        Ok((ai_agent::DEFAULT_BASE_URL.into(), "default"))
+    }
+
+    fn effective_ai_model(
+        &self,
+        settings: &ManagerSettings,
+    ) -> Result<(String, &'static str), ManagerError> {
+        if let Some(value) = environment_value("BROSDK_AI_MODEL") {
+            return Ok((normalize_ai_model(&value)?, "environment"));
+        }
+        if let Some(value) = settings.ai_model.as_deref() {
+            return Ok((normalize_ai_model(value)?, "settings"));
+        }
+        Ok((ai_agent::DEFAULT_MODEL.into(), "default"))
+    }
+
+    fn ai_client(&self) -> Result<ai_agent::AiClient, ManagerError> {
+        let api_key = self
+            .resolve_ai_api_key()?
+            .ok_or(ai_agent::AiError::MissingApiKey)?;
+        let settings = self.inner.store.settings()?;
+        let (base_url, _) = self.effective_ai_base_url(&settings)?;
+        let (model, _) = self.effective_ai_model(&settings)?;
+        Ok(ai_agent::AiClient::from_config(
+            api_key.to_string(),
+            base_url,
+            model,
+        )?)
+    }
+
     pub async fn ai_chat(&self, request: AiChatRequest) -> Result<AiChatResponse, ManagerError> {
         let prompt = require_prompt(&request.prompt)?;
-        let context = self.ai_context().await?;
-        Ok(ai_agent::AiClient::from_env()?
-            .chat(prompt, &context)
-            .await?)
+        let context = self.ai_context(request.context_env_id.as_deref()).await?;
+        Ok(self.ai_client()?.chat(prompt, &context).await?)
     }
 
     pub async fn ai_plan_agent(
@@ -568,10 +731,8 @@ impl Manager {
         request: AiAgentPlanRequest,
     ) -> Result<AiAgentPlan, ManagerError> {
         let prompt = require_prompt(&request.prompt)?;
-        let context = self.ai_context().await?;
-        let plan = ai_agent::AiClient::from_env()?
-            .plan(prompt, &context)
-            .await?;
+        let context = self.ai_context(request.context_env_id.as_deref()).await?;
+        let plan = self.ai_client()?.plan(prompt, &context).await?;
         validate_agent_plan(&plan)?;
         Ok(plan)
     }
@@ -775,8 +936,18 @@ impl Manager {
         Ok(execution)
     }
 
-    async fn ai_context(&self) -> Result<serde_json::Value, ManagerError> {
+    async fn ai_context(
+        &self,
+        focused_env_id: Option<&str>,
+    ) -> Result<serde_json::Value, ManagerError> {
         let environments = self.inner.store.list_environments()?;
+        if let Some(env_id) = focused_env_id
+            && !environments
+                .iter()
+                .any(|environment| environment.env_id == env_id)
+        {
+            return Err(ManagerError::EnvironmentNotFound);
+        }
         let fingerprints = self.inner.store.list_fingerprint_profiles()?;
         let proxies = self.inner.store.list_proxy_profiles()?;
         let kernels = self.inner.store.list_kernel_records()?;
@@ -799,13 +970,32 @@ impl Manager {
                 "generation": runtime.generation,
                 "lastError": runtime.last_error,
             },
-            "environments": environments.into_iter().map(|environment| json!({
-                "envId": environment.env_id,
-                "name": environment.name,
-                "status": environment.status,
-                "generation": environment.generation,
-                "lastEvent": environment.last_event,
-            })).collect::<Vec<_>>(),
+            "focusedEnvId": focused_env_id,
+            "environments": environments.into_iter()
+                .filter(|environment| focused_env_id.is_none_or(|env_id| environment.env_id == env_id))
+                .map(|environment| {
+                let cdp_origin = external_cdp_origin(&environment.cdp);
+                let control_channel = if cdp_origin.is_some() {
+                    "external-cdp"
+                } else if environment.status == "ready" {
+                    "sdk-browser-command"
+                } else {
+                    "unavailable"
+                };
+                json!({
+                    "envId": environment.env_id,
+                    "name": environment.name,
+                    "status": environment.status,
+                    "generation": environment.generation,
+                    "lastEvent": environment.last_event,
+                    "requestId": environment.request_id,
+                    "currentOperationId": environment.current_operation_id,
+                    "updatedAt": environment.updated_at,
+                    "cdpAvailable": cdp_origin.is_some(),
+                    "cdpOrigin": cdp_origin,
+                    "controlChannel": control_channel,
+                })
+            }).collect::<Vec<_>>(),
             "fingerprints": fingerprints.into_iter().map(|profile| json!({
                 "id": profile.id,
                 "name": profile.name,
@@ -2377,7 +2567,7 @@ impl Manager {
         Ok(self.inner.store.events_since(sequence, 500)?)
     }
 
-    pub fn update_settings(&self, settings: ManagerSettings) -> Result<(), ManagerError> {
+    pub fn update_settings(&self, mut settings: ManagerSettings) -> Result<(), ManagerError> {
         for path in [
             &settings.data_dir,
             &settings.work_dir,
@@ -2401,6 +2591,16 @@ impl Manager {
                 "unsupported startup policy",
             )));
         }
+        settings.ai_base_url = settings
+            .ai_base_url
+            .as_deref()
+            .map(normalize_ai_base_url)
+            .transpose()?;
+        settings.ai_model = settings
+            .ai_model
+            .as_deref()
+            .map(normalize_ai_model)
+            .transpose()?;
         let current = self.inner.store.settings()?;
         let data_dir_changed = current.data_dir != settings.data_dir;
         if data_dir_changed {
@@ -2426,6 +2626,8 @@ impl Manager {
                 "debug": settings.debug,
                 "startupPolicy": settings.startup_policy,
                 "embeddedMcpPort": settings.embedded_mcp_port,
+                "aiBaseUrlConfigured": settings.ai_base_url.is_some(),
+                "aiModelConfigured": settings.ai_model.is_some(),
                 "restartRequired": data_dir_changed,
             }),
         )?;
@@ -2679,6 +2881,7 @@ impl Manager {
 
     fn monitor_host(&self, host: &RuntimeHost) {
         let weak = Arc::downgrade(&self.inner);
+        let event_host = host.clone();
         let mut events = host.subscribe_events();
         tokio::spawn(async move {
             loop {
@@ -2687,7 +2890,37 @@ impl Manager {
                         let Some(inner) = weak.upgrade() else {
                             break;
                         };
-                        let _ = inner.store.apply_host_event(&event);
+                        let refresh_cdp = inner.store.apply_host_event(&event).is_ok()
+                            && event
+                                .event_name
+                                .to_ascii_lowercase()
+                                .contains("browser-open-success");
+                        if refresh_cdp && let Some(env_id) = event.env_id.clone() {
+                            let refresh_inner = inner.clone();
+                            let refresh_host = event_host.clone();
+                            tokio::spawn(async move {
+                                for attempt in 0..8 {
+                                    if attempt > 0 {
+                                        tokio::time::sleep(std::time::Duration::from_millis(500))
+                                            .await;
+                                    }
+                                    let Ok(value) =
+                                        refresh_host.call(HostCommand::BrowserInfo, None).await
+                                    else {
+                                        continue;
+                                    };
+                                    let running = mirror::running_environments(&value);
+                                    if !running.contains_key(&env_id) {
+                                        continue;
+                                    }
+                                    let observed = mirror::observed_environment_ids(&value);
+                                    let _ = refresh_inner
+                                        .store
+                                        .reconcile_running_environments(&running, &observed);
+                                    break;
+                                }
+                            });
+                        }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
                         let Some(inner) = weak.upgrade() else {
@@ -3085,6 +3318,85 @@ fn safe_url_origin(value: &str) -> String {
                 .or_else(|| (url.scheme() == "about").then(|| format!("about:{}", url.path())))
         })
         .unwrap_or_else(|| "internal".into())
+}
+
+fn external_cdp_origin(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value == "-" || value == "ready" {
+        return None;
+    }
+    let candidate = if value.contains("://") {
+        value.to_owned()
+    } else {
+        if !value.contains(':') {
+            return None;
+        }
+        format!("http://{value}")
+    };
+    let Ok(url) = url::Url::parse(&candidate) else {
+        return None;
+    };
+    if !matches!(url.scheme(), "http" | "https" | "ws" | "wss") {
+        return None;
+    }
+    let host = url.host_str()?;
+    let host = if host.contains(':') {
+        format!("[{host}]")
+    } else {
+        host.into()
+    };
+    let port = url
+        .port()
+        .map(|port| format!(":{port}"))
+        .unwrap_or_default();
+    Some(format!("{}://{host}{port}", url.scheme()))
+}
+
+fn normalize_ai_base_url(value: &str) -> Result<String, ManagerError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(ManagerError::InvalidAiProvider(
+            "OpenAI-compatible Base URL must not be empty".into(),
+        ));
+    }
+    let url = url::Url::parse(value).map_err(|error| {
+        ManagerError::InvalidAiProvider(format!("Base URL is not valid: {error}"))
+    })?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err(ManagerError::InvalidAiProvider(
+            "Base URL must use http or https".into(),
+        ));
+    }
+    if url.host_str().is_none() {
+        return Err(ManagerError::InvalidAiProvider(
+            "Base URL must include a host".into(),
+        ));
+    }
+    if !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(ManagerError::InvalidAiProvider(
+            "Base URL must not include credentials, query, or fragment".into(),
+        ));
+    }
+    Ok(value.trim_end_matches('/').into())
+}
+
+fn normalize_ai_model(value: &str) -> Result<String, ManagerError> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err(ManagerError::InvalidAiProvider(
+            "model must not be empty".into(),
+        ));
+    }
+    if value.len() > 128 {
+        return Err(ManagerError::InvalidAiProvider(
+            "model must be 128 characters or fewer".into(),
+        ));
+    }
+    Ok(value.into())
 }
 
 fn response_env_id(response: &serde_json::Value) -> Option<String> {
@@ -3599,6 +3911,9 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::ApiKeyInvalid => "API_KEY_INVALID",
         ManagerError::ApiKeyManagedExternally => "API_KEY_MANAGED_EXTERNALLY",
         ManagerError::ApiKeyCorrupt => "API_KEY_CORRUPT",
+        ManagerError::InvalidAiProvider(_) => "AI_PROVIDER_INVALID",
+        ManagerError::AiApiKeyManagedExternally => "AI_API_KEY_MANAGED_EXTERNALLY",
+        ManagerError::AiApiKeyCorrupt => "AI_API_KEY_CORRUPT",
         ManagerError::InvalidHostResponse(_) => "INVALID_HOST_RESPONSE",
         ManagerError::BackendRejected(_) => "BACKEND_REJECTED",
         ManagerError::EnvironmentNotFound => "ENVIRONMENT_NOT_FOUND",
@@ -3633,6 +3948,13 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
 
 fn environment_api_key_present() -> bool {
     std::env::var_os("BROSDK_API_KEY").is_some_and(|value| !value.is_empty())
+}
+
+fn environment_value(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 #[cfg(test)]
@@ -3841,6 +4163,8 @@ mod tests {
                 debug: false,
                 startup_policy: "restore-none".into(),
                 embedded_mcp_port: None,
+                ai_base_url: None,
+                ai_model: None,
             },
         )
         .expect("store");
@@ -3865,6 +4189,8 @@ mod tests {
                 debug: false,
                 startup_policy: "restore-none".into(),
                 embedded_mcp_port: None,
+                ai_base_url: None,
+                ai_model: None,
             },
         )
         .expect("store");
@@ -4258,6 +4584,164 @@ mod tests {
         assert!(!text.contains("secret"));
     }
 
+    #[test]
+    fn cdp_origin_removes_credentials_paths_and_queries() {
+        assert_eq!(
+            external_cdp_origin(
+                "ws://user:pass@127.0.0.1:9333/devtools/browser/private?token=secret"
+            ),
+            Some("ws://127.0.0.1:9333".into())
+        );
+        assert_eq!(
+            external_cdp_origin("127.0.0.1:9223"),
+            Some("http://127.0.0.1:9223".into())
+        );
+        assert_eq!(external_cdp_origin("ready"), None);
+        assert_eq!(external_cdp_origin("-"), None);
+    }
+
+    #[test]
+    fn ai_provider_key_uses_secure_storage_and_never_sqlite() {
+        if environment_value("BROSDK_AI_API_KEY").is_some() {
+            return;
+        }
+        let directory = tempfile::tempdir().expect("tempdir");
+        let database = directory.path().join("manager.sqlite3");
+        let store = ManagerStore::open(
+            &database,
+            &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
+                work_dir: directory.path().join("work").display().to_string(),
+                extension_dir: directory.path().join("extensions").display().to_string(),
+                log_dir: directory.path().join("logs").display().to_string(),
+                sdk_api_url: None,
+                debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: None,
+                ai_base_url: None,
+                ai_model: None,
+            },
+        )
+        .expect("store");
+        let manager = Manager::with_store(store).expect("manager");
+        let secret = "stage16-secret-not-in-sqlite";
+        let status = manager
+            .configure_ai_provider(AiProviderConfigInput {
+                base_url: "https://api.deepseek.com/".into(),
+                model: "deepseek-v4-flash".into(),
+                api_key: Some(secret.into()),
+            })
+            .expect("provider configured");
+        assert!(status.api_key_present);
+        assert_eq!(status.api_key_source, "secure-storage");
+        assert_eq!(status.base_url, "https://api.deepseek.com");
+        let database_bytes = fs::read(&database).expect("database bytes");
+        assert!(
+            !database_bytes
+                .windows(secret.len())
+                .any(|bytes| bytes == secret.as_bytes())
+        );
+        let protected =
+            fs::read(platform::secrets_dir(directory.path()).join(AI_API_KEY_SECRET_REFERENCE))
+                .expect("protected key");
+        assert!(
+            !protected
+                .windows(secret.len())
+                .any(|bytes| bytes == secret.as_bytes())
+        );
+        let events = manager.events_since(0).expect("events");
+        assert!(
+            !serde_json::to_string(&events)
+                .expect("events json")
+                .contains(secret)
+        );
+    }
+
+    #[tokio::test]
+    async fn ai_context_focuses_env_id_and_exposes_only_cdp_origin() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = ManagerStore::open(
+            directory.path().join("manager.sqlite3"),
+            &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
+                work_dir: directory.path().join("work").display().to_string(),
+                extension_dir: directory.path().join("extensions").display().to_string(),
+                log_dir: directory.path().join("logs").display().to_string(),
+                sdk_api_url: None,
+                debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: None,
+                ai_base_url: None,
+                ai_model: None,
+            },
+        )
+        .expect("store");
+        store
+            .upsert_remote_environments(&[(
+                "env-focused".into(),
+                "Shared".into(),
+                json!({ "envId": "env-focused" }),
+            )])
+            .expect("environment");
+        store
+            .set_environment_runtime(RuntimeUpdate {
+                env_id: "env-focused",
+                generation: 0,
+                status: "ready",
+                request_id: Some(44),
+                operation_id: Some("op-focused"),
+                cdp: "ws://user:pass@127.0.0.1:9333/devtools/browser/private?token=secret",
+                last_event: "browser-open-success",
+            })
+            .expect("runtime");
+        let manager = Manager::with_store(store).expect("manager");
+        let context = manager
+            .ai_context(Some("env-focused"))
+            .await
+            .expect("context");
+        assert_eq!(context["focusedEnvId"], "env-focused");
+        assert_eq!(context["environments"][0]["cdpAvailable"], true);
+        assert_eq!(
+            context["environments"][0]["cdpOrigin"],
+            "ws://127.0.0.1:9333"
+        );
+        assert_eq!(context["environments"][0]["controlChannel"], "external-cdp");
+        let serialized = context.to_string();
+        for forbidden in ["user:pass", "/private", "token=secret", "devtools/browser"] {
+            assert!(
+                !serialized.contains(forbidden),
+                "found {forbidden} in {serialized}"
+            );
+        }
+
+        manager
+            .inner
+            .store
+            .set_environment_runtime(RuntimeUpdate {
+                env_id: "env-focused",
+                generation: 0,
+                status: "ready",
+                request_id: Some(45),
+                operation_id: None,
+                cdp: "-",
+                last_event: "browser-open-success",
+            })
+            .expect("pipe-only runtime");
+        let pipe_context = manager
+            .ai_context(Some("env-focused"))
+            .await
+            .expect("pipe context");
+        assert_eq!(pipe_context["environments"][0]["cdpAvailable"], false);
+        assert_eq!(
+            pipe_context["environments"][0]["cdpOrigin"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            pipe_context["environments"][0]["controlChannel"],
+            "sdk-browser-command"
+        );
+    }
+
     #[tokio::test]
     async fn mcp_call_requires_an_active_initialized_port() {
         let directory = tempfile::tempdir().expect("tempdir");
@@ -4272,6 +4756,8 @@ mod tests {
                 debug: false,
                 startup_policy: "restore-none".into(),
                 embedded_mcp_port: Some(9222),
+                ai_base_url: None,
+                ai_model: None,
             },
         )
         .expect("store");

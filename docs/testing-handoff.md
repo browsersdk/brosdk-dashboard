@@ -24,7 +24,7 @@ npm run e2e:credential
 npm run e2e:dashboard:desktop
 ```
 
-该 runner 驱动 Windows Tauri 窗口中的环境表按钮；已有已初始化窗口时直接复用，没有窗口时启动隔离桌面进程并通过隐藏 API Key 完成初始化。测试结束前会把目标环境恢复为 stopped，隔离启动时还会关闭进程并清理临时数据目录。
+该 runner 驱动 Windows Tauri 窗口中的环境表按钮；已有已初始化窗口时直接复用，没有窗口时启动隔离桌面进程并通过隐藏 API Key 完成初始化。它必须等待明确的“运行中”状态，不能把启动中已经可用的停止按钮误判为 ready；随后验证 AI 环境 envId、CDP 地址或 DLL 内部控制通道、AI Provider 设置入口、停止状态和操作中心身份。测试结束前会把目标环境恢复为 stopped，隔离启动时还会关闭进程并清理临时数据目录。
 
 可选测试变量：
 
@@ -349,3 +349,13 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 浏览器预览只验证筛选、详情和禁用态；真实 mutation 继续由 `npm run e2e:dashboard:desktop` 执行。
 
 2026-07-26 阶段 15 结果：新增 3 个操作中心组件测试和 1 个 Manager 状态策略测试。Browser 插件确认同名环境按 envId 过滤为 2/4、详情显示精确环境身份且 console 无 warning/error；截图能力仍不可用。`npm run e2e:dashboard` 在桌面与 390x844 共 10 项通过；真实 Tauri 启停 E2E 返回 `operationIdentityObserved=true`，不输出真实 envId、名称或凭据。最终 Dashboard 36 项、Rust workspace 82 项、Playwright 10 项测试，以及 `npm run check`、Clippy 和 production build 全部通过。
+
+## 19. 阶段 16 AI 配置与环境上下文验收
+
+- Provider 配置覆盖默认值、settings、安全存储和 `BROSDK_AI_*` 环境变量来源；环境变量来源必须只读显示。
+- AI API Key 保存后不回显，SQLite、事件和受保护 secret 文件均不得包含明文字节；清除只影响安全存储来源。
+- AI 环境选择器必须显示“名称 · envId”，Chat/Agent 请求携带所选 envId。模型上下文只允许脱敏 CDP origin 或 `sdk-browser-command` 控制通道。
+- 本地 UI 对外部 CDP 地址提供复制；`remoteDebuggingPort=0` 的 ready 环境显示“未暴露 TCP 地址 / DLL 内部 CDP / MCP”，不能显示 `ready`、`-` 或伪造 URL。
+- `npm run e2e:dashboard:desktop` 必须完成 start -> 明确运行中 -> AI 环境信息 -> Provider 设置 -> stop -> 操作中心，并把目标环境恢复为 stopped。
+
+2026-07-26 阶段 16 结果：Dashboard 43 项、Rust workspace 86 项、Playwright 桌面/移动 12 项通过；`npm run check`、Clippy、production build 和真实 Tauri UI E2E 全部通过。真实环境使用 DLL 内部 CDP pipe，桌面报告 `aiEnvironmentContextObserved/aiProviderSettingsObserved=true`，不输出 API Key、真实 envId 或 CDP 内容。

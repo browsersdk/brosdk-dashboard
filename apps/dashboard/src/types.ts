@@ -138,6 +138,15 @@ export interface AiProviderStatus {
   baseUrl: string;
   model: string;
   apiKeyPresent: boolean;
+  apiKeySource: string;
+  baseUrlSource: string;
+  modelSource: string;
+}
+
+export interface AiProviderConfigInput {
+  baseUrl: string;
+  model: string;
+  apiKey: string | null;
 }
 
 export interface AiChatResponse {
@@ -200,6 +209,8 @@ export interface ManagerSettings {
   debug: boolean;
   startupPolicy: string;
   embeddedMcpPort: number | null;
+  aiBaseUrl: string | null;
+  aiModel: string | null;
 }
 
 export interface EnvironmentBindingSummary {

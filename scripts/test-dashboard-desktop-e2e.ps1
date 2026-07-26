@@ -13,6 +13,12 @@ Add-Type -AssemblyName UIAutomationClient
 $initializeLabel = -join ([char[]](0x521D, 0x59CB, 0x5316))
 $environmentLabel = -join ([char[]](0x73AF, 0x5883))
 $operationsLabel = -join ([char[]](0x64CD, 0x4F5C))
+$reconcileLabel = -join ([char[]](0x5BF9, 0x8D26))
+$aiLabel = "AI " + (-join ([char[]](0x52A9, 0x624B)))
+$aiProviderSettingsLabel = "AI Provider " + (-join ([char[]](0x8BBE, 0x7F6E)))
+$runningLabel = -join ([char[]](0x8FD0, 0x884C, 0x4E2D))
+$cdpUnavailableLabel = (-join ([char[]](0x672A, 0x66B4, 0x9732))) + " TCP " + (-join ([char[]](0x5730, 0x5740)))
+$internalCdpLabel = "DLL " + (-join ([char[]](0x5185, 0x90E8))) + " CDP / MCP"
 $startPattern = (-join ([char[]](0x542F, 0x52A8))) + " *"
 $stopPattern = (-join ([char[]](0x505C, 0x6B62))) + " *"
 
@@ -39,6 +45,8 @@ $readyObserved = $false
 $stopInvoked = $false
 $stoppedObserved = $false
 $operationIdentityObserved = $false
+$aiEnvironmentContextObserved = $false
+$aiProviderSettingsObserved = $false
 $targetEnvId = $null
 
 function Get-DashboardWindow([int]$AppProcessId) {
@@ -201,9 +209,67 @@ try {
     $startInvoked = $true
 
     $stopButton = Wait-ForDashboardValue {
-        Find-DashboardButton $window $stopPattern -Like -Enabled
-    } "ready environment stop button"
+        $elements = Get-DashboardElements $window
+        $readyStatus = @($elements) | Where-Object {
+            $_.Current.Name -eq $runningLabel
+        } | Select-Object -First 1
+        $enabledStop = @($elements) | Where-Object {
+            $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button -and
+                $_.Current.Name -like $stopPattern -and
+                $_.Current.IsEnabled
+        } | Select-Object -First 1
+        if ($readyStatus -and $enabledStop) { return $enabledStop }
+        return $null
+    } "ready environment state"
     $readyObserved = $true
+
+    $reconcileButton = Wait-ForDashboardValue {
+        Find-DashboardButton $window $reconcileLabel -Enabled
+    } "runtime reconcile button"
+    Invoke-DashboardButton $reconcileButton
+    Start-Sleep -Milliseconds 500
+    Wait-ForDashboardValue {
+        Find-DashboardButton $window $reconcileLabel -Enabled
+    } "completed runtime reconciliation" | Out-Null
+
+    $aiButton = Wait-ForDashboardValue {
+        Find-DashboardButton $window $aiLabel -Enabled
+    } "AI navigation"
+    Invoke-DashboardButton $aiButton
+    Wait-ForDashboardValue {
+        $elements = Get-DashboardElements $window
+        $identity = @($elements) | Where-Object {
+            $_.Current.Name -eq $targetEnvId
+        } | Select-Object -First 1
+        $cdp = @($elements) | Where-Object {
+            $_.Current.Name -eq $cdpUnavailableLabel -or
+                $_.Current.Name -eq $internalCdpLabel -or
+                $_.Current.Name -match "^(ws|http)://"
+        } | Select-Object -First 1
+        if ($identity -and $cdp) { return $true }
+        return $false
+    } "AI environment identity and CDP" | Out-Null
+    $aiEnvironmentContextObserved = $true
+
+    $aiSettingsButton = Wait-ForDashboardValue {
+        Find-DashboardButton $window $aiProviderSettingsLabel -Enabled
+    } "AI Provider settings entry"
+    Invoke-DashboardButton $aiSettingsButton
+    Wait-ForDashboardValue {
+        $elements = Get-DashboardElements $window
+        @($elements) | Where-Object {
+            $_.Current.Name -eq "OpenAI-compatible Base URL"
+        } | Select-Object -First 1
+    } "AI Provider settings" | Out-Null
+    $aiProviderSettingsObserved = $true
+
+    $environmentButton = Wait-ForDashboardValue {
+        Find-DashboardButton $window $environmentLabel -Enabled
+    } "environment navigation after AI verification"
+    Invoke-DashboardButton $environmentButton
+    $stopButton = Wait-ForDashboardValue {
+        Find-DashboardButton $window $stopPattern -Like -Enabled
+    } "ready environment stop button after AI verification"
     Invoke-DashboardButton $stopButton
     $stopInvoked = $true
 
@@ -233,11 +299,18 @@ try {
         stopInvokedFromDashboard = $stopInvoked
         stoppedObservedInDashboard = $stoppedObserved
         operationIdentityObserved = $operationIdentityObserved
+        aiEnvironmentContextObserved = $aiEnvironmentContextObserved
+        aiProviderSettingsObserved = $aiProviderSettingsObserved
     } | ConvertTo-Json
 }
 finally {
     if ($window -and $startInvoked -and -not $stoppedObserved) {
         try {
+            $cleanupEnvironment = Find-DashboardButton $window $environmentLabel -Enabled
+            if ($cleanupEnvironment) {
+                Invoke-DashboardButton $cleanupEnvironment
+                Start-Sleep -Seconds 1
+            }
             $cleanupStop = Find-DashboardButton $window $stopPattern -Like -Enabled
             if ($cleanupStop) {
                 Invoke-DashboardButton $cleanupStop

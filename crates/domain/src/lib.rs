@@ -488,6 +488,8 @@ pub struct ManagerSettings {
     pub debug: bool,
     pub startup_policy: String,
     pub embedded_mcp_port: Option<u16>,
+    pub ai_base_url: Option<String>,
+    pub ai_model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -579,12 +581,24 @@ pub struct AiProviderStatus {
     pub base_url: String,
     pub model: String,
     pub api_key_present: bool,
+    pub api_key_source: String,
+    pub base_url_source: String,
+    pub model_source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiProviderConfigInput {
+    pub base_url: String,
+    pub model: String,
+    pub api_key: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiChatRequest {
     pub prompt: String,
+    pub context_env_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -599,6 +613,7 @@ pub struct AiChatResponse {
 #[serde(rename_all = "camelCase")]
 pub struct AiAgentPlanRequest {
     pub prompt: String,
+    pub context_env_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

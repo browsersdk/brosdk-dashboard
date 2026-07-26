@@ -11,11 +11,11 @@ Manager 使用 `runtime/data/manager.sqlite3` 持久化设置、operation、本�
 - 任一分页失败时不写入部分结果，保留上一份缓存并标记 stale。
 - generation、reqId、CDP、ready/stopped 属于当前设备运行态，可与缓存一起保存，但不能覆盖远端环境配置。
 
-当前 schema version 为 5：
+当前 schema version 为 6：
 
 | 表 | 用途 |
 | --- | --- |
-| `settings` | dataDir、workDir、extensionDir、logDir、sdkApiUrl、debug、startupPolicy、embeddedMcpPort |
+| `settings` | dataDir、workDir、extensionDir、logDir、sdkApiUrl、debug、startupPolicy、embeddedMcpPort、aiBaseUrl、aiModel |
 | `environments` | SDK 服务端环境的可丢弃脱敏缓存，以及当前设备 generation、状态和 CDP |
 | `environment_cache_status` | 缓存 fresh/stale/empty、条数、最后成功/尝试时间和脱敏错误 |
 | `operations` | queued/running/succeeded/failed/cancelled 状态机与脱敏 request snapshot |
@@ -75,6 +75,7 @@ host 进入 degraded 时，Manager 把 preparing/starting/ready/stopping 环境�
 
 - 指纹 profile 表保留旧数据兼容和后续专家能力；普通 Dashboard 不再以本地 JSON profile 作为环境指纹事实或创建输入。
 - 代理 profile 在 SQLite 中保存 scheme、host、port、username、环境绑定和 `secret_ref`。Windows 密码通过当前用户 DPAPI 加密后写入 `<dataDir>/secrets/*.bin`，不会以明文进入 SQLite、事件或诊断包。
+- AI Provider 的 Base URL 和模型属于非敏感 settings；AI API Key 使用独立平台 secret reference。`BROSDK_AI_API_KEY/BROSDK_AI_BASE_URL/BROSDK_AI_MODEL` 可作为受管部署覆盖项，Dashboard 不覆盖环境变量来源。
 - 环境详情缓存只保留指纹、代理和浏览器/内核摘要，Cookie、token、secret 等字段不进入本地详情表。
 
 ## 设置迁移
@@ -92,7 +93,9 @@ queued -> initialize SDK once -> sdk_env_page(page=1..N) -> atomic replace -> su
 
 分页默认每页 200 条，最多 500 页/100000 个唯一 envId。Manager 根据 `data.total`（兼容 count）继续拉取，按 envId 去重；总数中途变化、空页提前结束、重复页无新增或超过上限都视为失败。缓存写入在 Manager 持久化入口再次脱敏，成功事务会删除服务端已不存在的 environment、runtime snapshot 和级联 detail。
 
-`manager_reconcile_runtimes` 调用 `sdk_browser_info`，把存在于返回值中的环境对账为 ready，把本地活动但不再存在的环境改为 stopped。该路径用于手动关闭浏览器后的状态恢复。
+`manager_reconcile_runtimes` 调用 `sdk_browser_info`，把带明确 CDP endpoint 的环境对账为 ready，并可为已经 ready 的环境补充后到的 `remoteDebuggingPort`；把本地活动但不再存在的环境改为 stopped。只包含 envId 且端口为 0 的条目代表 DLL 仍跟踪该环境，但不能伪造 TCP 地址；已由 callback 确认 ready 的环境保持 ready，并在 Dashboard 标记为 DLL 内部 CDP/MCP 控制通道。该路径用于手动关闭浏览器后的状态恢复。
+
+AI Chat/Agent 的环境上下文按选中的精确 `envId` 构造。Dashboard 可以显示本地完整 CDP 地址，但 Manager 发送给模型前只保留安全 origin；`ready`、`-` 和其它非地址值不会被当成 endpoint。pipe-only ready 环境发送 `controlChannel=sdk-browser-command`、`cdpAvailable=false`，外部模型不能据此获得本地 DevTools 控制路径。
 
 `manager_create_environment` 串行执行：校验 proxy profile 和本地已安装内核，临时恢复受保护代理 URL，调用 `sdk_env_create`，校验后端 `code=200` 与 `data.envId`，立即 upsert 创建结果，再尽力执行 `sdk_env_page` 完整对账。远端创建已经成功但后续分页同步失败时，operation 仍成功并标记镜像刷新延后，避免盲目重试造成重复环境。
 

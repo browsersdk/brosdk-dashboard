@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardSnapshot } from "./types";
-import { assertEnvironmentIdentity, environmentControlLabel, environmentLabel } from "./environmentIdentity";
+import {
+  assertEnvironmentIdentity,
+  environmentCdpAddress,
+  environmentCdpLabel,
+  environmentControlChannel,
+  environmentControlLabel,
+  environmentLabel,
+} from "./environmentIdentity";
 
 const snapshot = {
   environments: [environment("env-1", "共享环境"), environment("env-2", "共享环境")],
@@ -36,6 +43,18 @@ describe("environment identity", () => {
       ...snapshot,
       environmentBindings: [binding("env-3")],
     })).toThrow("环境详情引用了不存在的 envId: env-3");
+  });
+
+  it("distinguishes an exposed CDP address from the DLL internal control channel", () => {
+    const running = { ...environment("env-1", "共享环境"), status: "ready" };
+    expect(environmentCdpAddress(running)).toBeNull();
+    expect(environmentCdpLabel(running)).toBe("未暴露 TCP 地址");
+    expect(environmentControlChannel(running)).toBe("DLL 内部 CDP / MCP");
+
+    const exposed = { ...running, cdp: "127.0.0.1:9222" };
+    expect(environmentCdpAddress(exposed)).toBe("127.0.0.1:9222");
+    expect(environmentCdpLabel(exposed)).toBe("127.0.0.1:9222");
+    expect(environmentControlChannel(exposed)).toBe("TCP CDP");
   });
 });
 
