@@ -27,7 +27,12 @@
     "ai:smoke": "cargo run -p ai-agent --bin ai-smoke",
     "release:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-windows-sidecar.ps1",
     "release:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-release.ps1 -PortableOnly",
-    "release:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-portable.ps1",
-    "release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-release.ps1"
+    "release:verify:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-portable.ps1",
+    "release:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-release.ps1",
+    "release:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-release.ps1",
+    "release:windows:msi": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-release.ps1 -Msi",
+    "release:test:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-installer.ps1",
+    "release:test:installer:full": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-installer.ps1 -FullDashboardE2e",
+    "release:test:msi": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-windows-msi.ps1"
   }
 }

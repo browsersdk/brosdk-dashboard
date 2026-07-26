@@ -41,7 +41,7 @@
       "../../../libs/windows_x64/brosdk.dll": "brosdk/brosdk.dll"
     },
     "externalBin": ["bin/sdk-host"],
-    "useLocalToolsDir": true,
+    "useLocalToolsDir": false,
     "windows": {
       "webviewInstallMode": {
         "type": "embedBootstrapper",

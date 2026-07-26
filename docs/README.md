@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-26，阶段 0-17 已完成：
+截至 2026-07-26，阶段 0-18 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-17 的仓库内规划已全部实施并通过当前平台验收。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/环境上下文和 CDP 运行态回填已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
+[roadmap.md](roadmap.md) 中阶段 0-18 的仓库内规划已全部实施并通过当前平台验收。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/环境上下文、CDP 运行态回填和 Windows 安装交付已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -91,6 +91,8 @@ brosdk-dashboard/
 
 阶段 17 CDP 运行态回填已完成：Manager 使用统一解析器读取 `browser-open-success`、`sdk_env_getinfo` 和 `sdk_browser_info` 中的 DevTools URL 或调试端口，兼容数值、数字字符串、下划线字段和 JSON 编码子对象；只识别 CDP 专用键，不会把代理端口或指纹端口扫描配置误判为 CDP。callback 已提供地址时直接落库；否则 success 后先查询一次 `sdk_env_getinfo`，再轮询本地 `sdk_browser_info`。详情刷新同样可为 ready 环境补充地址，事务只更新 CDP/runtime snapshot，不改变 generation、reqId、operation 或最近生命周期事件。当前仓库携带的 DLL 2.0.0.8 实测 success callback 与 BrowserInfo 的 `remoteDebuggingPort` 为 0，运行中 getEnvInfo 未返回 CDP 字段，因此真实桌面仍显示内部控制通道；非零路径由单元测试覆盖。最终 Dashboard 43 项、Rust workspace 89 项、Playwright 12 项、真实 Tauri E2E、check、Clippy 和 production build 全部通过。
 
+阶段 18 Windows 安装交付已完成：`npm run release:windows` 默认生成 NSIS 和便携 ZIP，`npm run release:windows:msi` 提供 `zh-CN/en-US` 双语可选 MSI；官方 Tauri NSIS/WiX 工具由脚本按固定哈希准备到用户级缓存。`npm run release:verify` 校验统一清单、ZIP 内容、版本、大小、SHA-256 和签名状态，两个 MSI 还通过 administrative extraction 与资源检查。真实 NSIS 测试完成临时静默安装、首次 API Key 页面、使用安全输入凭据的完整 Dashboard 环境启停/AI/操作中心流程，以及无阻塞静默卸载；当前内部产物未签名，只用于测试，正式交付必须注入代码签名证书并启用签名强制校验。
+
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 
 Manager/Runtime Host 创建链路、Dashboard 双字段交互和真实创建/删除验收均已完成：FFI 已加载 `sdk_env_create`/`sdk_env_destroy`，Runtime Host 继续统一脱敏，Manager 校验本地内核、后端业务 `code=200`、创建结果 `data.envId`，并把结果写入本地镜像和 operation。环境页的创建带只显示代理与内核版本，默认本机网络并预选最新本地内核；无可用内核时跳转内核页。`getUserSig` 请求固定使用 `role=user`。真实 DLL 验收使用 Chrome 134 和本机网络完成创建、镜像确认、删除及 `env_page` 对账，测试环境已清理。
@@ -103,7 +105,7 @@ Dashboard MCP 页面使用“全局/单环境”作用域、ready 环境选择�
 
 阶段 5 已用真实账号完成 `getUserSig(role=user) -> init -> env_page -> browser_open -> browser-open-success -> Runtime.evaluate -> browser_close -> browser-close-success`。DLL 自带 MCP capability 已验证可用；只有设置 `BROSDK_EMBEDDED_PORT` 时才在 runtime host 初始化中启用端口。
 
-阶段 7 已完成 Windows 便携发布验证：`npm run release:portable` 生成 ZIP，`npm run release:verify` 校验 `BroSDK Dashboard.exe`、`sdk-host.exe`、`brosdk/brosdk.dll` 和 `RELEASE-MANIFEST.json`。NSIS/MSI 的最终构建需要 Windows 构建机安装 NSIS/WiX 工具；正式签名不在仓库中保存证书。
+阶段 7 的便携发布能力已由阶段 18 扩展为完整 Windows 发布闭环；当前命令和签名/安装测试要求见 [windows-release.md](windows-release.md)。
 
 阶段 8 已完成平台路径、UDS、系统 keyring 和 capability 边界；Windows、Linux x64 和 macOS x64 的核心平台 crates 均通过编译检查。仓库当前仍只携带 Windows x64 SDK 动态库，因此其他平台会明确显示 unavailable，直到对应库加入 `libs/<platform>_<arch>`。
 

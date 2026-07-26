@@ -368,3 +368,15 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - `npm run e2e:dashboard:desktop` 报告 `cdpEndpointObserved`：真实地址为 true，内部 pipe/fallback 为 false；两种情况都必须完成 start -> ready -> AI -> stop 并恢复 stopped。
 
 2026-07-26 阶段 17 结果：直接 C API 在运行中验证仓库 DLL 2.0.0.8，success callback 与 BrowserInfo 的 `remoteDebuggingPort` 均为 0，getEnvInfo 未返回 CDP 字段，因此桌面报告 `cdpEndpointObserved=false`；未伪造 TCP 地址。新增 Manager/CDP/Store 和 sdk-host 回调测试后，Dashboard 43 项、Rust workspace 89 项、Playwright 12 项通过；Browser 插件完成 AI 环境切换和 console 验证，截图 API 不可用时由 Playwright 完成视觉/响应式覆盖。`npm run check`、Clippy、production build 和真实 Tauri E2E 全部通过。
+
+## 21. 阶段 18 Windows 安装交付验收
+
+- `npm run release:windows` 必须同时产出 NSIS、便携 ZIP 和 `WINDOWS-RELEASE-MANIFEST.json`；默认命令不因可选 WiX/MSI 缺失而失败。
+- `npm run release:verify` 必须验证便携目录、ZIP 内容、NSIS 版本、大小和 SHA-256。正式发布额外使用 `-RequireSignature`，内部未签名构建只报告状态。
+- `npm run release:test:installer` 不读取凭据，只验证临时静默安装、必需资源、首次初始化页和静默卸载。
+- `npm run release:test:installer:full` 通过安全提示读取 API Key，必须针对安装后的 release 完成初始化、环境 ready、AI 环境上下文、Provider 设置、停止和操作中心验证。
+- `npm run release:test:msi` 必须对每个语言 MSI 完成无产品注册的 administrative extraction，并检查 Dashboard、sidecar 和 DLL。
+- 安装测试检测到已有 BroSDK Dashboard 时必须拒绝运行，不能覆盖或卸载用户现有版本。
+- 静默卸载保留默认用户数据且不弹框；测试使用唯一 `BROSDK_DATA_DIR` 并在退出时清理。
+
+2026-07-26 阶段 18 结果：默认 NSIS 与便携发布、可选 `zh-CN/en-US` MSI、统一清单验证和无凭据首次启动烟雾测试全部通过；两个 MSI 均完成 administrative extraction 和资源检查。完整安装版 E2E 使用隐藏输入的测试 API Key 完成 `getUserSig(role=user) -> init -> env_page -> start -> callback ready -> AI/operation -> stop -> stopped`，然后静默卸载；报告不含 API Key、userSig、envId 或页面正文。当前 DLL 未暴露非零 CDP TCP 地址，结果保持 `cdpEndpointObserved=false`。测试后无安装注册、临时安装目录、Manager 数据目录或 `sdk-host` 残留。

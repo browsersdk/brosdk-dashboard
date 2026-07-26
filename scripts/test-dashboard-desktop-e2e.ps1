@@ -1,5 +1,7 @@
 param(
-    [int]$TimeoutSeconds = 120
+    [int]$TimeoutSeconds = 120,
+    [string]$DesktopExecutable = "",
+    [switch]$FirstRunOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -94,46 +96,61 @@ function Invoke-DashboardButton($Button) {
 }
 
 try {
-    $desktopProcess = Get-Process -Name "brosdk-desktop" -ErrorAction SilentlyContinue |
-        Sort-Object StartTime -Descending |
-        Select-Object -First 1
+    if ([string]::IsNullOrWhiteSpace($DesktopExecutable)) {
+        $desktopProcess = Get-Process -Name "brosdk-desktop" -ErrorAction SilentlyContinue |
+            Sort-Object StartTime -Descending |
+            Select-Object -First 1
+    }
 
     if (-not $desktopProcess) {
-        $listener = Get-NetTCPConnection -State Listen -LocalPort 1420 -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if (-not $listener) {
-            $viteOut = Join-Path $tempRoot ("brosdk-dashboard-vite-" + [guid]::NewGuid().ToString("N") + ".log")
-            $viteError = Join-Path $tempRoot ("brosdk-dashboard-vite-" + [guid]::NewGuid().ToString("N") + ".error.log")
-            $viteProcess = Start-Process -FilePath (Get-Command node).Source -ArgumentList @(
-                (Join-Path $repoRoot "node_modules\vite\bin\vite.js"),
-                "--host", "127.0.0.1",
-                "--port", "1420",
-                "--strictPort"
-            ) -WorkingDirectory (Join-Path $repoRoot "apps\dashboard") -WindowStyle Hidden -PassThru `
-                -RedirectStandardOutput $viteOut -RedirectStandardError $viteError
-            $ownsVite = $true
-            Wait-ForDashboardValue {
-                try {
-                    $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:1420/" -TimeoutSec 2
-                    return $response.StatusCode -eq 200
-                }
-                catch {
-                    return $false
-                }
-            } "Dashboard Vite server" 30 | Out-Null
-        }
+        if ([string]::IsNullOrWhiteSpace($DesktopExecutable)) {
+            $listener = Get-NetTCPConnection -State Listen -LocalPort 1420 -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if (-not $listener) {
+                $viteOut = Join-Path $tempRoot ("brosdk-dashboard-vite-" + [guid]::NewGuid().ToString("N") + ".log")
+                $viteError = Join-Path $tempRoot ("brosdk-dashboard-vite-" + [guid]::NewGuid().ToString("N") + ".error.log")
+                $viteProcess = Start-Process -FilePath (Get-Command node).Source -ArgumentList @(
+                    (Join-Path $repoRoot "node_modules\vite\bin\vite.js"),
+                    "--host", "127.0.0.1",
+                    "--port", "1420",
+                    "--strictPort"
+                ) -WorkingDirectory (Join-Path $repoRoot "apps\dashboard") -WindowStyle Hidden -PassThru `
+                    -RedirectStandardOutput $viteOut -RedirectStandardError $viteError
+                $ownsVite = $true
+                Wait-ForDashboardValue {
+                    try {
+                        $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:1420/" -TimeoutSec 2
+                        return $response.StatusCode -eq 200
+                    }
+                    catch {
+                        return $false
+                    }
+                } "Dashboard Vite server" 30 | Out-Null
+            }
 
-        Set-Location -LiteralPath $repoRoot
-        & cargo build -p sdk-host -p brosdk-desktop
-        if ($LASTEXITCODE -ne 0) {
-            throw "desktop build failed with exit code $LASTEXITCODE"
+            Set-Location -LiteralPath $repoRoot
+            & cargo build -p sdk-host -p brosdk-desktop
+            if ($LASTEXITCODE -ne 0) {
+                throw "desktop build failed with exit code $LASTEXITCODE"
+            }
+            $DesktopExecutable = Join-Path $repoRoot "target\debug\brosdk-desktop.exe"
+        }
+        else {
+            $DesktopExecutable = [IO.Path]::GetFullPath($DesktopExecutable)
+            if (-not (Test-Path -LiteralPath $DesktopExecutable -PathType Leaf)) {
+                throw "Desktop executable not found: $DesktopExecutable"
+            }
+            $existingDesktop = Get-Process -Name "brosdk-desktop", "BroSDK Dashboard" -ErrorAction SilentlyContinue
+            if ($existingDesktop) {
+                throw "Refusing to start installed desktop E2E while another brosdk-desktop process is running"
+            }
         }
 
         $env:BROSDK_DATA_DIR = $resolvedDataDir
         if ([string]::IsNullOrWhiteSpace($env:BROSDK_WORK_DIR)) {
             $env:BROSDK_WORK_DIR = Join-Path $repoRoot "runtime\sdk-work"
         }
-        $desktopProcess = Start-Process -FilePath (Join-Path $repoRoot "target\debug\brosdk-desktop.exe") -PassThru
+        $desktopProcess = Start-Process -FilePath $DesktopExecutable -PassThru
         $ownsDesktop = $true
     }
 
@@ -155,6 +172,19 @@ try {
         }
         return $null
     } "Dashboard startup state" 60
+
+    if ($FirstRunOnly) {
+        if ($startupState.Mode -ne "first-run") {
+            throw "Expected installed Dashboard to show first-run API Key initialization"
+        }
+        [ordered]@{
+            status = "passed"
+            desktopLaunchedByTest = $ownsDesktop
+            firstRunInitializationVisible = $true
+        } | ConvertTo-Json
+        return
+    }
+
     $apiInput = if ($startupState.Mode -eq "first-run") { $startupState.Element } else { $null }
 
     if ($apiInput) {

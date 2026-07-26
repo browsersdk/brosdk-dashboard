@@ -11,7 +11,7 @@
 | 4. Dashboard MVP | P0 | 已完成 | 总览、环境列表、启动、停止、运行详情完成 |
 | 5. 环境 E2E | P0 | 已完成 | 使用测试 API Key 完成列表、启动、ready、CDP command、手动关闭对账入口、停止 |
 | 6. 完整菜单 | P1 | 已完成 | 指纹、代理、内核、操作、设置菜单与 Manager API 已补齐 |
-| 7. 打包发布 | P1 | 已完成（安装器需本机工具链） | Windows 便携包、Tauri 资源、图标、WebView2、签名准备、升级策略 |
+| 7. 打包发布 | P1 | 已完成 | Windows 便携包、Tauri 资源、图标、WebView2、签名准备、升级策略 |
 | 8. 跨平台 | P2 | 基础 adapter 已完成，等待平台动态库 | macOS/Linux 路径、UDS、系统 keyring、能力报告和交叉编译完成 |
 | 9. AI Agent | P2 | 已完成 | DeepSeek/OpenAI 兼容 Chat、审批 Agent、持久化幂等、DLL MCP 只读 adapter |
 | 10. 环境创建交互收敛 | P0 | 已完成 | 创建环境只要求选择代理和内核版本，真实 DLL 创建/删除及镜像对账通过 |
@@ -21,6 +21,8 @@
 | 14. Dashboard envId 身份与 E2E | P0 | 已完成 | envId 唯一主键、同名环境可辨识交互和桌面/移动浏览器 E2E |
 | 15. 操作中心与故障恢复 | P0 | 已完成 | 按 envId 追踪 operation，取消/重试策略与真实执行能力一致 |
 | 16. AI 配置与环境上下文 | P0 | 已完成 | Dashboard 安全配置 AI Provider，并向用户和模型提供边界明确的环境运行摘要 |
+| 17. CDP 运行态多源回填 | P0 | 已完成 | callback/getEnvInfo/BrowserInfo 三路回填，端口 0 保持内部控制通道 |
+| 18. Windows 安装交付闭环 | P0 | 已完成 | NSIS、便携包、可选 MSI、哈希清单、安装版 Dashboard E2E 与静默卸载 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -448,7 +450,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 ## 17. 当前状态
 
-阶段 0-14 已完成。Dashboard 已把 envId 固化为环境关联和操作的唯一主键，并完成同名环境交互、桌面/移动浏览器 E2E 与真实双环境 SDK 复验。
+阶段 0-18 已完成。Dashboard 已形成以 envId 为唯一主键的多环境工作台、受控 AI/MCP 能力和经过真实安装 E2E 的 Windows 交付链路；环境配置仍以 SDK 服务端为事实来源，本地只保存可删除的脱敏缓存和运行态。
 
 阶段 14 envId 身份子阶段完成（2026-07-26）：
 
@@ -572,8 +574,8 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 - Tauri Windows bundle 已启用 NSIS/MSI 配置，便携包使用相同的 Dashboard、`sdk-host.exe` 和 `brosdk.dll` 资源布局。
 - 运行时支持便携目录、安装目录、Tauri `resources`/`resources/bin` 和目标三元组 sidecar 名称发现。
-- 发布脚本兼容当前 Windows PowerShell，生成 `RELEASE-MANIFEST.json` 和 ZIP，并由 `npm run release:verify` 校验文件存在性、SHA-256 和大小。
-- WebView2 使用 `embedBootstrapper`；正式发布仍需在 Windows 构建机安装 NSIS/WiX，证书由发布环境注入。
+- 发布脚本兼容 Windows PowerShell，生成 `RELEASE-MANIFEST.json` 和 ZIP；阶段 18 在此基础上完成安装器流水线和真实安装验收。
+- WebView2 使用 `embedBootstrapper`；正式签名证书仍由发布环境注入。
 
 阶段 8 实现结果：
 
@@ -675,3 +677,30 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - `open-success` 后只有在 callback 未提供 endpoint 时才触发补查；`sdk_env_getinfo` 命中后立即结束，未命中再轮询 `BrowserInfo`。
 - 直接 C API 实测仓库 DLL 2.0.0.8：success callback 与 BrowserInfo 返回 `remoteDebuggingPort=0`，运行中 getEnvInfo 没有 CDP/调试地址字段，因此桌面报告 `cdpEndpointObserved=false` 并保持内部控制通道显示。非零值、数字字符串、嵌套 JSON 和误判边界由单元测试覆盖。
 - Browser 插件完成 AI 环境切换和无控制台错误验证；截图 API 在当前插件运行时不可用，视觉与响应式验证由 Playwright 接管。最终 Dashboard 43 项、Rust workspace 89 项、Playwright 12 项，`npm run check`、Clippy、production build 和真实桌面 E2E 全部通过。
+
+## 21. 阶段 18：Windows 安装交付闭环
+
+目标：让普通用户可以从一个可重复构建、可校验、经过真实安装测试的 Windows 安装包开始使用 Dashboard。
+
+任务：
+
+- 默认发布生成 NSIS 安装包和便携 ZIP；MSI 作为独立可选企业产物，不阻塞普通用户交付。
+- 自动准备 Tauri 固定版本 NSIS/WiX 工具，下载必须可重试、可续传并通过固定哈希验证。
+- 将安装器、便携 ZIP、版本、大小、SHA-256 和签名状态统一写入发布清单。
+- 安装器 E2E 必须覆盖临时静默安装、打包资源、首次初始化、完整 Dashboard 生命周期和静默卸载。
+- 静默卸载不得弹出数据删除确认；交互式卸载按系统语言询问，并允许保留用户数据。
+
+验收：
+
+- `npm run release:windows`、`npm run release:verify` 和 `npm run release:test:installer` 通过。
+- 使用隐藏测试凭据运行 `npm run release:test:installer:full`，安装后的 release 完成 init -> start -> ready -> AI/operation -> stop -> stopped。
+- 测试结束后无 BroSDK Dashboard 卸载注册、安装目录、临时数据目录或 `sdk-host` 残留。
+- 内部未签名构建明确报告 `NotSigned`；正式发布可启用 `-RequireSignature` fail closed。
+
+阶段 18 实现结果（2026-07-26）：
+
+- 默认流水线真实生成约 13.1 MB NSIS 和 15.4 MB 便携 ZIP，可选流水线额外生成 `zh-CN/en-US` 双语 MSI，统一输出到 `dist/release`；产物清单、ZIP 内容、版本、大小和 SHA-256 校验通过。
+- Tauri NSIS 3.11 与辅助插件使用官方地址和固定哈希准备到用户级缓存；不再依赖 `PATH` 或项目 `target` 中的临时工具。WiX 3.14.1 由可选 MSI 命令按同一策略准备。
+- NSIS 首次启动烟雾测试通过；使用安全提示输入真实测试凭据后，已安装 release 完成初始化、环境 ready、AI 环境上下文、Provider 设置、停止和操作中心验收，随后静默卸载成功。
+- 两个 MSI 均通过无产品注册的 administrative extraction，并包含 Dashboard、`sdk-host.exe` 和 `brosdk.dll`。
+- 当前 DLL 仍返回 `remoteDebuggingPort=0`，安装版 E2E 正确报告 `cdpEndpointObserved=false` 并保留 DLL 内部 CDP/MCP 显示，没有伪造 TCP 地址。

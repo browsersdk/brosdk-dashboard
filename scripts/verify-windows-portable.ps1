@@ -4,7 +4,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$portableRoot = [IO.Path]::GetFullPath((Join-Path $root $PortableRoot))
+$portableRoot = if ([IO.Path]::IsPathRooted($PortableRoot)) {
+  [IO.Path]::GetFullPath($PortableRoot)
+}
+else {
+  [IO.Path]::GetFullPath((Join-Path $root $PortableRoot))
+}
 $manifestPath = Join-Path $portableRoot "RELEASE-MANIFEST.json"
 
 function Get-Sha256([string]$Path) {

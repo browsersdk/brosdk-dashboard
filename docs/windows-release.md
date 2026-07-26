@@ -1,43 +1,103 @@
 # Windows 发布与回滚
 
-## 产物
+## 产物与命令
 
-阶段 7 提供两类 Windows x64 产物：
+Windows x64 默认交付 NSIS 安装包和便携 ZIP：
 
-- NSIS/MSI 安装包：`npm run release:windows`
-- 便携 ZIP：`npm run release:portable`
-
-发布脚本会先构建 `sdk-host.exe` sidecar，再构建 Tauri 桌面程序，并生成：
-
-```text
-dist/release/BroSDK-Dashboard-portable/
-  BroSDK Dashboard.exe
-  sdk-host.exe
-  brosdk/brosdk.dll
-  RELEASE-MANIFEST.json
+```powershell
+npm run release:windows
+npm run release:verify
 ```
 
-`RELEASE-MANIFEST.json` 记录版本、目标三元组、文件大小和 SHA-256。构建产物不进入 Git。
+产物统一写入 `dist/release`：
 
-构建便携包后运行 `npm run release:verify`，脚本会检查必需文件、清单路径、SHA-256 和文件大小。
+```text
+dist/release/
+  BroSDK-Dashboard-0.1.0-windows-x64-setup.exe
+  BroSDK-Dashboard-0.1.0-windows-x64-portable.zip
+  WINDOWS-RELEASE-MANIFEST.json
+  BroSDK-Dashboard-portable/
+    BroSDK Dashboard.exe
+    sdk-host.exe
+    brosdk/brosdk.dll
+    RELEASE-MANIFEST.json
+```
 
-## 构建机要求
+`WINDOWS-RELEASE-MANIFEST.json` 记录版本、目标三元组、产物类型、文件大小、SHA-256 和签名状态。`npm run release:verify` 同时检查：
 
-便携包可在当前仓库脚本中直接构建。NSIS/MSI 安装包还要求 Windows 构建机提供 NSIS 和 WiX 工具；Tauri 会在 `useLocalToolsDir=true` 时缓存工具到 `target/.tauri/`。正式签名需要由发布环境注入证书 thumbprint、时间戳或签名命令，仓库不保存证书和私钥。
+- 便携目录的三个必需二进制及内部清单。
+- 便携 ZIP 可以打开且包含完整资源。
+- NSIS 安装包版本与发布版本一致。
+- 所有发布产物大小和 SHA-256 与总清单一致。
+- 签名状态可读取；内部未签名构建不会因此失败。
+
+只生成便携版：
+
+```powershell
+npm run release:portable
+npm run release:verify:portable
+```
+
+企业部署需要 MSI 时显式运行：
+
+```powershell
+npm run release:windows:msi
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-release.ps1 -RequireMsi
+npm run release:test:msi
+```
+
+该命令生成 NSIS、MSI 和便携 ZIP 的完整组合。MSI 是可选产物，不阻塞默认 NSIS 发布；固定 `upgradeCode` 为 `30a62539-a61f-5ee6-a81e-064d37fd1968`。
+
+`release:test:msi` 对每个语言 MSI 执行 Windows Installer administrative extraction，不注册或覆盖已安装产品，并检查 Dashboard、`sdk-host.exe` 和 `brosdk.dll`。
+
+## 构建工具
+
+`scripts/prepare-tauri-windows-tools.ps1` 自动准备 Tauri 固定版本的官方工具：
+
+- NSIS 3.11 与 `nsis_tauri_utils` 0.5.3。
+- MSI 模式额外准备 WiX 3.14.1。
+
+下载使用重试、续传和固定哈希校验；缓存位于 `%LOCALAPPDATA%/tauri/NSIS` 和 `%LOCALAPPDATA%/tauri/WixTools314`，不进入仓库。缓存完整后可重复构建，不依赖 `PATH` 中偶然存在的 NSIS/WiX，也不会因清理项目 `target` 重新下载工具。
+
+构建先用 `--no-bundle` 生成便携版，再单独生成安装器，避免将 Tauri 安装器 bundle 标记带入便携可执行文件。
+
+## 安装器 E2E
+
+首次启动、文件布局和卸载烟雾测试不需要测试凭据：
+
+```powershell
+npm run release:test:installer
+```
+
+该测试会：
+
+- 拒绝覆盖机器上已有的 BroSDK Dashboard 安装。
+- 静默安装到唯一系统临时目录。
+- 检查桌面程序、`sdk-host.exe` 和 `brosdk.dll`。
+- 启动安装后的 release，确认首次 API Key 初始化页可见。
+- 静默卸载并确认程序文件和卸载注册信息已移除。
+
+完整安装版 Dashboard E2E 使用安全输入提示读取 API Key：
+
+```powershell
+npm run release:test:installer:full
+```
+
+它在已安装 release 中完成 API Key 初始化、环境启动到 ready、AI 环境上下文、Provider 设置入口、环境停止和操作中心 envId 验证，然后静默卸载。测试凭据不会进入命令参数、仓库、发布清单或测试报告。
 
 ## WebView2
 
-NSIS/MSI 使用 Tauri `embedBootstrapper` 模式。安装时先检查 WebView2 Runtime，缺失或过旧时静默运行 Microsoft bootstrapper。便携包不携带 WebView2；目标机器需要预装 Evergreen WebView2 Runtime。
+NSIS/MSI 使用 Tauri `embedBootstrapper` 模式。安装时检查 WebView2 Runtime，缺失或过旧时静默运行 Microsoft bootstrapper。便携包不携带 WebView2；目标机器需要预装 Evergreen WebView2 Runtime。
 
-## 数据目录
+## 数据与卸载
 
-release 构建默认使用：
+release 默认数据目录：
 
 ```text
 %LOCALAPPDATA%/BroSDK Dashboard
 ```
 
-NSIS 卸载结束时询问是否删除本地数据、日志和受保护凭据；默认可选择保留。MSI 卸载始终保留用户数据，企业部署可另行清理该目录。
+交互式 NSIS 卸载按系统语言使用中文或英文询问是否删除本地数据、日志和受保护凭据。静默卸载不弹框并保留用户数据，避免自动升级或企业卸载被阻塞。MSI 卸载保留用户数据；企业部署可另行清理该目录。
 
 ## 签名
 
@@ -47,11 +107,17 @@ NSIS 卸载结束时询问是否删除本地数据、日志和受保护凭据；
 - `sdk-host.exe`
 - NSIS/MSI 安装包
 
-证书 thumbprint、时间戳 URL 和 CI secret 由发布环境注入。未签名构建仅用于内部测试。
+证书 thumbprint、时间戳 URL 和 CI secret 由发布环境注入。要求正式签名时运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-release.ps1 -RequireSignature
+```
+
+未签名构建只用于内部测试。
 
 ## 升级与回滚
 
-- MSI 的 `upgradeCode` 固定为 `30a62539-a61f-5ee6-a81e-064d37fd1968`，版本升级不会被 Windows 识别为新产品。
-- `allowDowngrades=false` 阻止安装器覆盖为更低版本。
-- 回滚时先卸载当前版本并选择保留用户数据，再安装目标旧版本；SQLite schema 只做向前兼容迁移，因此回滚前应备份 `%LOCALAPPDATA%/BroSDK Dashboard`。
+- `allowDowngrades=false` 阻止安装器直接覆盖为更低版本。
+- MSI 版本升级复用固定 `upgradeCode`，由 Windows 识别为同一产品线。
+- 回滚时先卸载当前版本并保留用户数据，再安装目标旧版本；SQLite schema 只做向前兼容迁移，因此回滚前应备份 `%LOCALAPPDATA%/BroSDK Dashboard`。
 - 便携版回滚直接替换程序目录，不删除用户数据目录。
