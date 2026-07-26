@@ -18,6 +18,7 @@
 | 11. 远端事实源与 MCP 双层路由 | P0 | 已完成 | 环境配置以 SDK 服务端为准，本地仅保留可丢弃缓存；DLL 全局与单环境 MCP 已接通并通过真实验收 |
 | 12. 首次初始化与环境工作台 | P0 | 已完成 | API Key 安全初始化、环境详情、远端指纹、运维动作和真实生命周期 E2E 完成 |
 | 13. 多环境工作流 | P0 | 已完成 | 批量启停、受限远端元数据编辑、跨环境指纹对比和双环境 E2E |
+| 14. Dashboard envId 身份与 E2E | P0 | 规划完成，实施中 | envId 唯一主键、同名环境可辨识交互和桌面/移动浏览器 E2E |
 
 ## 2. 阶段 0：项目骨架
 
@@ -412,9 +413,40 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 指纹对比不读取本地 profile，不显示 Cookie、Storage、DEK、路径、完整代理密码或未知原始字段。
 - `npm run check`、`npm test`、`npm run build`、真实双环境 E2E 和应用内浏览器 QA 通过。
 
-## 16. 当前状态
+## 16. 阶段 14：Dashboard envId 身份与 E2E
 
-阶段 0-13 已完成。阶段 13 的契约与产品边界、批量生命周期、远端元数据、指纹对比和双环境真实 E2E 均已验收。
+目标：把 `envId` 固化为 Dashboard 所有环境关联和操作的唯一主键，并建立可重复执行的完整浏览器 E2E，确保同名多指纹环境不会被错误选择或串联。
+
+产品原则：
+
+- `envId` 是 SDK 服务端分配的不可变唯一标识；环境名称是可编辑展示字段，允许重复，不能用于 React key、选择状态、详情绑定或 mutation 参数。
+- Manager SQLite 的 `environments.env_id`、`runtime_snapshots.env_id` 和 `environment_details.env_id` 继续以主键约束；Dashboard snapshot 必须拒绝空或重复 envId，并拒绝重复或悬空的详情绑定。
+- 表格、批量操作、指纹详情/对比、MCP 环境选择和代理绑定都以 envId 作为 value；名称相同时，界面和可访问名称必须同时展示 envId。
+- 浏览器预览只提供确定性的脱敏测试数据，不执行 Tauri/DLL mutation；真实生命周期继续由隔离 Manager runner 验收。
+
+子阶段：
+
+1. 身份契约：新增 Dashboard snapshot 身份校验和统一环境标签，覆盖重复名称、重复/空 envId、重复/悬空详情绑定。
+2. 交互收敛：为环境表、指纹列表/对比、MCP 和代理绑定补齐 envId 可见文本、可访问名称和稳定测试标识。
+3. Dashboard E2E：新增 Playwright 配置与同名环境预览场景，在桌面和 390px 移动视口覆盖 envId 搜索、独立多选、详情切换、指纹对比及 MCP 环境选项。
+4. 真实复验：双环境 SDK runner 显式断言并报告两个临时 envId 唯一，重新完成创建、批量启停、详情刷新、清理、删除和全量对账。
+
+验收：
+
+- 两个相同名称、不同 envId 的环境能独立选择，批量计数、详情和指纹列不会串联；所有 mutation 参数仍只发送目标 envId。
+- snapshot 出现空/重复 envId、重复详情绑定或绑定不存在的环境时，Dashboard 明确失败，不以名称或数组位置兜底。
+- `npm run e2e:dashboard` 在系统 Chrome 上自动启动独立 Vite 服务，桌面和 390px 项目全部通过，不依赖已打开的开发服务器。
+- 应用内浏览器完成页面身份、非空、framework overlay、console、交互和响应式检查；截图能力不可用时必须如实记录。
+- `npm run check`、`npm test`、`npm run build`、真实双环境 E2E、敏感信息扫描和残留进程检查全部通过。
+
+明确不做：
+
+- 不把环境名称强制唯一，不引入本地别名或名称到 envId 的反向猜测。
+- 不在浏览器预览或 Playwright 中调用真实 SDK mutation，不把 API Key、userSig、envId 测试账号数据或 DLL 原始响应写入测试产物。
+
+## 17. 当前状态
+
+阶段 0-13 已完成。阶段 14 已完成契约与验收规划，正在实施 Dashboard envId 身份校验、同名环境交互和可重复浏览器 E2E。
 
 阶段 13 批量生命周期子阶段完成（2026-07-26）：
 
