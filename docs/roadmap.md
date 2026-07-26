@@ -448,6 +448,13 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 阶段 0-13 已完成。阶段 14 已完成契约与验收规划，正在实施 Dashboard envId 身份校验、同名环境交互和可重复浏览器 E2E。
 
+阶段 14 envId 身份子阶段完成（2026-07-26）：
+
+- Dashboard snapshot 入口新增 fail-closed 身份守卫：环境 envId 必须非空且唯一，详情绑定 envId 必须非空、唯一并引用当前环境镜像；环境名称明确允许重复。
+- 统一环境展示/可访问标签为“名称 + envId”。环境表、批量选择、启停按钮、指纹详情/对比、MCP 和代理绑定继续只以 envId 作为 key、value 和操作参数。
+- 同名预览场景提供两个不同 envId 的 ready 环境；环境行、指纹选择器和对比列带稳定 envId 属性，不以数组位置或名称定位。
+- 新增 5 项身份与同名交互测试；Dashboard 组件测试由 28 项增至 33 项，TypeScript 检查与 production build 通过。组件测试还修正了 MCP 有 ready 环境时仍显示无效空选项的问题。
+
 阶段 13 批量生命周期子阶段完成（2026-07-26）：
 
 - Domain/Manager/Tauri 新增批量 start/stop 编排，限制 1-20 个唯一 envId，并在任何 SDK 调用前校验所有环境状态。

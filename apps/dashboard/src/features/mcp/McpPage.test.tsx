@@ -162,6 +162,27 @@ describe("McpPage", () => {
     expect((screen.getByRole("button", { name: "发现工具" }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "运行只读调用" }) as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it("distinguishes same-name environments by envId in every picker", () => {
+    renderPage({
+      snapshot: {
+        ...snapshot,
+        environments: [
+          { ...snapshot.environments[0], envId: "10001", name: "共享环境" },
+          { ...snapshot.environments[0], envId: "10002", name: "共享环境" },
+        ],
+      },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "单环境" }));
+    const environmentSelect = screen.getByLabelText("运行环境") as HTMLSelectElement;
+    expect(Array.from(environmentSelect.options).map((option) => option.text)).toEqual([
+      "共享环境 · 10001",
+      "共享环境 · 10002",
+    ]);
+    fireEvent.change(environmentSelect, { target: { value: "10002" } });
+    expect(environmentSelect.value).toBe("10002");
+  });
 });
 
 function execution(

@@ -17,6 +17,7 @@ import type {
   McpToolScope,
   McpToolSummary,
 } from "../../types";
+import { environmentLabel } from "../../environmentIdentity";
 
 const toolLabels: Record<string, string> = {
   "sdk.health": "SDK 健康",
@@ -198,9 +199,9 @@ export function McpPage({
             <label className="field">
               <span>运行环境</span>
               <select value={selectedEnvId} disabled={Boolean(busy)} onChange={(event) => setEnvId(event.target.value)}>
-                <option value="">没有 ready 环境</option>
+                {readyEnvironments.length === 0 && <option value="">没有 ready 环境</option>}
                 {readyEnvironments.map((environment) => (
-                  <option key={environment.envId} value={environment.envId}>{environment.name}</option>
+                  <option key={environment.envId} value={environment.envId}>{environmentLabel(environment)}</option>
                 ))}
               </select>
             </label>
@@ -342,7 +343,7 @@ function EnvironmentField({
       <select value={value} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
         {optional && <option value="">全部环境</option>}
         {!optional && environments.length === 0 && <option value="">没有环境</option>}
-        {environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.name}</option>)}
+        {environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environmentLabel(environment)}</option>)}
       </select>
     </label>
   );

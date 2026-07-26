@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { assertEnvironmentIdentity } from "./environmentIdentity";
 import type {
   AiAgentExecution,
   AiAgentPlan,
@@ -25,10 +26,10 @@ import type {
 } from "./types";
 
 export async function getSnapshot(): Promise<DashboardSnapshot> {
-  if (isTauri()) {
-    return invoke<DashboardSnapshot>("manager_snapshot");
-  }
-  return demoSnapshot();
+  const snapshot = isTauri()
+    ? await invoke<DashboardSnapshot>("manager_snapshot")
+    : demoSnapshot();
+  return assertEnvironmentIdentity(snapshot);
 }
 
 export async function configureApiKey(apiKey: string): Promise<ApiKeyInitializationResult> {
@@ -244,7 +245,12 @@ function isTauri() {
 }
 
 function demoSnapshot(): DashboardSnapshot {
-  const workspacePreview = new URLSearchParams(window.location.search).get("preview") === "workspace";
+  const search = new URLSearchParams(window.location.search);
+  const workspacePreview = search.get("preview") === "workspace";
+  const duplicateNames = search.get("scenario") === "duplicate-names";
+  const firstEnvironmentName = duplicateNames ? "共享工作环境" : "Marketing CN";
+  const secondEnvironmentName = duplicateNames ? "共享工作环境" : "Operations JP";
+  const previewEnvironmentStatus = duplicateNames ? "ready" : "stopped";
   return {
     sdk: {
       state: "browser-preview",
@@ -317,9 +323,9 @@ function demoSnapshot(): DashboardSnapshot {
     environments: [
       {
         envId: "env-demo-01",
-        name: "Marketing CN",
-        status: "stopped",
-        cdp: "-",
+        name: firstEnvironmentName,
+        status: previewEnvironmentStatus,
+        cdp: duplicateNames ? "ws://127.0.0.1/preview/env-demo-01" : "-",
         lastEvent: "browser-close-success",
         generation: 0,
         requestId: null,
@@ -328,9 +334,9 @@ function demoSnapshot(): DashboardSnapshot {
       },
       {
         envId: "env-demo-02",
-        name: "Operations JP",
-        status: "stopped",
-        cdp: "-",
+        name: secondEnvironmentName,
+        status: previewEnvironmentStatus,
+        cdp: duplicateNames ? "ws://127.0.0.1/preview/env-demo-02" : "-",
         lastEvent: "env_page sync",
         generation: 0,
         requestId: null,
@@ -373,7 +379,7 @@ function demoSnapshot(): DashboardSnapshot {
         displayUrl: "socks5://demo:***@127.0.0.1:1080",
       },
       remoteKernel: { kernel: "yun", version: "141", system: "All Windows" },
-      remoteMetadata: { envName: "Marketing CN", serial: "DEMO-01", enableDevtools: 1 },
+      remoteMetadata: { envName: firstEnvironmentName, serial: "DEMO-01", enableDevtools: 1 },
       refreshedAt: new Date().toISOString(),
     }, {
       envId: "env-demo-02",
@@ -394,7 +400,7 @@ function demoSnapshot(): DashboardSnapshot {
       },
       remoteProxy: null,
       remoteKernel: { kernel: "yun", version: "141", system: "All Windows" },
-      remoteMetadata: { envName: "Operations JP", serial: "JP-02", enableDevtools: 1 },
+      remoteMetadata: { envName: secondEnvironmentName, serial: "JP-02", enableDevtools: 1 },
       refreshedAt: new Date().toISOString(),
     }],
     fingerprints: [{

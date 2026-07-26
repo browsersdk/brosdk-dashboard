@@ -126,7 +126,7 @@ describe("FingerprintPage", () => {
   it("compares selected remote summaries as same, different, or unknown", () => {
     render(<FingerprintPage snapshot={snapshot} desktop={false} onRefresh={vi.fn()} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "对比" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "对比 东京运营" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "对比 东京运营 (env-2)" }));
 
     const kernelRow = screen.getByRole("row", { name: /内核/ });
     expect(within(kernelRow).getByText("相同")).toBeTruthy();
@@ -142,8 +142,8 @@ describe("FingerprintPage", () => {
     const environments = Array.from({ length: 5 }, (_, index) => environment(`env-${index + 1}`, `环境 ${index + 1}`, "stopped"));
     render(<FingerprintPage snapshot={{ ...snapshot, environments }} desktop={false} onRefresh={vi.fn()} onError={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "对比" }));
-    for (const index of [2, 3, 4]) fireEvent.click(screen.getByRole("checkbox", { name: `对比 环境 ${index}` }));
-    expect((screen.getByRole("checkbox", { name: "对比 环境 5" }) as HTMLInputElement).disabled).toBe(true);
+    for (const index of [2, 3, 4]) fireEvent.click(screen.getByRole("checkbox", { name: `对比 环境 ${index} (env-${index})` }));
+    expect((screen.getByRole("checkbox", { name: "对比 环境 5 (env-5)" }) as HTMLInputElement).disabled).toBe(true);
     expect(screen.getByText("4/4")).toBeTruthy();
   });
 
@@ -152,9 +152,27 @@ describe("FingerprintPage", () => {
     const onRefresh = vi.fn(async () => undefined);
     render(<FingerprintPage snapshot={snapshot} desktop onRefresh={onRefresh} onError={vi.fn()} onRefreshDetail={refreshDetail} />);
     fireEvent.click(screen.getByRole("button", { name: "对比" }));
-    fireEvent.click(screen.getByRole("checkbox", { name: "对比 东京运营" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "对比 东京运营 (env-2)" }));
     fireEvent.click(screen.getByRole("button", { name: "刷新所选" }));
     await waitFor(() => expect(refreshDetail.mock.calls.map(([envId]) => envId)).toEqual(["env-1", "env-2"]));
     expect(onRefresh).toHaveBeenCalledOnce();
+  });
+
+  it("keeps same-name environments distinct by envId in details and comparison", () => {
+    const sameNameSnapshot = {
+      ...snapshot,
+      environments: snapshot.environments.map((item) => ({ ...item, name: "共享环境" })),
+    };
+    const { container } = render(
+      <FingerprintPage snapshot={sameNameSnapshot} desktop={false} onRefresh={vi.fn()} onError={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "查看 共享环境 (env-2)" }));
+    expect(within(container.querySelector(".fingerprint-heading") as HTMLElement).getByText("env-2")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "对比" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "对比 共享环境 (env-1)" }));
+    const columns = Array.from(container.querySelectorAll(".fingerprint-comparison th[data-env-id]"));
+    expect(columns.map((column) => column.getAttribute("data-env-id"))).toEqual(["env-1", "env-2"]);
   });
 });

@@ -34,7 +34,7 @@ export function FingerprintComparisonView({
           <thead>
             <tr>
               <th>字段</th>
-              {comparison.environments.map((environment) => <th key={environment.envId} title={environment.envId}>{environment.name}</th>)}
+              {comparison.environments.map((environment) => <th key={environment.envId} data-env-id={environment.envId} title={environment.envId}><span>{environment.name}</span><small>{environment.envId}</small></th>)}
             </tr>
           </thead>
           <tbody>

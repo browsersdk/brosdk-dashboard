@@ -75,6 +75,7 @@ import { EnvironmentDetail } from "./features/environments/EnvironmentDetail";
 import { FingerprintPage } from "./features/fingerprints/FingerprintPage";
 import { McpPage } from "./features/mcp/McpPage";
 import { ApiKeySetup } from "./features/setup/ApiKeySetup";
+import { environmentControlLabel, environmentLabel } from "./environmentIdentity";
 import type {
   AiAgentExecution,
   AiAgentPlan,
@@ -564,19 +565,19 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           <thead><tr><th className="selection-cell"><input type="checkbox" aria-label="选择当前结果（最多 20 个）" checked={allVisibleSelected} disabled={selectableVisibleIds.length === 0} onChange={(event) => setSelectedEnvIds(event.target.checked ? selectableVisibleIds : [])} /></th><th>环境</th><th>状态</th><th>CDP</th><th>最后事件</th><th aria-label="操作" /></tr></thead>
           <tbody>
             {filteredRows.map((environment) => (
-              <tr key={environment.envId} className={selectedEnvId === environment.envId ? "selected" : ""} onClick={() => setSelectedEnvId(environment.envId)}>
-                <td className="selection-cell"><input type="checkbox" aria-label={`选择 ${environment.name}`} checked={selectedEnvIds.includes(environment.envId)} disabled={!selectedEnvIds.includes(environment.envId) && selectedEnvIds.length >= 20} onClick={(event) => event.stopPropagation()} onChange={(event) => toggleEnvironment(environment.envId, event.target.checked)} /></td>
+              <tr key={environment.envId} data-env-id={environment.envId} className={selectedEnvId === environment.envId ? "selected" : ""} onClick={() => setSelectedEnvId(environment.envId)}>
+                <td className="selection-cell"><input type="checkbox" aria-label={environmentControlLabel("选择", environment)} checked={selectedEnvIds.includes(environment.envId)} disabled={!selectedEnvIds.includes(environment.envId) && selectedEnvIds.length >= 20} onClick={(event) => event.stopPropagation()} onChange={(event) => toggleEnvironment(environment.envId, event.target.checked)} /></td>
                 <td><div className="resource-name"><span className="resource-icon"><Boxes size={16} /></span><div><strong>{environment.name}</strong><small>{environment.envId}</small></div></div></td>
                 <td><span className={`status-badge ${environment.status}`}>{statusLabel[environment.status] ?? environment.status}</span></td>
                 <td><code>{environment.cdp}</code></td>
                 <td>{environment.lastEvent}</td>
                 <td className="row-actions">
                   {environment.status === "ready" || environment.status === "starting" ? (
-                    <button className="icon-button danger" type="button" title="停止环境" aria-label={`停止 ${environment.name}`} disabled={!isDesktopRuntime() || Boolean(busyAction)} onClick={(event) => { event.stopPropagation(); void runAction(`stop:${environment.envId}`, () => stopEnvironment(environment.envId)); }}>
+                    <button className="icon-button danger" type="button" title="停止环境" aria-label={environmentControlLabel("停止", environment)} disabled={!isDesktopRuntime() || Boolean(busyAction)} onClick={(event) => { event.stopPropagation(); void runAction(`stop:${environment.envId}`, () => stopEnvironment(environment.envId)); }}>
                       {busyAction === `stop:${environment.envId}` ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}
                     </button>
                   ) : (
-                    <button className="icon-button" type="button" title="启动环境" aria-label={`启动 ${environment.name}`} disabled={!isDesktopRuntime() || Boolean(busyAction) || !["stopped", "failed"].includes(environment.status)} onClick={(event) => { event.stopPropagation(); void runAction(`start:${environment.envId}`, () => startEnvironment(environment.envId)); }}>
+                    <button className="icon-button" type="button" title="启动环境" aria-label={environmentControlLabel("启动", environment)} disabled={!isDesktopRuntime() || Boolean(busyAction) || !["stopped", "failed"].includes(environment.status)} onClick={(event) => { event.stopPropagation(); void runAction(`start:${environment.envId}`, () => startEnvironment(environment.envId)); }}>
                       {busyAction === `start:${environment.envId}` ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
                     </button>
                   )}
@@ -697,7 +698,7 @@ function ProxyPage({ snapshot, onRefresh, onError }: {
           <table className="module-table">
             <thead><tr><th>代理</th><th>协议</th><th>地址</th><th>凭据</th><th>绑定</th><th aria-label="操作" /></tr></thead>
             <tbody>{(snapshot?.proxies ?? []).map((profile) => (
-              <tr key={profile.id} className={selectedId === profile.id ? "selected" : ""} onClick={() => setSelectedId(profile.id)}>
+              <tr key={profile.id} data-resource-id={profile.id} className={selectedId === profile.id ? "selected" : ""} onClick={() => setSelectedId(profile.id)}>
                 <td><div className="resource-name"><span className="resource-icon"><Network size={16} /></span><div><strong>{profile.name}</strong><small>{profile.id}</small></div></div></td>
                 <td>{profile.scheme.toUpperCase()}</td><td><code>{profile.host}:{profile.port}</code></td>
                 <td>{profile.passwordPresent ? <span className="credential-state"><KeyRound size={13} />已保护</span> : "无"}</td>
@@ -713,7 +714,7 @@ function ProxyPage({ snapshot, onRefresh, onError }: {
           <label className="field"><span>名称</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
           <label className="field"><span>代理 URL</span><input placeholder="socks5://user:pass@host:1080" value={url} onChange={(event) => { setUrl(event.target.value); setParseSummary(""); }} /></label>
           <div className="inline-form-actions"><button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || !url || Boolean(busy)} onClick={() => void preview()}><Search size={14} />解析</button>{parseSummary && <code>{parseSummary}</code>}</div>
-          <label className="field"><span>绑定环境</span><select value={boundEnvId} onChange={(event) => setBoundEnvId(event.target.value)}><option value="">不绑定</option>{snapshot?.environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.name}</option>)}</select></label>
+          <label className="field"><span>绑定环境</span><select value={boundEnvId} onChange={(event) => setBoundEnvId(event.target.value)}><option value="">不绑定</option>{snapshot?.environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environmentLabel(environment)}</option>)}</select></label>
           <div className="form-actions"><button className="button primary" type="button" disabled={!isDesktopRuntime() || !url || Boolean(busy)} onClick={() => void save()}><CheckCircle2 size={15} />保存</button></div>
           <div className="divider" />
           <label className="field"><span>诊断 URL</span><input value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} /></label>

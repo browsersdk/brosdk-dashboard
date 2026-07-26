@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleDot, Columns3, Fingerprint, Globe2, List, LoaderCircle, RefreshCw, Search, X } from "lucide-react";
 import { isDesktopRuntime, openFingerprintCheck, refreshEnvironmentDetail } from "../../api";
 import type { DashboardSnapshot, OperationRecord } from "../../types";
+import { environmentControlLabel } from "../../environmentIdentity";
 import { fingerprintDetailGroups, formatRemoteValue, readRemoteValue, remoteProxyLabel } from "../environments/remoteDetails";
 import { FingerprintComparisonView } from "./FingerprintComparisonView";
 
@@ -165,15 +166,15 @@ export function FingerprintPage({
             const environmentBinding = snapshot?.environmentBindings.find((item) => item.envId === environment.envId);
             const kernel = [readRemoteValue(environmentBinding?.remoteKernel, ["kernel"]), readRemoteValue(environmentBinding?.remoteKernel, ["version"])].filter(Boolean).join(" ");
             return mode === "detail" ? (
-              <button key={environment.envId} className={`fingerprint-environment-row ${selectedEnvId === environment.envId ? "selected" : ""}`} type="button" onClick={() => setSelectedEnvId(environment.envId)}>
+              <button key={environment.envId} data-env-id={environment.envId} aria-label={environmentControlLabel("查看", environment)} className={`fingerprint-environment-row ${selectedEnvId === environment.envId ? "selected" : ""}`} type="button" onClick={() => setSelectedEnvId(environment.envId)}>
                 <span className="resource-icon"><Fingerprint size={16} /></span>
-                <span><strong>{environment.name}</strong><small>{kernel || environment.envId}</small></span>
+                <span><strong>{environment.name}</strong><small>{environment.envId}{kernel ? ` · ${kernel}` : ""}</small></span>
                 <span className={`status-badge ${environment.status}`}>{statusLabel[environment.status] ?? environment.status}</span>
               </button>
             ) : (
-              <label key={environment.envId} className={`fingerprint-environment-row fingerprint-compare-selector ${comparisonEnvIds.includes(environment.envId) ? "selected" : ""}`}>
-                <span><input type="checkbox" aria-label={`对比 ${environment.name}`} checked={comparisonEnvIds.includes(environment.envId)} disabled={!comparisonEnvIds.includes(environment.envId) && comparisonEnvIds.length >= 4} onChange={(event) => toggleComparison(environment.envId, event.target.checked)} /></span>
-                <span><strong>{environment.name}</strong><small>{kernel || environment.envId}</small></span>
+              <label key={environment.envId} data-env-id={environment.envId} className={`fingerprint-environment-row fingerprint-compare-selector ${comparisonEnvIds.includes(environment.envId) ? "selected" : ""}`}>
+                <span><input type="checkbox" aria-label={environmentControlLabel("对比", environment)} checked={comparisonEnvIds.includes(environment.envId)} disabled={!comparisonEnvIds.includes(environment.envId) && comparisonEnvIds.length >= 4} onChange={(event) => toggleComparison(environment.envId, event.target.checked)} /></span>
+                <span><strong>{environment.name}</strong><small>{environment.envId}{kernel ? ` · ${kernel}` : ""}</small></span>
                 <span className={`status-badge ${environment.status}`}>{statusLabel[environment.status] ?? environment.status}</span>
               </label>
             );
