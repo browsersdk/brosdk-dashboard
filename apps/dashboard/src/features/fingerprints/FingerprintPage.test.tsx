@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DashboardSnapshot, OperationRecord } from "../../types";
 import { fingerprintDetailGroups } from "../environments/remoteDetails";
@@ -55,6 +55,20 @@ const snapshot = {
     remoteKernel: { kernel: "yun", version: "141", system: "All Windows" },
     remoteMetadata: { serial: "CN-001" },
     refreshedAt: now,
+  }, {
+    envId: "env-2",
+    fingerprintProfileId: null,
+    proxyProfileId: null,
+    remoteFingerprint: {
+      ua: "Mozilla/5.0 Chrome/142",
+      language: ["ja-JP", "ja"],
+      zone: "Asia/Tokyo",
+      canvas: 1,
+    },
+    remoteProxy: null,
+    remoteKernel: { kernel: "yun", version: "141", system: "All Windows" },
+    remoteMetadata: { serial: "" },
+    refreshedAt: now,
   }],
 } as DashboardSnapshot;
 
@@ -71,9 +85,15 @@ describe("FingerprintPage", () => {
   it("refreshes only the newly selected environment and enables checks only when ready", async () => {
     const refreshDetail = vi.fn(async (envId: string) => operation(envId));
     const openCheck = vi.fn(async () => undefined);
+    const staleSnapshot = {
+      ...snapshot,
+      environmentBindings: snapshot.environmentBindings.map((binding) => binding.envId === "env-2"
+        ? { ...binding, refreshedAt: null }
+        : binding),
+    };
     render(
       <FingerprintPage
-        snapshot={snapshot}
+        snapshot={staleSnapshot}
         desktop
         onRefresh={vi.fn(async () => undefined)}
         onError={vi.fn()}
@@ -101,5 +121,40 @@ describe("FingerprintPage", () => {
     expect(text).toContain("nested");
     expect(text).not.toContain("cookieSeed");
     expect(text).not.toContain("hidden");
+  });
+
+  it("compares selected remote summaries as same, different, or unknown", () => {
+    render(<FingerprintPage snapshot={snapshot} desktop={false} onRefresh={vi.fn()} onError={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "对比" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "对比 东京运营" }));
+
+    const kernelRow = screen.getByRole("row", { name: /内核/ });
+    expect(within(kernelRow).getByText("相同")).toBeTruthy();
+    const userAgentRow = screen.getByRole("row", { name: /User Agent/ });
+    expect(within(userAgentRow).getByText("不同")).toBeTruthy();
+    expect(within(userAgentRow).getByText("Mozilla/5.0 Chrome/141")).toBeTruthy();
+    expect(within(userAgentRow).getByText("Mozilla/5.0 Chrome/142")).toBeTruthy();
+    const serialRow = screen.getByRole("row", { name: /序列号/ });
+    expect(within(serialRow).getByText("未知")).toBeTruthy();
+  });
+
+  it("limits comparison selection to four environments", () => {
+    const environments = Array.from({ length: 5 }, (_, index) => environment(`env-${index + 1}`, `环境 ${index + 1}`, "stopped"));
+    render(<FingerprintPage snapshot={{ ...snapshot, environments }} desktop={false} onRefresh={vi.fn()} onError={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "对比" }));
+    for (const index of [2, 3, 4]) fireEvent.click(screen.getByRole("checkbox", { name: `对比 环境 ${index}` }));
+    expect((screen.getByRole("checkbox", { name: "对比 环境 5" }) as HTMLInputElement).disabled).toBe(true);
+    expect(screen.getByText("4/4")).toBeTruthy();
+  });
+
+  it("refreshes each selected comparison environment before one snapshot reload", async () => {
+    const refreshDetail = vi.fn(async (envId: string) => operation(envId));
+    const onRefresh = vi.fn(async () => undefined);
+    render(<FingerprintPage snapshot={snapshot} desktop onRefresh={onRefresh} onError={vi.fn()} onRefreshDetail={refreshDetail} />);
+    fireEvent.click(screen.getByRole("button", { name: "对比" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "对比 东京运营" }));
+    fireEvent.click(screen.getByRole("button", { name: "刷新所选" }));
+    await waitFor(() => expect(refreshDetail.mock.calls.map(([envId]) => envId)).toEqual(["env-1", "env-2"]));
+    expect(onRefresh).toHaveBeenCalledOnce();
   });
 });

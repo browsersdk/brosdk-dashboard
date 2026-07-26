@@ -302,3 +302,5 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 2026-07-26 批量生命周期子阶段结果：新增 3 个批量栏组件测试和 2 个 Manager preflight 测试；Dashboard 22 项、Rust workspace 71 项测试、Clippy 与 production build 通过。应用内浏览器验证多选后显示 `1 可启动/0 可停止`，预览态 mutation 禁用、清除选择可用且 console 无错误。真实双环境启停留给阶段 13 最终 E2E。
 
 2026-07-26 远端元数据子阶段结果：`sdk_env_update` 已接入 FFI、Host、Manager、Tauri 和环境详情侧栏；普通请求只含 envId/envName/serial，且只允许 stopped 环境。Dashboard 25 项、Manager library 48 项、创建 E2E binary 3 项测试、Clippy 和 production build 通过。真实临时环境完成 create -> update -> server confirmation -> page/detail mirror -> local cleanup -> destroy -> env_page，`metadataUpdateSucceeded/metadataMirrored/cleanupSucceeded=true`，最终环境数恢复到 1。实测当前 `getEnvInfo` 对刚更新的 serial 返回空字符串；Manager 只在详情值为空时使用服务端分页或已核对回显的更新响应补全，不接受 UI 乐观写入。桌面与 390x844 应用内浏览器 DOM 完整、mutation 预览态禁用且 console 无 warning/error；当前浏览器后端未提供 screenshot 方法。
+
+2026-07-26 指纹对比子阶段结果：详情/对比模式使用同一份服务端脱敏绑定数据，对比最多 4 个环境，只列固定白名单字段并逐行标记相同/不同/未知；缺少详情不会被推断为相同。新增 3 个组件测试后 Dashboard 28 项测试与 production build 通过，覆盖两环境比较、选择上限和所选详情刷新。应用内浏览器用两个预览环境验证桌面及 390x844 DOM，字段分组和状态完整、预览 mutation 禁用、console 无 warning/error；对比表由局部滚动容器承载，浏览器后端未提供 screenshot/element geometry 方法。真实双环境创建、启停和清理留给阶段 13 最终 E2E。

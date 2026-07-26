@@ -1325,6 +1325,10 @@ h2 {
   width: min(280px, 30vw);
 }
 
+.fingerprint-mode {
+  flex: 0 0 auto;
+}
+
 .fingerprint-body {
   display: grid;
   grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
@@ -1351,6 +1355,15 @@ h2 {
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+
+.fingerprint-compare-selector {
+  cursor: pointer;
+}
+
+.fingerprint-compare-selector > span:first-child {
+  display: grid;
+  place-items: center;
 }
 
 .fingerprint-environment-row:hover {
@@ -1492,6 +1505,94 @@ h2 {
   margin: 0;
   padding: 6px 7px;
   font-size: 11px;
+}
+
+.fingerprint-comparison-scroll {
+  width: 100%;
+  overflow: auto;
+  border: 1px solid #e2e7ed;
+  border-radius: 5px;
+}
+
+.fingerprint-comparison-table {
+  width: 100%;
+  min-width: 620px;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.fingerprint-comparison-table th,
+.fingerprint-comparison-table td {
+  min-width: 0;
+  padding: 8px 10px;
+  border-right: 1px solid #e8ebef;
+  border-bottom: 1px solid #e8ebef;
+  color: #354156;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.fingerprint-comparison-table thead th {
+  height: 42px;
+  color: #4b5870;
+  background: #f7f9fb;
+  font-weight: 700;
+}
+
+.fingerprint-comparison-table thead th:first-child,
+.fingerprint-comparison-table tbody tr:not(.comparison-group-row) > th {
+  width: 142px;
+}
+
+.fingerprint-comparison-table tbody tr:not(.comparison-group-row) > th {
+  background: #fbfcfd;
+}
+
+.fingerprint-comparison-table tbody tr:not(.comparison-group-row) > th span {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.fingerprint-comparison-table tr > *:last-child {
+  border-right: 0;
+}
+
+.fingerprint-comparison-table tbody tr:last-child > * {
+  border-bottom: 0;
+}
+
+.comparison-group-row th {
+  padding: 7px 10px;
+  color: #647085;
+  background: #eef2f6;
+  font-size: 10px;
+}
+
+.comparison-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.comparison-state.same {
+  color: #17603f;
+  background: #e6f5ed;
+}
+
+.comparison-state.different {
+  color: #8a3540;
+  background: #fae9eb;
+}
+
+.comparison-state.unknown {
+  color: #697486;
+  background: #eceff3;
 }
 
 .fingerprint-group dt {
@@ -2270,6 +2371,11 @@ h2 {
   .fingerprint-workspace .module-toolbar,
   .fingerprint-workspace .toolbar-group {
     align-items: stretch;
+  }
+
+  .fingerprint-mode {
+    grid-column: 1 / -1;
+    grid-row: 2;
   }
 
   .fingerprint-workspace .module-toolbar {
