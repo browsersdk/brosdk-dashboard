@@ -157,6 +157,7 @@ stopped -> preparing -> starting -> ready -> stopping -> stopped
 - `sdk_browser_open` 返回 reqId 只表示 accepted。
 - `browser-open-success` 表示 SDK 认为 CDP ready，是进入产品 ready 的必要条件。
 - `sdk_browser_info` 用于重连、手动关闭浏览器后的对账。
+- callback、`sdk_env_getinfo` 和 `sdk_browser_info` 都可补充外部 CDP endpoint；endpoint 缺失或端口为 0 时保持 ready，但标记为 DLL 内部控制通道。
 - 手动关闭浏览器必须触发状态从 `ready` 变为 `stopped` 或 `failed`，不能长期停留在运行中。
 - 启动期间看到窗口闪退时，不靠固定短超时判断；以 SDK 回调、进程退出事实和 `sdk_browser_info` 对账。
 

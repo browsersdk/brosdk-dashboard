@@ -1,6 +1,22 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
+use url::Url;
+
+const CDP_ADDRESS_KEYS: &[&str] = &[
+    "cdp",
+    "cdpurl",
+    "debuggeraddress",
+    "websocketdebuggerurl",
+    "websocketurl",
+    "wsendpoint",
+];
+const CDP_PORT_KEYS: &[&str] = &[
+    "cdpport",
+    "debugport",
+    "debuggingport",
+    "remotedebuggingport",
+];
 
 pub fn environment_rows(value: &Value) -> Vec<(String, String, Value)> {
     environment_items(value)
@@ -46,19 +62,18 @@ pub fn running_environments(value: &Value) -> HashMap<String, String> {
             {
                 return None;
             }
-            let cdp = string_field(
-                item,
-                &["cdp", "cdpUrl", "debuggerAddress", "webSocketDebuggerUrl"],
-            )
-            .or_else(|| {
-                item.get("remoteDebuggingPort")
-                    .and_then(Value::as_u64)
-                    .filter(|port| *port > 0)
-                    .map(|port| format!("127.0.0.1:{port}"))
-            })?;
+            let cdp = cdp_endpoint(item)?;
             Some((env_id, cdp))
         })
         .collect()
+}
+
+pub fn cdp_endpoint(value: &Value) -> Option<String> {
+    cdp_endpoint_at_depth(value, 0)
+}
+
+pub fn is_cdp_endpoint(value: &str) -> bool {
+    normalize_cdp_address(value).is_some()
 }
 
 pub fn observed_environment_ids(value: &Value) -> HashSet<String> {
@@ -73,11 +88,13 @@ fn environment_items(value: &Value) -> Vec<&Value> {
         return items.iter().collect();
     }
     const POINTERS: &[&str] = &[
+        "/data/envList",
         "/data/list",
         "/data/items",
         "/data/records",
         "/data/rows",
         "/data/data/list",
+        "/envList",
         "/list",
         "/items",
         "/records",
@@ -99,6 +116,84 @@ fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
             _ => None,
         })
     })
+}
+
+fn cdp_endpoint_at_depth(value: &Value, depth: usize) -> Option<String> {
+    if depth > 12 {
+        return None;
+    }
+    match value {
+        Value::Object(map) => {
+            for (key, value) in map {
+                if CDP_ADDRESS_KEYS.contains(&normalized_key(key).as_str())
+                    && let Some(endpoint) = value.as_str().and_then(normalize_cdp_address)
+                {
+                    return Some(endpoint);
+                }
+            }
+            for (key, value) in map {
+                if CDP_PORT_KEYS.contains(&normalized_key(key).as_str())
+                    && let Some(port) = cdp_port(value)
+                {
+                    return Some(format!("127.0.0.1:{port}"));
+                }
+            }
+            map.values()
+                .find_map(|value| cdp_endpoint_at_depth(value, depth + 1))
+        }
+        Value::Array(values) => values
+            .iter()
+            .find_map(|value| cdp_endpoint_at_depth(value, depth + 1)),
+        Value::String(text) => {
+            let text = text.trim();
+            if !matches!(text.as_bytes().first(), Some(b'{') | Some(b'[')) {
+                return None;
+            }
+            serde_json::from_str::<Value>(text)
+                .ok()
+                .and_then(|value| cdp_endpoint_at_depth(&value, depth + 1))
+        }
+        _ => None,
+    }
+}
+
+fn normalized_key(key: &str) -> String {
+    key.chars()
+        .filter(|character| !matches!(character, '_' | '-' | ' '))
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn normalize_cdp_address(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || matches!(value.to_ascii_lowercase().as_str(), "-" | "ready") {
+        return None;
+    }
+    if let Ok(url) = Url::parse(value)
+        && matches!(url.scheme(), "http" | "https" | "ws" | "wss")
+        && url.host().is_some()
+    {
+        return Some(value.to_string());
+    }
+    let url = Url::parse(&format!("http://{value}")).ok()?;
+    if url.host().is_some()
+        && url.port().is_some()
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
+    {
+        Some(value.to_string())
+    } else {
+        None
+    }
+}
+
+fn cdp_port(value: &Value) -> Option<u16> {
+    value
+        .as_u64()
+        .and_then(|port| u16::try_from(port).ok())
+        .or_else(|| value.as_str()?.trim().parse::<u16>().ok())
+        .filter(|port| *port > 0)
 }
 
 #[cfg(test)]
@@ -163,5 +258,36 @@ mod tests {
             { "envId": "env-1", "remoteDebuggingPort": 9222 }
         ]));
         assert_eq!(rows["env-1"], "127.0.0.1:9222");
+    }
+
+    #[test]
+    fn extracts_cdp_from_getinfo_string_port_and_encoded_callback_data() {
+        assert_eq!(
+            cdp_endpoint(&json!({
+                "data": { "browser": { "remote_debugging_port": "9333" } }
+            })),
+            Some("127.0.0.1:9333".into())
+        );
+        assert_eq!(
+            cdp_endpoint(&json!({
+                "data": r#"{"remoteDebuggingPort":9444}"#
+            })),
+            Some("127.0.0.1:9444".into())
+        );
+    }
+
+    #[test]
+    fn ignores_non_cdp_port_configuration() {
+        assert_eq!(
+            cdp_endpoint(&json!({
+                "proxy": { "port": 1080 },
+                "finger": {
+                    "blockPortScanning": true,
+                    "fpSwitches": { "fpBlockPort": 1 },
+                    "portScanningWhitelist": "80,443,9222"
+                }
+            })),
+            None
+        );
     }
 }

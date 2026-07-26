@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-26，阶段 0-16 已完成：
+截至 2026-07-26，阶段 0-17 已完成：
 
 ```text
 brosdk-dashboard/
@@ -58,7 +58,7 @@ brosdk-dashboard/
 ## 重要约束
 
 - 不把 API Key 写入仓库、文档、日志或截图。测试时使用 `BROSDK_API_KEY` 环境变量。
-- `sdk_browser_open` 返回受理不等于 ready。真实可用状态以异步回调中的 `browser-open-success`、CDP ready 和 `sdk_browser_info` 对账为准。
+- `sdk_browser_open` 返回受理不等于 ready。真实可用状态以异步回调中的 `browser-open-success` 和 `sdk_browser_info` 对账为准；CDP 地址由 callback、`sdk_env_getinfo` 和 `sdk_browser_info` 三路补充，端口 0 不能伪造成 TCP endpoint。
 - `brosdk.dll` 在 `sdk_init` 后会根据后端返回的 `appId` 做进程锁检查；冲突场景可能触发退出。新客户端应让隔离的 runtime host 加载 DLL，避免 DLL 直接结束桌面 UI。
 - Dashboard 不直接加载 DLL，不直接读写本地数据库，不直接访问 CDP。所有操作进入本地 Manager/operation 队列。
 - 动态端口只用于必要的本地 HTTP/MCP 入口。客户端内部优先用 named pipe/UDS 或 Tauri command/event，减少端口占用和启动失败点。
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-16 的仓库内规划已全部实施并通过当前平台验收。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心和 AI Provider/环境上下文 E2E 已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
+[roadmap.md](roadmap.md) 中阶段 0-17 的仓库内规划已全部实施并通过当前平台验收。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/环境上下文和 CDP 运行态回填已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -88,6 +88,8 @@ brosdk-dashboard/
 阶段 15 操作中心与故障恢复已完成：operation 列表按精确 `envId` 过滤并同时显示服务端名称和标识，摘要区显示当前结果、进行中与失败数量；失败/取消操作只有在 Manager 已实现对应重试路径时才显示重试。用户取消只允许 queued operation，Manager 和 SQLite 状态机都拒绝把 running operation 标为 cancelled，避免 SDK/DLL 调用继续执行而界面误报已取消。浏览器预览与真实 Tauri E2E 已验证操作中心能追踪环境启停记录；Dashboard 36 项、Rust 82 项、Playwright 10 项测试，以及 check、Clippy 和 production build 全部通过。
 
 阶段 16 AI 配置与环境上下文已完成：AI 页面和设置页均可进入 Provider 配置，Base URL/模型保存在 Manager settings，AI API Key 使用平台安全存储且不回显；环境变量仍可覆盖受管配置。Chat/Agent 选择精确 `envId` 作为上下文，Dashboard 本地显示运行状态、generation、reqId、operation、最近事件及 CDP 控制信息。若 DLL 暴露 `remoteDebuggingPort`，界面显示并允许复制实际地址；当前 pipe-only 环境明确显示“未暴露 TCP 地址 / DLL 内部 CDP / MCP”。模型只收到脱敏 origin 或 `sdk-browser-command` 控制通道，不接收完整 DevTools URL。最终 Dashboard 43 项、Rust workspace 86 项、Playwright 12 项、真实 Tauri 启停/AI/设置 E2E、check、Clippy 和 production build 全部通过。
+
+阶段 17 CDP 运行态回填已完成：Manager 使用统一解析器读取 `browser-open-success`、`sdk_env_getinfo` 和 `sdk_browser_info` 中的 DevTools URL 或调试端口，兼容数值、数字字符串、下划线字段和 JSON 编码子对象；只识别 CDP 专用键，不会把代理端口或指纹端口扫描配置误判为 CDP。callback 已提供地址时直接落库；否则 success 后先查询一次 `sdk_env_getinfo`，再轮询本地 `sdk_browser_info`。详情刷新同样可为 ready 环境补充地址，事务只更新 CDP/runtime snapshot，不改变 generation、reqId、operation 或最近生命周期事件。当前仓库携带的 DLL 2.0.0.8 实测 success callback 与 BrowserInfo 的 `remoteDebuggingPort` 为 0，运行中 getEnvInfo 未返回 CDP 字段，因此真实桌面仍显示内部控制通道；非零路径由单元测试覆盖。最终 Dashboard 43 项、Rust workspace 89 项、Playwright 12 项、真实 Tauri E2E、check、Clippy 和 production build 全部通过。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

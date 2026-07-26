@@ -114,6 +114,8 @@ BroSDK-Appid-01E4B0DB-3CCC-<appId>
 - 或 `sdk_browser_info` 对账显示目标环境已运行且 CDP ready；
 - 或超时后获取 SDK 失败事件与安全错误信息。
 
+ready 与 CDP 地址是两个事实：`browser-open-success` 可以在 `remoteDebuggingPort=0` 时确认 DLL 内部 CDP 已可用。Manager 先从 callback 的 `data.remoteDebuggingPort`/DevTools 地址字段取外部 endpoint；缺失时调用一次 `sdk_env_getinfo`，再用 `sdk_browser_info` 轮询补充。任一路都只有非零端口或明确地址才可展示为 TCP CDP。
+
 `sdk_browser_close` 同理，返回 reqId 不等于已关闭。关闭完成以 `browser-close-success` 和 `sdk_browser_info` 对账为准。
 
 ## 6. 事件归一化
@@ -168,7 +170,7 @@ Manager 内部统一转换为：
 | Dashboard 操作 | DLL 调用 | 产品语义 |
 | --- | --- | --- |
 | 拉取环境 | `sdk_env_page` | 完整分页缓存远端列表，叠加当前设备最近运行状态 |
-| 查看详情 | `sdk_env_getinfo` | 获取已解密环境详情，用于指纹/代理/内核预览 |
+| 查看详情 | `sdk_env_getinfo` | 获取已解密环境详情，用于指纹/代理/内核预览；运行中响应若包含 CDP 字段则补充本机运行态 |
 | 新建环境 | `sdk_env_create` | 写入远端后保存本地镜像 |
 | 修改环境 | `sdk_env_update` | 远端成功后更新本地镜像 |
 | 删除环境 | `sdk_env_destroy` | 运行中禁止删除，先停止再删除 |
@@ -252,6 +254,8 @@ v2 内核逻辑会在启动时按环境核心信息自动解析、下载、校�
 ## 12. CDP 与 MCP
 
 公共 C ABI 直接支持 `sdk_browser_command`、`sdk_browser_snapshot` 和 `sdk_browser_env_check`，这些可以作为首版自动化能力基础。DLL 还自带 MCP endpoint，可通过初始化端口启用，作为 `sdk-host` capability 接入。
+
+外部 CDP endpoint 的来源按运行时到达顺序合并：`browser-open-success` callback、`sdk_env_getinfo`、`sdk_browser_info`。解析器只接受 `cdp`、`cdpUrl`、`debuggerAddress`、`webSocketDebuggerUrl`、`remoteDebuggingPort`、`debugPort`、`debuggingPort`、`cdpPort` 及命名变体；不接受普通 `port`。端口 0 表示没有可展示的 TCP 地址，不影响已由 callback 确认的 ready 和 DLL 内部 `sdk_browser_command`/MCP 能力。
 
 Dashboard 的页面诊断使用 `sdk_browser_snapshot` 的最小模式：`includeHtml=false`、`includeScreenshot=false`、`emitEvents=false`，最多读取 32 个 page target。原响应仍包含 target/session/snapshot ID、标题和完整 URL，因此 Manager 必须只保留 page status、数量和 origin；不能把原响应交给前端或 operation/event。
 

@@ -1112,6 +1112,68 @@ impl ManagerStore {
         Ok(())
     }
 
+    pub fn hydrate_environment_cdp(
+        &self,
+        env_id: &str,
+        cdp: &str,
+        source: &str,
+    ) -> Result<bool, StoreError> {
+        if !crate::mirror::is_cdp_endpoint(cdp) {
+            return Ok(false);
+        }
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let current = transaction
+            .query_row(
+                r#"SELECT status, cdp, generation, request_id, last_event
+                   FROM environments WHERE env_id = ?1"#,
+                [env_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Option<i32>>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((status, previous_cdp, generation, request_id, last_event)) = current else {
+            return Ok(false);
+        };
+        if status != "ready" || previous_cdp == cdp {
+            return Ok(false);
+        }
+        let now = timestamp();
+        transaction.execute(
+            "UPDATE environments SET cdp = ?1, updated_at = ?2 WHERE env_id = ?3 AND status = 'ready'",
+            params![cdp, now, env_id],
+        )?;
+        transaction.execute(
+            r#"INSERT INTO runtime_snapshots(
+                env_id, generation, request_id, state, cdp, last_event, observed_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            ON CONFLICT(env_id) DO UPDATE SET
+                generation = excluded.generation,
+                request_id = excluded.request_id,
+                state = excluded.state,
+                cdp = excluded.cdp,
+                last_event = excluded.last_event,
+                observed_at = excluded.observed_at"#,
+            params![env_id, generation, request_id, status, cdp, last_event, now,],
+        )?;
+        append_event_tx(
+            &transaction,
+            "runtime.cdp-hydrated",
+            Some(env_id),
+            None,
+            &json!({ "source": source, "available": true }),
+        )?;
+        transaction.commit()?;
+        Ok(true)
+    }
+
     pub fn append_event(
         &self,
         event_type: &str,
@@ -1536,35 +1598,7 @@ fn apply_lifecycle_event(
 }
 
 fn event_cdp(event: &HostEvent) -> String {
-    find_json_value(
-        &event.payload,
-        &["cdp", "cdpUrl", "debuggerAddress", "webSocketDebuggerUrl"],
-    )
-    .and_then(Value::as_str)
-    .filter(|value| !value.is_empty())
-    .map(str::to_string)
-    .or_else(|| {
-        find_json_value(&event.payload, &["remoteDebuggingPort"])
-            .and_then(Value::as_u64)
-            .filter(|port| *port > 0)
-            .map(|port| format!("127.0.0.1:{port}"))
-    })
-    .unwrap_or_else(|| "-".into())
-}
-
-fn find_json_value<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
-    match value {
-        Value::Object(map) => {
-            for key in keys {
-                if let Some(value) = map.get(*key) {
-                    return Some(value);
-                }
-            }
-            map.values().find_map(|value| find_json_value(value, keys))
-        }
-        Value::Array(values) => values.iter().find_map(|value| find_json_value(value, keys)),
-        _ => None,
-    }
+    crate::mirror::cdp_endpoint(&event.payload).unwrap_or_else(|| "-".into())
 }
 
 fn operation_tx(
@@ -2235,7 +2269,7 @@ mod tests {
                 request_id: Some(42),
                 operation_id: Some(operation.id.clone()),
                 env_id: Some("env-1".into()),
-                payload: json!({}),
+                payload: json!({ "data": { "remoteDebuggingPort": "9222" } }),
                 received_at: Utc::now(),
             })
             .expect("early success");
@@ -2252,6 +2286,52 @@ mod tests {
         assert_eq!(operation.status, "succeeded");
         assert_eq!(operation.request_id, Some(42));
         assert_eq!(environment.status, "ready");
-        assert_eq!(environment.cdp, "-");
+        assert_eq!(environment.cdp, "127.0.0.1:9222");
+    }
+
+    #[test]
+    fn getinfo_cdp_hydration_preserves_ready_runtime_identity() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("upsert environment");
+        let operation = store
+            .create_operation(
+                "environment.observe",
+                Some("env-1"),
+                "Observe environment",
+                0,
+                None,
+            )
+            .expect("operation");
+        store
+            .set_environment_runtime(RuntimeUpdate {
+                env_id: "env-1",
+                generation: 0,
+                status: "ready",
+                request_id: Some(42),
+                operation_id: Some(&operation.id),
+                cdp: "-",
+                last_event: "browser-open-success",
+            })
+            .expect("ready environment");
+
+        assert!(
+            store
+                .hydrate_environment_cdp("env-1", "127.0.0.1:9333", "sdk_env_getinfo")
+                .expect("hydrate cdp")
+        );
+        let environment = store.list_environments().expect("environments").remove(0);
+        assert_eq!(environment.status, "ready");
+        assert_eq!(environment.cdp, "127.0.0.1:9333");
+        assert_eq!(environment.last_event, "browser-open-success");
+        assert_eq!(environment.generation, 0);
+        assert_eq!(environment.request_id, Some(42));
+        assert_eq!(environment.current_operation_id, Some(operation.id));
     }
 }

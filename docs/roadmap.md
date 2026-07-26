@@ -649,3 +649,29 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - Manager 只向模型发送选中环境。外部 CDP 只保留去除 userinfo/path/query/fragment 的 origin；pipe-only ready 环境标记为 `sdk-browser-command`，不把 `ready` 或 `-` 误判为地址。
 - `sdk_browser_info` 与 callback 对账可为已 ready 环境补充后到的 `remoteDebuggingPort`；当前实测环境使用 DLL 内部 CDP pipe，因此 Dashboard 显示“未暴露 TCP 地址 / DLL 内部 CDP / MCP”。
 - 真实 Tauri E2E 修正了“启动中按钮可停止”被误判为 ready 的测试缺陷，最终完成 start -> 明确运行中 -> AI 环境信息 -> Provider 设置 -> stop -> 操作中心。Dashboard 43 项、Rust workspace 86 项、Playwright 12 项测试，以及 `npm run check`、Clippy、production build 和真实桌面 E2E 全部通过。
+
+## 20. 阶段 17：CDP 运行态多源回填
+
+目标：把 DLL callback、`sdk_env_getinfo` 和 `sdk_browser_info` 中的 CDP 信息统一合并到精确 `envId` 的本机运行态，同时保持端口 0 的诚实 fallback。
+
+任务：
+
+- 建立统一 CDP endpoint 解析器，支持 DevTools URL、host:port、数值端口、数字字符串、字段命名变体和 JSON 编码子对象。
+- 严格限制可识别字段，不读取普通 `port`，避免把代理端口、`fpBlockPort` 或端口扫描白名单当作浏览器调试端口。
+- `browser-open-success` 直接写入非零 endpoint；callback 缺少地址时先查询一次 `sdk_env_getinfo`，再轮询 `sdk_browser_info`。
+- `manager_refresh_environment_detail(s)` 在保存脱敏详情摘要的同时，允许为 ready 环境回填 CDP；回填不得改变 generation、reqId、operation 或最近生命周期事件。
+- 桌面 E2E 单独报告 `cdpEndpointObserved`，区分真实 endpoint 与“DLL 内部 CDP / MCP”fallback。
+
+验收：
+
+- callback/getInfo/BrowserInfo 任一路返回非零端口时，Dashboard 显示 `127.0.0.1:<port>` 或原始 DevTools URL。
+- 端口 0、缺失字段和非 CDP 端口配置不会生成伪地址。
+- 回填事件不持久化完整 endpoint，只记录来源和可用性。
+- workspace、Dashboard、Playwright 和真实 Tauri E2E 全部通过，测试结束后环境恢复 stopped。
+
+阶段 17 实现结果（2026-07-26）：
+
+- Manager 统一解析三路 CDP 数据，Store 新增 ready-only 事务回填并同步 runtime snapshot；sdk-host 测试确认回调脱敏不会移除 `remoteDebuggingPort`。
+- `open-success` 后只有在 callback 未提供 endpoint 时才触发补查；`sdk_env_getinfo` 命中后立即结束，未命中再轮询 `BrowserInfo`。
+- 直接 C API 实测仓库 DLL 2.0.0.8：success callback 与 BrowserInfo 返回 `remoteDebuggingPort=0`，运行中 getEnvInfo 没有 CDP/调试地址字段，因此桌面报告 `cdpEndpointObserved=false` 并保持内部控制通道显示。非零值、数字字符串、嵌套 JSON 和误判边界由单元测试覆盖。
+- Browser 插件完成 AI 环境切换和无控制台错误验证；截图 API 在当前插件运行时不可用，视觉与响应式验证由 Playwright 接管。最终 Dashboard 43 项、Rust workspace 89 项、Playwright 12 项，`npm run check`、Clippy、production build 和真实桌面 E2E 全部通过。

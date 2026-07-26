@@ -46,6 +46,7 @@ $stopInvoked = $false
 $stoppedObserved = $false
 $operationIdentityObserved = $false
 $aiEnvironmentContextObserved = $false
+$cdpEndpointObserved = $false
 $aiProviderSettingsObserved = $false
 $targetEnvId = $null
 
@@ -236,7 +237,7 @@ try {
         Find-DashboardButton $window $aiLabel -Enabled
     } "AI navigation"
     Invoke-DashboardButton $aiButton
-    Wait-ForDashboardValue {
+    $cdpContext = Wait-ForDashboardValue {
         $elements = Get-DashboardElements $window
         $identity = @($elements) | Where-Object {
             $_.Current.Name -eq $targetEnvId
@@ -244,12 +245,19 @@ try {
         $cdp = @($elements) | Where-Object {
             $_.Current.Name -eq $cdpUnavailableLabel -or
                 $_.Current.Name -eq $internalCdpLabel -or
-                $_.Current.Name -match "^(ws|http)://"
+                $_.Current.Name -match "^(wss?|https?)://" -or
+                $_.Current.Name -match "^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]):\d+$"
         } | Select-Object -First 1
-        if ($identity -and $cdp) { return $true }
+        if ($identity -and $cdp) {
+            return [pscustomobject]@{
+                Concrete = $cdp.Current.Name -match "^(wss?|https?)://" -or
+                    $cdp.Current.Name -match "^(localhost|\d{1,3}(\.\d{1,3}){3}|\[[0-9a-fA-F:]+\]):\d+$"
+            }
+        }
         return $false
-    } "AI environment identity and CDP" | Out-Null
+    } "AI environment identity and CDP"
     $aiEnvironmentContextObserved = $true
+    $cdpEndpointObserved = $cdpContext.Concrete
 
     $aiSettingsButton = Wait-ForDashboardValue {
         Find-DashboardButton $window $aiProviderSettingsLabel -Enabled
@@ -300,6 +308,7 @@ try {
         stoppedObservedInDashboard = $stoppedObserved
         operationIdentityObserved = $operationIdentityObserved
         aiEnvironmentContextObserved = $aiEnvironmentContextObserved
+        cdpEndpointObserved = $cdpEndpointObserved
         aiProviderSettingsObserved = $aiProviderSettingsObserved
     } | ConvertTo-Json
 }

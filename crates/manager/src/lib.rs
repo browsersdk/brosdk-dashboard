@@ -1872,6 +1872,12 @@ impl Manager {
                     )
                     .await?;
                 ensure_backend_success("environment detail", &detail)?;
+                hydrate_runtime_cdp(
+                    &self.inner.store,
+                    &environment.env_id,
+                    &detail,
+                    "sdk_env_getinfo",
+                )?;
                 self.inner.store.save_environment_detail(
                     &environment.env_id,
                     &profiles::safe_environment_detail(&detail),
@@ -1930,6 +1936,7 @@ impl Manager {
                 )
                 .await?;
             ensure_backend_success("environment detail", &detail)?;
+            hydrate_runtime_cdp(&self.inner.store, env_id, &detail, "sdk_env_getinfo")?;
             self.inner
                 .store
                 .save_environment_detail(env_id, &profiles::safe_environment_detail(&detail))?;
@@ -2894,11 +2901,35 @@ impl Manager {
                             && event
                                 .event_name
                                 .to_ascii_lowercase()
-                                .contains("browser-open-success");
+                                .contains("browser-open-success")
+                            && event.env_id.as_deref().is_some_and(|env_id| {
+                                inner.store.environment(env_id).ok().flatten().is_some_and(
+                                    |environment| !mirror::is_cdp_endpoint(&environment.cdp),
+                                )
+                            });
                         if refresh_cdp && let Some(env_id) = event.env_id.clone() {
                             let refresh_inner = inner.clone();
                             let refresh_host = event_host.clone();
                             tokio::spawn(async move {
+                                if let Ok(detail) = refresh_host
+                                    .call(
+                                        HostCommand::EnvGetInfo {
+                                            request: json!({ "envId": env_id }),
+                                        },
+                                        None,
+                                    )
+                                    .await
+                                    && ensure_backend_success("environment detail", &detail).is_ok()
+                                    && hydrate_runtime_cdp(
+                                        &refresh_inner.store,
+                                        &env_id,
+                                        &detail,
+                                        "sdk_env_getinfo",
+                                    )
+                                    .unwrap_or(false)
+                                {
+                                    return;
+                                }
                                 for attempt in 0..8 {
                                     if attempt > 0 {
                                         tokio::time::sleep(std::time::Duration::from_millis(500))
@@ -2959,6 +2990,18 @@ impl Manager {
             }
         });
     }
+}
+
+fn hydrate_runtime_cdp(
+    store: &ManagerStore,
+    env_id: &str,
+    value: &serde_json::Value,
+    source: &str,
+) -> Result<bool, store::StoreError> {
+    let Some(cdp) = mirror::cdp_endpoint(value) else {
+        return Ok(false);
+    };
+    store.hydrate_environment_cdp(env_id, &cdp, source)
 }
 
 fn environment_create_operation_request(input: &EnvironmentCreateInput) -> serde_json::Value {

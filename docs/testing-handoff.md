@@ -359,3 +359,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - `npm run e2e:dashboard:desktop` 必须完成 start -> 明确运行中 -> AI 环境信息 -> Provider 设置 -> stop -> 操作中心，并把目标环境恢复为 stopped。
 
 2026-07-26 阶段 16 结果：Dashboard 43 项、Rust workspace 86 项、Playwright 桌面/移动 12 项通过；`npm run check`、Clippy、production build 和真实 Tauri UI E2E 全部通过。真实环境使用 DLL 内部 CDP pipe，桌面报告 `aiEnvironmentContextObserved/aiProviderSettingsObserved=true`，不输出 API Key、真实 envId 或 CDP 内容。
+
+## 20. 阶段 17 CDP 多源回填验收
+
+- sdk-host callback 归一化必须保留 `data.remoteDebuggingPort`，但继续脱敏 Authorization、token、Cookie 和凭据。
+- callback、`sdk_env_getinfo`、`sdk_browser_info` 共用同一 endpoint 解析规则；非零数值/数字字符串与 JSON 编码子对象可用，普通代理端口、`fpBlockPort` 和端口扫描白名单不可用。
+- 详情刷新只允许给 ready 环境补充 CDP，不能改变 generation、reqId、current operation 或 `browser-open-success` last event。
+- `npm run e2e:dashboard:desktop` 报告 `cdpEndpointObserved`：真实地址为 true，内部 pipe/fallback 为 false；两种情况都必须完成 start -> ready -> AI -> stop 并恢复 stopped。
+
+2026-07-26 阶段 17 结果：直接 C API 在运行中验证仓库 DLL 2.0.0.8，success callback 与 BrowserInfo 的 `remoteDebuggingPort` 均为 0，getEnvInfo 未返回 CDP 字段，因此桌面报告 `cdpEndpointObserved=false`；未伪造 TCP 地址。新增 Manager/CDP/Store 和 sdk-host 回调测试后，Dashboard 43 项、Rust workspace 89 项、Playwright 12 项通过；Browser 插件完成 AI 环境切换和 console 验证，截图 API 不可用时由 Playwright 完成视觉/响应式覆盖。`npm run check`、Clippy、production build 和真实 Tauri E2E 全部通过。

@@ -93,13 +93,15 @@ queued -> initialize SDK once -> sdk_env_page(page=1..N) -> atomic replace -> su
 
 分页默认每页 200 条，最多 500 页/100000 个唯一 envId。Manager 根据 `data.total`（兼容 count）继续拉取，按 envId 去重；总数中途变化、空页提前结束、重复页无新增或超过上限都视为失败。缓存写入在 Manager 持久化入口再次脱敏，成功事务会删除服务端已不存在的 environment、runtime snapshot 和级联 detail。
 
+`browser-open-success` 首先完成 lifecycle operation 并把环境置为 ready；如果事件 payload 含明确 DevTools URL 或非零调试端口，同一事务直接保存 CDP。若 callback 没有 endpoint，Manager 随后查询一次 `sdk_env_getinfo`，未命中再短时轮询 `sdk_browser_info`。三路数据共用严格解析器，只接受 CDP/Debugger 专用地址键和端口键，兼容数值、数字字符串、命名变体与 JSON 编码子对象，不接受普通 `port`。
+
 `manager_reconcile_runtimes` 调用 `sdk_browser_info`，把带明确 CDP endpoint 的环境对账为 ready，并可为已经 ready 的环境补充后到的 `remoteDebuggingPort`；把本地活动但不再存在的环境改为 stopped。只包含 envId 且端口为 0 的条目代表 DLL 仍跟踪该环境，但不能伪造 TCP 地址；已由 callback 确认 ready 的环境保持 ready，并在 Dashboard 标记为 DLL 内部 CDP/MCP 控制通道。该路径用于手动关闭浏览器后的状态恢复。
 
 AI Chat/Agent 的环境上下文按选中的精确 `envId` 构造。Dashboard 可以显示本地完整 CDP 地址，但 Manager 发送给模型前只保留安全 origin；`ready`、`-` 和其它非地址值不会被当成 endpoint。pipe-only ready 环境发送 `controlChannel=sdk-browser-command`、`cdpAvailable=false`，外部模型不能据此获得本地 DevTools 控制路径。
 
 `manager_create_environment` 串行执行：校验 proxy profile 和本地已安装内核，临时恢复受保护代理 URL，调用 `sdk_env_create`，校验后端 `code=200` 与 `data.envId`，立即 upsert 创建结果，再尽力执行 `sdk_env_page` 完整对账。远端创建已经成功但后续分页同步失败时，operation 仍成功并标记镜像刷新延后，避免盲目重试造成重复环境。
 
-`manager_refresh_environment_detail(envId)` 只读取一个缓存中存在的环境，调用 `sdk_env_getinfo` 并校验 `code=200`。持久化采用显式响应边界：保留递归脱敏后的 `finger`、从 `browser` 直接读取的内核、去除密码的代理摘要，以及 `envName/serial/enableDevtools/enableStorage` 元数据；不递归猜测 `kernel`，不保存 Cookie、Storage、上传路径或 DEK。operation 与事件都绑定该 `envId`，因此多环境界面不会因为查看一个环境而串行读取全部环境。
+`manager_refresh_environment_detail(envId)` 只读取一个缓存中存在的环境，调用 `sdk_env_getinfo` 并校验 `code=200`。持久化采用显式响应边界：保留递归脱敏后的 `finger`、从 `browser` 直接读取的内核、去除密码的代理摘要，以及 `envName/serial/enableDevtools/enableStorage` 元数据；不递归猜测 `kernel`，不保存 Cookie、Storage、上传路径或 DEK。响应中的 CDP endpoint 不进入详情 JSON，而是通过 ready-only 运行态事务写入 environment/runtime snapshot；该事务保留 generation、reqId、current operation 和 last event，并只追加不含完整地址的 `runtime.cdp-hydrated` 来源事件。operation 与事件都绑定该 `envId`，因此多环境界面不会因为查看一个环境而串行读取全部环境。
 
 `manager_update_environment_metadata` 只接受 `envId/envName/serial`，要求环境处于 stopped，并按服务端规则校验名称最多 32 个 Unicode 字符、序号最多 64 个 UTF-8 字节。远端写入成功还必须校验业务 `code=200` 和响应回显与请求完全一致，之后重新分页并刷新详情。若旧版 `getEnvInfo` 把序号返回为空，snapshot 只用环境分页或已确认的更新响应补全；表单值不会直接成为本地事实。
 

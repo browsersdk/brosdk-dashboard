@@ -585,13 +585,14 @@ mod tests {
         let event = runtime.normalize_event(RawSdkEvent {
             kind: RawEventKind::Result,
             code: 0,
-            bytes: br#"{"type":"browser-open-success","reqId":42,"envId":"env-1","authorization":"secret"}"#.to_vec(),
+            bytes: br#"{"type":"browser-open-success","reqId":42,"envId":"env-1","data":{"remoteDebuggingPort":9222},"authorization":"secret"}"#.to_vec(),
             received_at: Utc::now(),
         });
 
         assert_eq!(event.operation_id.as_deref(), Some("operation-1"));
         assert_eq!(event.env_id.as_deref(), Some("env-1"));
         assert_eq!(event.event_name, "browser-open-success");
+        assert_eq!(event.payload["data"]["remoteDebuggingPort"], 9222);
         assert_eq!(event.payload["authorization"], "[redacted]");
     }
 
