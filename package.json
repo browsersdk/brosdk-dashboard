@@ -18,7 +18,7 @@
     "sdk:runtime-smoke": "cargo build -p sdk-host && cargo run -p sdk-client --bin runtime-host-smoke",
     "manager:smoke": "cargo build -p sdk-host && cargo run -p manager --bin manager-smoke",
     "e2e:credential": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-credential-e2e.ps1",
-    "e2e:environment": "cargo build -p sdk-host && cargo run -p manager --bin environment-e2e",
+    "e2e:environment": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-environment-lifecycle-e2e.ps1",
     "e2e:environment-create": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-environment-create-e2e.ps1",
     "sdk:capabilities": "cargo run -p sdk-host -- capabilities --json",
     "ai:smoke": "cargo run -p ai-agent --bin ai-smoke",

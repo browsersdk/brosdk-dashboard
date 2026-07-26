@@ -103,6 +103,9 @@ sdk_init
   -> wait browser-open-success
   -> sdk_browser_info contains envId
   -> sdk_browser_command Runtime.evaluate
+  -> sdk_browser_snapshot safe baseline
+  -> sdk_browser_env_check creates built-in check tab
+  -> sdk_browser_snapshot page count increases
   -> sdk_browser_close({ envs: [envId] })
   -> wait browser-close-success
   -> sdk_browser_info no longer contains envId
@@ -115,7 +118,7 @@ sdk_init
 npm run e2e:environment
 ```
 
-默认必须设置 `BROSDK_E2E_ENV_ID`。如测试账号只有一个环境，可显式设置 `BROSDK_E2E_USE_ONLY_ENV=1`；runner 会先调用 `sdk_browser_info`，若该环境已经运行则拒绝接管或停止。设置 `BROSDK_E2E_SIMULATE_MANUAL_CLOSE=1` 时，runner 通过 CDP `Browser.close` 模拟用户关闭整个浏览器并验证 Manager 对账；需要真人关闭窗口时，改用 `BROSDK_E2E_MANUAL_CLOSE_TIMEOUT_SECS` 正整数。若设置了 `BROSDK_EMBEDDED_PORT`，runner 会确认 DLL 自带 MCP 端口实际监听。
+runner 在缺少 `BROSDK_API_KEY` 时使用隐藏输入，使用唯一临时 Manager 数据目录，并在未指定端口时自动分配 DLL MCP 端口。默认可设置 `BROSDK_E2E_ENV_ID`；如未设置且账号只有一个环境，wrapper 自动启用 `BROSDK_E2E_USE_ONLY_ENV=1`。runner 会先调用 `sdk_browser_info`，若该环境已经运行则拒绝接管或停止。设置 `BROSDK_E2E_SIMULATE_MANUAL_CLOSE=1` 时，runner 通过 CDP `Browser.close` 模拟用户关闭整个浏览器并验证 Manager 对账；需要真人关闭窗口时，改用 `BROSDK_E2E_MANUAL_CLOSE_TIMEOUT_SECS` 正整数。
 
 ABI 注意事项：
 
@@ -224,7 +227,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-11 已完成，阶段 12 正在实施；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-12 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -286,3 +289,5 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 单元测试必须使用带 path/query/token、标题、target/session/snapshot ID 和 chunk 的伪响应，证明所有正文和标识都被丢弃。
 
 2026-07-26 运维动作子阶段结果：新增环境详情 3 个组件测试与 Manager 2 个响应摘要测试；Dashboard 19 个组件测试与 workspace 67 个 Rust 测试全部通过。真实临时环境 E2E 完成 create -> local cleanup -> destroy -> env_page，对账后账号环境数恢复到 1，报告不含环境 ID、本地路径或 DLL 原响应。真实 ready 页面诊断留给最终生命周期 E2E。
+
+2026-07-26 最终生命周期结果：真实唯一环境完成 callback ready、CDP evaluate、内置指纹检查页新标签、字段白名单页面诊断、DLL MCP `tabs/read` 和 SDK close；检查页后安全诊断为 3 页，`fingerprintCheckOpened/pageDiagnosticVerified/environmentStopped=true`，MCP 广告 18 个/Manager 放行 7 个。Dashboard 19 项、Rust workspace 69 项测试、Clippy 和 production build 通过；runner 清理临时 Manager 数据目录且无残留 `sdk-host`。报告不含 envId、页面 URL/正文、API Key 或 userSig。

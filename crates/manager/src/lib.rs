@@ -1834,14 +1834,19 @@ impl Manager {
         if environment.status != "ready" {
             return Err(ManagerError::EnvironmentNotReady(environment.status));
         }
-        self.execute_sync_host_operation(
-            "fingerprint.check",
-            Some(env_id),
-            "打开指纹检查页",
-            json!({ "envId": env_id }),
-            |request| HostCommand::BrowserEnvCheck { request },
-        )
-        .await
+        let execution = self
+            .execute_sync_host_operation(
+                "fingerprint.check",
+                Some(env_id),
+                "打开指纹检查页",
+                json!({ "envId": env_id }),
+                |request| HostCommand::BrowserEnvCheck { request },
+            )
+            .await?;
+        Ok(OperationExecution {
+            operation: execution.operation,
+            response: summarize_fingerprint_check(&execution.response),
+        })
     }
 
     pub async fn cleanup_environment_local_data(
@@ -2676,6 +2681,17 @@ fn summarize_environment_cleanup(response: &serde_json::Value) -> serde_json::Va
     })
 }
 
+fn summarize_fingerprint_check(response: &serde_json::Value) -> serde_json::Value {
+    json!({
+        "opened": response.get("newTab").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        "newTab": response.get("newTab").and_then(serde_json::Value::as_bool).unwrap_or(false),
+        "source": match response.get("source").and_then(serde_json::Value::as_str) {
+            Some("embedded-memory") => "embedded",
+            _ => "unknown",
+        },
+    })
+}
+
 fn summarize_browser_snapshot(response: &serde_json::Value) -> serde_json::Value {
     let pages = response
         .get("pages")
@@ -3438,6 +3454,26 @@ mod tests {
         assert_eq!(summary["deferred"], 1);
         assert!(!summary.to_string().contains("sensitive"));
         assert!(!summary.to_string().contains("123"));
+    }
+
+    #[test]
+    fn fingerprint_check_summary_omits_cdp_identifiers() {
+        let summary = summarize_fingerprint_check(&json!({
+            "url": "about:blank",
+            "source": "embedded-memory",
+            "targetId": "target-secret",
+            "sessionId": "session-secret",
+            "newTab": true,
+            "cdp": { "inject": "private-page-content" }
+        }));
+        assert_eq!(
+            summary,
+            json!({ "opened": true, "newTab": true, "source": "embedded" })
+        );
+        let serialized = summary.to_string();
+        for forbidden in ["target", "session", "private", "cdp"] {
+            assert!(!serialized.contains(forbidden));
+        }
     }
 
     #[test]

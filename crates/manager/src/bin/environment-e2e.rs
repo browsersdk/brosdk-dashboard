@@ -10,6 +10,7 @@ use tokio::{
 
 const READY_TIMEOUT: Duration = Duration::from_secs(180);
 const STOP_TIMEOUT: Duration = Duration::from_secs(60);
+const CHECK_PAGE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -25,6 +26,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut embedded_mcp_read_verified = false;
     let mut embedded_mcp_advertised_tool_count = 0;
     let mut embedded_mcp_allowed_tool_count = 0;
+    let mut fingerprint_check_opened = false;
+    let mut page_diagnostic_verified = false;
+    let mut page_diagnostic_page_count = 0;
     let mut environment_count = 0;
     let requested_env_id = non_empty_env("BROSDK_E2E_ENV_ID");
     let mut target_env_id = requested_env_id.clone();
@@ -141,6 +145,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
         evaluate_verified = true;
 
+        let baseline_diagnostic = manager.capture_environment_diagnostic(env_id).await?;
+        ensure_operation_succeeded(&baseline_diagnostic.operation)?;
+        validate_safe_page_diagnostic(&baseline_diagnostic.response)?;
+        let baseline_page_count = diagnostic_page_count(&baseline_diagnostic.response)?;
+
+        let fingerprint_check = manager.open_fingerprint_check(env_id).await?;
+        ensure_operation_succeeded(&fingerprint_check.operation)?;
+        if fingerprint_check.response != json!({
+            "opened": true,
+            "newTab": true,
+            "source": "embedded",
+        }) {
+            return Err("fingerprint check did not return the expected safe summary".into());
+        }
+        fingerprint_check_opened = true;
+
+        let diagnostic = wait_for_check_page(&manager, env_id, baseline_page_count).await?;
+        page_diagnostic_page_count = diagnostic_page_count(&diagnostic)?;
+        page_diagnostic_verified = true;
+
         if embedded_port().is_some() {
             let discovery = manager
                 .discover_embedded_mcp_tools(domain::McpToolDiscoveryRequest {
@@ -211,6 +235,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "readySource": ready_source,
             "cdpReady": ready.cdp != "-",
             "runtimeEvaluateVerified": evaluate_verified,
+            "fingerprintCheckOpened": fingerprint_check_opened,
+            "pageDiagnosticVerified": page_diagnostic_verified,
+            "pageDiagnosticPageCount": page_diagnostic_page_count,
+            "environmentStopped": target_stopped,
             "manualCloseVerified": manual_close_verified,
             "embeddedMcpAvailable": capabilities.embedded_mcp,
             "embeddedMcpConfigured": non_empty_env("BROSDK_EMBEDDED_PORT").is_some(),
@@ -248,6 +276,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "environmentCount": environment_count,
                     "readySource": ready_source,
                     "runtimeEvaluateVerified": evaluate_verified,
+                    "fingerprintCheckOpened": fingerprint_check_opened,
+                    "pageDiagnosticVerified": page_diagnostic_verified,
+                    "pageDiagnosticPageCount": page_diagnostic_page_count,
+                    "environmentStopped": target_stopped,
                     "manualCloseVerified": manual_close_verified,
                     "embeddedMcpReachable": embedded_mcp_reachable,
                     "embeddedMcpToolVerified": embedded_mcp_tool_verified,
@@ -415,6 +447,92 @@ fn find_mcp_page_id(value: &Value) -> Option<u64> {
     }
 }
 
+async fn wait_for_check_page(
+    manager: &Manager,
+    env_id: &str,
+    baseline_page_count: u64,
+) -> Result<Value, Box<dyn Error>> {
+    let deadline = Instant::now() + CHECK_PAGE_TIMEOUT;
+    loop {
+        let execution = manager.capture_environment_diagnostic(env_id).await?;
+        ensure_operation_succeeded(&execution.operation)?;
+        validate_safe_page_diagnostic(&execution.response)?;
+        if diagnostic_page_count(&execution.response)? > baseline_page_count {
+            return Ok(execution.response);
+        }
+        if Instant::now() >= deadline {
+            return Err("fingerprint check page did not appear in the safe page diagnostic".into());
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+}
+
+fn diagnostic_page_count(value: &Value) -> Result<u64, Box<dyn Error>> {
+    value
+        .get("pageCount")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "safe page diagnostic did not contain pageCount".into())
+}
+
+fn validate_safe_page_diagnostic(value: &Value) -> Result<(), Box<dyn Error>> {
+    const ROOT_KEYS: [&str; 6] = [
+        "failedPages",
+        "htmlIncluded",
+        "pageCount",
+        "pages",
+        "screenshotIncluded",
+        "status",
+    ];
+    const PAGE_KEYS: [&str; 2] = ["origin", "status"];
+
+    let root = value
+        .as_object()
+        .ok_or("safe page diagnostic must be an object")?;
+    let mut root_keys = root.keys().map(String::as_str).collect::<Vec<_>>();
+    root_keys.sort_unstable();
+    if root_keys != ROOT_KEYS {
+        return Err("safe page diagnostic returned fields outside the allowlist".into());
+    }
+    if root.get("htmlIncluded").and_then(Value::as_bool) != Some(false)
+        || root.get("screenshotIncluded").and_then(Value::as_bool) != Some(false)
+    {
+        return Err("safe page diagnostic unexpectedly included page content".into());
+    }
+    let pages = root
+        .get("pages")
+        .and_then(Value::as_array)
+        .ok_or("safe page diagnostic pages must be an array")?;
+    if diagnostic_page_count(value)? != pages.len() as u64 {
+        return Err("safe page diagnostic pageCount did not match pages".into());
+    }
+    for page in pages {
+        let page = page
+            .as_object()
+            .ok_or("safe page diagnostic page must be an object")?;
+        let mut page_keys = page.keys().map(String::as_str).collect::<Vec<_>>();
+        page_keys.sort_unstable();
+        if page_keys != PAGE_KEYS {
+            return Err("safe page diagnostic page returned fields outside the allowlist".into());
+        }
+        let origin = page
+            .get("origin")
+            .and_then(Value::as_str)
+            .ok_or("safe page diagnostic page did not contain an origin")?;
+        if origin.contains('?') || origin.contains('#') || origin.contains('@') {
+            return Err("safe page diagnostic origin was not sanitized".into());
+        }
+        if let Ok(url) = url::Url::parse(origin)
+            && url.has_host()
+            && (!matches!(url.path(), "" | "/")
+                || url.query().is_some()
+                || url.fragment().is_some())
+        {
+            return Err("safe page diagnostic origin exposed URL detail".into());
+        }
+    }
+    Ok(())
+}
+
 fn manual_close_timeout() -> Option<Duration> {
     non_empty_env("BROSDK_E2E_MANUAL_CLOSE_TIMEOUT_SECS")
         .and_then(|value| value.parse::<u64>().ok())
@@ -491,5 +609,32 @@ mod tests {
             })),
             Some(7)
         );
+    }
+
+    #[test]
+    fn validates_only_the_safe_page_diagnostic_contract() {
+        let safe = json!({
+            "status": "ok",
+            "pageCount": 3,
+            "failedPages": 0,
+            "pages": [
+                { "status": "ok", "origin": "https://example.com" },
+                { "status": "ok", "origin": "chrome://newtab" },
+                { "status": "ok", "origin": "about:blank" }
+            ],
+            "htmlIncluded": false,
+            "screenshotIncluded": false,
+        });
+        validate_safe_page_diagnostic(&safe).expect("safe contract");
+
+        let unsafe_value = json!({
+            "status": "ok",
+            "pageCount": 1,
+            "failedPages": 0,
+            "pages": [{ "status": "ok", "origin": "https://example.com/private?token=secret" }],
+            "htmlIncluded": false,
+            "screenshotIncluded": false,
+        });
+        assert!(validate_safe_page_diagnostic(&unsafe_value).is_err());
     }
 }

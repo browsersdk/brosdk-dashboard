@@ -378,7 +378,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 ## 15. 当前状态
 
-阶段 0-11 的仓库内规划已完成。阶段 12 已完成契约审计并进入实施；按“安全初始化 -> 环境/远端指纹工作台 -> 运维动作 -> 真实 E2E”拆分，每一部分独立执行自动测试、更新文档并提交。
+阶段 0-12 的仓库内规划已完成。阶段 12 按“安全初始化 -> 环境/远端指纹工作台 -> 运维动作 -> 真实 E2E”拆分，每一部分均独立执行自动测试、更新文档并提交。
 
 阶段 12 安全初始化子阶段完成（2026-07-26）：
 
@@ -403,6 +403,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 页面诊断只对 ready 环境调用 `sdk_browser_snapshot`，固定 `includeHtml=false`、`includeScreenshot=false`、`emitEvents=false`、`maxPages=32`。Manager 只返回页数、失败数、状态和 origin，不返回 HTML、截图、标题、URL 路径/query、snapshot/target/session ID。
 - 清理和删除均有独立行内确认；运行态禁止这两个操作，停止态禁止页面诊断和指纹检查。Dashboard 19 个组件测试与 workspace 67 个 Rust 测试全部通过。
 - 真实临时环境 E2E 完成 create -> local cleanup -> destroy -> env_page 对账，`localDataCleanupSucceeded/cleanupSucceeded/destroyReconciled=true`，测试前后环境数均为 1。完整 ready 页面诊断调用并入最终生命周期 E2E。
+
+阶段 12 最终生命周期 E2E 完成（2026-07-26）：
+
+- runner 使用隐藏 API Key、唯一临时 Manager 数据目录和自动分配的 DLL MCP 端口；账号只有一个环境时无需手工提供 envId。
+- 真实环境完成 `browser_open -> callback ready -> CDP evaluate -> env_check 新标签 -> 安全 snapshot -> MCP tabs/read -> browser_close -> stopped`。
+- 检查页原始 target/session/CDP 响应在 Manager 内压缩为 `{opened,newTab,source}`；页面诊断只包含白名单字段，真实结果页数为 3。
+- 报告为 `status=passed`、`fingerprintCheckOpened/pageDiagnosticVerified/environmentStopped=true`、MCP 广告 18 个/放行 7 个，不含环境 ID、页面 URL、正文、API Key 或 userSig。
+- Dashboard 19 项、Rust workspace 69 项测试、Clippy、production build 和应用内浏览器 DOM/console QA 全部通过。
 
 阶段 11 远端缓存子阶段完成（2026-07-26）：
 

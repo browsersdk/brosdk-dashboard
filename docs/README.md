@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-26，阶段 0-11 已完成，阶段 12“首次初始化与环境工作台”正在实施：
+截至 2026-07-26，阶段 0-12 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-11 的仓库内规划已全部实施并通过当前平台验收。阶段 12 将首次 API Key 激活、安全凭据持久化、环境工作台和远端指纹查看补成一个完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
+[roadmap.md](roadmap.md) 中阶段 0-12 的仓库内规划已全部实施并通过当前平台验收。首次 API Key 激活、安全凭据持久化、环境工作台和远端指纹查看已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -76,6 +76,8 @@ brosdk-dashboard/
 阶段 12 环境/远端指纹工作台已完成：环境详情通过 `manager_refresh_environment_detail(envId)` 单独调用 `sdk_env_getinfo`，校验业务 `code=200` 后只缓存指纹、掩码代理、内核与少量环境元数据；`cookie`、`storage`、上传路径、DEK、token 和凭据不会进入 SQLite/snapshot。环境详情侧栏直接展示服务端内核、代理、语言、时区和屏幕；“指纹”页改为跨环境结构化查看器，不再以本地 Profile JSON 编辑器作为主流程。浏览器 UI 验收可使用 `?preview=workspace&page=environments|fingerprints`，该模式不启用本机 mutation。
 
 阶段 12 运维动作已接通：环境详情区统一提供启停、详情刷新、指纹检查、页面诊断、本地浏览数据清理和服务端删除。清理与删除只允许 stopped 环境并分别二次确认；页面诊断只允许 ready 环境，并强制关闭 HTML、截图和事件 chunk，只向 Dashboard 返回页数、失败数与去除 path/query/userinfo 的 origin。真实临时环境 E2E 已验证本地清理与服务端删除是两个独立动作，测试环境完成最终对账和清理。
+
+阶段 12 最终生命周期验收已完成：`npm run e2e:environment` 使用隐藏 API Key、临时 Manager 数据目录和自动分配的 DLL MCP 端口，账号只有一个环境时自动选择。真实链路完成启动 callback ready、CDP evaluate、内置指纹检查页新标签、脱敏页面诊断、单环境 MCP `tabs/read` 和 SDK 停止；`sdk_browser_env_check` 的 target/session/CDP 原始结果在 Manager 内压缩为布尔摘要，不进入 Dashboard。Dashboard 19 项、Rust workspace 69 项测试及 Clippy、production build 全部通过。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

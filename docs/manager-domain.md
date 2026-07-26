@@ -94,6 +94,8 @@ queued -> initialize SDK once -> sdk_env_page(page=1..N) -> atomic replace -> su
 
 `environment.page-diagnostic` 要求 ready，调用 `sdk_browser_snapshot` 时固定关闭 HTML、截图和 callback chunks。Manager 将结果压成 pageCount、failedPages、page status 和 URL origin；页面标题、完整 URL、snapshotId、targetId、sessionId 与 chunks 不持久化也不返回前端。
 
+`fingerprint.check` 同样要求 ready。DLL 原始 target/session/CDP 注入结果在 Manager 内压缩为 opened/newTab/source，不进入 Dashboard、SQLite 或事件。
+
 创建 operation 的 request snapshot 只保存 `proxyProfileId` 和 `kernelId`。后端 DTO、完整代理 URL、API Key、userSig 和原始响应均不进入 operation request。测试清理使用 `sdk_env_destroy`，成功后事务删除本地 environment/runtime snapshot，environment detail 通过外键级联删除。
 
 数据库和事件 payload 不保存 API Key、userSig、代理密码、Cookie 或完整 Authorization。SDK 数据在 host 出口和 Manager 持久化入口都执行脱敏。

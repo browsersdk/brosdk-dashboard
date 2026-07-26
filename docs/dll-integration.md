@@ -253,6 +253,8 @@ v2 内核逻辑会在启动时按环境核心信息自动解析、下载、校�
 
 Dashboard 的页面诊断使用 `sdk_browser_snapshot` 的最小模式：`includeHtml=false`、`includeScreenshot=false`、`emitEvents=false`，最多读取 32 个 page target。原响应仍包含 target/session/snapshot ID、标题和完整 URL，因此 Manager 必须只保留 page status、数量和 origin；不能把原响应交给前端或 operation/event。
 
+`sdk_browser_env_check` 会创建新标签并返回 target/session/CDP 注入细节。Manager 只向 Dashboard 返回 `{opened,newTab,source}`，真实生命周期 E2E 通过检查前后的安全快照页数增加来确认内置指纹页确实出现。
+
 `sdk_browser_cleanup` 的 `envs` 与 `cores` 语义必须分开：`envs` 删除非运行环境的本机 user-data-dir，`cores` 删除内核下载缓存；两者都不删除服务端环境。服务端删除只能调用 `sdk_env_destroy`。环境正在运行或启停中时，DLL 会以 busy 拒绝本地清理，Manager 还会在调用前用环境状态做第一层门禁。
 
 MCP 分三步：
