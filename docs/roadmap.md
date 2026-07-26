@@ -396,6 +396,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 浏览器 demo 新增 `?preview=workspace&page=<page>` 稳定 QA 入口，本机操作保持禁用。移动底部 9 个入口改为等分栅格，390px 下全部可达。
 - 真实凭据 E2E 在唯一临时数据目录完成聚焦详情读取，`focusedDetailLoaded=true`；DPAPI、重启恢复和账号清理继续通过。Dashboard 16 个测试、workspace 65 个 Rust 测试、Clippy、production build、1440x900 与 390x844 视觉/几何和控制台检查通过。
 
+阶段 12 运维动作子阶段完成（2026-07-26）：
+
+- Tauri/Manager 新增环境删除、本地数据清理和页面诊断命令；所有 operation 显式绑定 `envId`。启动/停止、刷新、检查、诊断、清理和删除集中到环境详情区。
+- `sdk_browser_cleanup({envs:[envId]})` 只清理 stopped 环境的本地 user-data-dir，响应在 Manager 压缩为 deleted/notFound/failed/deferred，删除本地路径和环境 ID；`sdk_env_destroy` 单独负责删除服务端环境。
+- 页面诊断只对 ready 环境调用 `sdk_browser_snapshot`，固定 `includeHtml=false`、`includeScreenshot=false`、`emitEvents=false`、`maxPages=32`。Manager 只返回页数、失败数、状态和 origin，不返回 HTML、截图、标题、URL 路径/query、snapshot/target/session ID。
+- 清理和删除均有独立行内确认；运行态禁止这两个操作，停止态禁止页面诊断和指纹检查。Dashboard 19 个组件测试与 workspace 67 个 Rust 测试全部通过。
+- 真实临时环境 E2E 完成 create -> local cleanup -> destroy -> env_page 对账，`localDataCleanupSucceeded/cleanupSucceeded/destroyReconciled=true`，测试前后环境数均为 1。完整 ready 页面诊断调用并入最终生命周期 E2E。
+
 阶段 11 远端缓存子阶段完成（2026-07-26）：
 
 - `sdk_env_page` 默认请求 200 条并按 `data.total` 拉取完整分页，按 envId 去重，限制最多 500 页/100000 条；异常总数、重复页和提前空页均 fail closed。

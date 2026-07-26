@@ -118,6 +118,39 @@ async fn manager_stop_environment(
 }
 
 #[tauri::command]
+async fn manager_destroy_environment(
+    manager: tauri::State<'_, manager::Manager>,
+    env_id: String,
+) -> Result<domain::OperationRecord, String> {
+    manager
+        .destroy_environment(&env_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn manager_cleanup_environment_local_data(
+    manager: tauri::State<'_, manager::Manager>,
+    env_id: String,
+) -> Result<domain::OperationExecution, String> {
+    manager
+        .cleanup_environment_local_data(&env_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn manager_capture_environment_diagnostic(
+    manager: tauri::State<'_, manager::Manager>,
+    env_id: String,
+) -> Result<domain::OperationExecution, String> {
+    manager
+        .capture_environment_diagnostic(&env_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn manager_events_since(
     manager: tauri::State<'_, manager::Manager>,
     sequence: u64,
@@ -424,6 +457,9 @@ pub fn run() {
             manager_reconcile_runtimes,
             manager_start_environment,
             manager_stop_environment,
+            manager_destroy_environment,
+            manager_cleanup_environment_local_data,
+            manager_capture_environment_diagnostic,
             manager_events_since,
             manager_update_settings,
             manager_cancel_operation,

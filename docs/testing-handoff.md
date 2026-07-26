@@ -236,14 +236,14 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 - 无代理创建必须覆盖，确认请求省略 `proxy` 而不是发送伪造占位值。
 - 不存在的 proxy profile、未知内核、缺少 major version 和非当前平台内核都必须在调用 DLL 前失败。
 - Dashboard 自动测试覆盖打开创建面板、选择代理、选择内核、禁用态和取消，不在普通浏览器 mock 环境执行真实 mutation。
-- 真实创建 E2E 必须同时设置 `BROSDK_API_KEY` 与 `BROSDK_E2E_ALLOW_MUTATION=1`，测试创建成功后立即删除测试环境并再次 `env_page` 对账。
-- 真实创建 E2E 命令为 `npm run e2e:environment-create`；包装脚本使用唯一临时 Manager 数据目录并在退出时清理，不能在命令或仓库文件中硬编码 API Key。
+- 真实创建 E2E 内部设置 `BROSDK_E2E_ALLOW_MUTATION=1`，测试创建成功后清理该临时环境的本地数据、删除服务端环境并再次 `env_page` 对账。
+- 真实创建 E2E 命令为 `npm run e2e:environment-create`；未设置 `BROSDK_API_KEY` 时包装脚本用隐藏提示读取，使用唯一临时 Manager 数据目录，并在退出时清理凭据环境变量和目录。不能在命令或仓库文件中硬编码 API Key。
 
 2026-07-26 Manager 子阶段结果：28 个 Manager 测试、6 个 sdk-ffi 测试、4 个 sdk-host 测试及 environment-e2e 辅助测试通过；workspace all-targets 编译通过。新增覆盖包括 `role=user`、最小 DTO、无代理省略、不可用内核拒绝、业务码检查、错误脱敏、字符串/数字 envId 和本地删除清理。
 
 Dashboard 子阶段结果：5 个环境创建组件测试通过；production build 通过。Browser 插件实测打开创建带、切换代理、按钮取消和 Esc 取消；1440x900、390x844 下 `documentElement.scrollWidth === clientWidth`，无控制台 warning/error。普通浏览器预览仅验证交互，提交按钮保持禁用，不触发远端 mutation。
 
-真实 E2E 子阶段结果：门禁辅助测试 2 项通过；无 API Key 时命令以 `skipped` 退出。设置 mutation 门禁后，真实 DLL 使用 `chrome-134-windows-x86_64` 和本机网络完成创建、镜像确认、删除、`env_page` 再对账；`cleanupAttempted=true`、`cleanupSucceeded=true`，测试前后账号环境数均为 1。
+真实 E2E 子阶段结果：门禁辅助测试 2 项通过。真实 DLL 使用 `chrome-134-windows-x86_64` 和本机网络完成创建、镜像确认、本地数据清理、服务端删除和 `env_page` 再对账；`localDataCleanupSucceeded/cleanupAttempted/cleanupSucceeded=true`，测试前后账号环境数均为 1。
 
 ## 12. 阶段 11 远端缓存与 MCP 验收
 
@@ -277,3 +277,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 浏览器预览使用 `http://127.0.0.1:1420/?preview=workspace&page=fingerprints` 或 `page=environments`，只用于布局/交互测试，所有本机动作仍必须 disabled。
 
 2026-07-26 环境/指纹子阶段结果：真实凭据 E2E 同步 1 个环境并完成聚焦 `sdk_env_getinfo`，`focusedDetailLoaded=true`，同时保留 `encryptedAtRest/restartLoaded/accountStateCleared=true`。Dashboard 16 个组件测试和 workspace 65 个 Rust 测试通过；`npm run check`、Clippy 和 production build 通过。Browser 插件确认环境详情与结构化指纹 DOM、禁用态和 console 无错误；截图 API 不可用后使用 Chrome CDP 复核 1440x900 与精确 390x844 设备视口，页面宽度 390/390、环境详情右边界在视口内，移动 9 项主导航无内部溢出。
+
+## 15. 阶段 12 环境运维动作验收
+
+- stopped 环境才能清理本地数据或删除服务端环境；ready 环境才能做页面诊断和打开指纹检查页。Dashboard 对清理与删除分别显示行内二次确认。
+- 本地清理调用 `sdk_browser_cleanup({envs:[envId]})`，返回前必须移除 userDataDir、cleanupPath 和逐项 envId；服务端删除调用 `sdk_env_destroy`，两者不能互相替代。
+- 页面诊断请求固定关闭 HTML、截图和 emitEvents，限制最多 32 页；返回只允许 status、pageCount、failedPages、页面 status 与 origin。
+- 单元测试必须使用带 path/query/token、标题、target/session/snapshot ID 和 chunk 的伪响应，证明所有正文和标识都被丢弃。
+
+2026-07-26 运维动作子阶段结果：新增环境详情 3 个组件测试与 Manager 2 个响应摘要测试；Dashboard 19 个组件测试与 workspace 67 个 Rust 测试全部通过。真实临时环境 E2E 完成 create -> local cleanup -> destroy -> env_page，对账后账号环境数恢复到 1，报告不含环境 ID、本地路径或 DLL 原响应。真实 ready 页面诊断留给最终生命周期 E2E。

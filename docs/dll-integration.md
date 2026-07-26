@@ -251,6 +251,10 @@ v2 内核逻辑会在启动时按环境核心信息自动解析、下载、校�
 
 公共 C ABI 直接支持 `sdk_browser_command`、`sdk_browser_snapshot` 和 `sdk_browser_env_check`，这些可以作为首版自动化能力基础。DLL 还自带 MCP endpoint，可通过初始化端口启用，作为 `sdk-host` capability 接入。
 
+Dashboard 的页面诊断使用 `sdk_browser_snapshot` 的最小模式：`includeHtml=false`、`includeScreenshot=false`、`emitEvents=false`，最多读取 32 个 page target。原响应仍包含 target/session/snapshot ID、标题和完整 URL，因此 Manager 必须只保留 page status、数量和 origin；不能把原响应交给前端或 operation/event。
+
+`sdk_browser_cleanup` 的 `envs` 与 `cores` 语义必须分开：`envs` 删除非运行环境的本机 user-data-dir，`cores` 删除内核下载缓存；两者都不删除服务端环境。服务端删除只能调用 `sdk_env_destroy`。环境正在运行或启停中时，DLL 会以 busy 拒绝本地清理，Manager 还会在调用前用环境状态做第一层门禁。
+
 MCP 分三步：
 
 1. 首版 `sdk-host capabilities` 明确报告 DLL 内嵌 MCP 可用性。

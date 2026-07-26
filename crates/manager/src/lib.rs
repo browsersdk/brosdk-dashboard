@@ -1844,6 +1844,80 @@ impl Manager {
         .await
     }
 
+    pub async fn cleanup_environment_local_data(
+        &self,
+        env_id: &str,
+    ) -> Result<OperationExecution, ManagerError> {
+        let environment = self
+            .inner
+            .store
+            .environment(env_id)?
+            .ok_or(ManagerError::EnvironmentNotFound)?;
+        if environment.status != "stopped" {
+            return Err(ManagerError::EnvironmentNotReady(environment.status));
+        }
+        let execution = self
+            .execute_sync_host_operation(
+                "environment.local-data-cleanup",
+                Some(env_id),
+                "清理环境本地数据",
+                json!({ "envs": [env_id] }),
+                |request| HostCommand::BrowserCleanup { request },
+            )
+            .await?;
+        let summary = summarize_environment_cleanup(&execution.response);
+        self.inner.store.append_event(
+            "environment.local-data-cleaned",
+            Some(env_id),
+            Some(&execution.operation.id),
+            &summary,
+        )?;
+        Ok(OperationExecution {
+            operation: execution.operation,
+            response: summary,
+        })
+    }
+
+    pub async fn capture_environment_diagnostic(
+        &self,
+        env_id: &str,
+    ) -> Result<OperationExecution, ManagerError> {
+        let environment = self
+            .inner
+            .store
+            .environment(env_id)?
+            .ok_or(ManagerError::EnvironmentNotFound)?;
+        if environment.status != "ready" {
+            return Err(ManagerError::EnvironmentNotReady(environment.status));
+        }
+        let execution = self
+            .execute_sync_host_operation(
+                "environment.page-diagnostic",
+                Some(env_id),
+                "页面诊断",
+                json!({
+                    "envId": env_id,
+                    "includeHtml": false,
+                    "includeScreenshot": false,
+                    "emitEvents": false,
+                    "maxPages": 32,
+                }),
+                |request| HostCommand::BrowserSnapshot { request },
+            )
+            .await?;
+        let summary = summarize_browser_snapshot(&execution.response);
+        self.inner.store.append_event(
+            "environment.page-diagnostic.completed",
+            Some(env_id),
+            Some(&execution.operation.id),
+            &summary,
+        )?;
+        Ok(OperationExecution {
+            operation: execution.operation,
+            response: summary,
+        })
+    }
+
     pub async fn refresh_kernels(&self) -> Result<OperationRecord, ManagerError> {
         let operation =
             self.inner
@@ -2578,6 +2652,86 @@ fn redacted_response_text(text: &str) -> String {
         .collect()
 }
 
+fn summarize_environment_cleanup(response: &serde_json::Value) -> serde_json::Value {
+    let data = response.get("data").unwrap_or(response);
+    let deferred = data
+        .get("results")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| {
+                    item.get("deferredDelete")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false)
+                })
+                .count()
+        })
+        .unwrap_or_default();
+    json!({
+        "deleted": data.get("deleted").and_then(value_as_i64).unwrap_or_default(),
+        "notFound": data.get("notFound").and_then(value_as_i64).unwrap_or_default(),
+        "failed": data.get("failed").and_then(value_as_i64).unwrap_or_default(),
+        "deferred": deferred,
+    })
+}
+
+fn summarize_browser_snapshot(response: &serde_json::Value) -> serde_json::Value {
+    let pages = response
+        .get("pages")
+        .and_then(serde_json::Value::as_array)
+        .map(|pages| {
+            pages
+                .iter()
+                .map(|page| {
+                    json!({
+                        "status": page.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown"),
+                        "origin": page.get("url")
+                            .or_else(|| page.get("targetUrl"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(safe_url_origin)
+                            .unwrap_or_else(|| "unknown".into()),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let reported_count = response
+        .get("pageCount")
+        .and_then(value_as_i64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(pages.len());
+    let failed_pages = pages
+        .iter()
+        .filter(|page| page.get("status").and_then(serde_json::Value::as_str) != Some("ok"))
+        .count();
+    json!({
+        "status": response.get("status").and_then(serde_json::Value::as_str).unwrap_or("unknown"),
+        "pageCount": reported_count,
+        "failedPages": failed_pages,
+        "pages": pages,
+        "htmlIncluded": false,
+        "screenshotIncluded": false,
+    })
+}
+
+fn safe_url_origin(value: &str) -> String {
+    url::Url::parse(value)
+        .ok()
+        .and_then(|url| {
+            url.host_str()
+                .map(|host| {
+                    let port = url
+                        .port()
+                        .map(|port| format!(":{port}"))
+                        .unwrap_or_default();
+                    format!("{}://{host}{port}", url.scheme())
+                })
+                .or_else(|| (url.scheme() == "about").then(|| format!("about:{}", url.path())))
+        })
+        .unwrap_or_else(|| "internal".into())
+}
+
 fn response_env_id(response: &serde_json::Value) -> Option<String> {
     response
         .pointer("/data/envId")
@@ -3261,6 +3415,59 @@ mod tests {
             ensure_backend_success("environment create", &json!({ "data": {} })),
             Err(ManagerError::InvalidHostResponse(_))
         ));
+    }
+
+    #[test]
+    fn environment_cleanup_summary_omits_local_paths_and_environment_ids() {
+        let summary = summarize_environment_cleanup(&json!({
+            "code": 0,
+            "data": {
+                "deleted": 1,
+                "notFound": 0,
+                "failed": 0,
+                "results": [{
+                    "envId": "123",
+                    "status": "deleted",
+                    "userDataDir": "C:/sensitive/profile/123",
+                    "cleanupPath": "C:/sensitive/tombstone",
+                    "deferredDelete": true
+                }]
+            }
+        }));
+        assert_eq!(summary["deleted"], 1);
+        assert_eq!(summary["deferred"], 1);
+        assert!(!summary.to_string().contains("sensitive"));
+        assert!(!summary.to_string().contains("123"));
+    }
+
+    #[test]
+    fn browser_snapshot_summary_keeps_only_page_status_and_origin() {
+        let summary = summarize_browser_snapshot(&json!({
+            "type": "browser.snapshot.result",
+            "snapshotId": "secret-snapshot-id",
+            "envId": "123",
+            "status": "ok",
+            "pageCount": 2,
+            "pages": [{
+                "status": "ok",
+                "url": "https://example.com/private/path?token=secret",
+                "title": "Private title",
+                "targetId": "target-secret",
+                "sessionId": "session-secret"
+            }, {
+                "status": "attach-failed",
+                "targetUrl": "chrome://settings/content"
+            }],
+            "chunks": [{ "data": "page body" }]
+        }));
+        assert_eq!(summary["pageCount"], 2);
+        assert_eq!(summary["failedPages"], 1);
+        assert_eq!(summary["pages"][0]["origin"], "https://example.com");
+        assert_eq!(summary["pages"][1]["origin"], "chrome://settings");
+        let serialized = summary.to_string();
+        for forbidden in ["private", "secret", "targetId", "sessionId", "chunks"] {
+            assert!(!serialized.contains(forbidden));
+        }
     }
 
     #[test]

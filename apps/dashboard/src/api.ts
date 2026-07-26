@@ -66,6 +66,18 @@ export async function stopEnvironment(envId: string) {
   return invoke("manager_stop_environment", { envId });
 }
 
+export async function destroyEnvironment(envId: string): Promise<OperationRecord> {
+  return invoke<OperationRecord>("manager_destroy_environment", { envId });
+}
+
+export async function cleanupEnvironmentLocalData(envId: string): Promise<OperationExecution> {
+  return invoke<OperationExecution>("manager_cleanup_environment_local_data", { envId });
+}
+
+export async function captureEnvironmentDiagnostic(envId: string): Promise<OperationExecution> {
+  return invoke<OperationExecution>("manager_capture_environment_diagnostic", { envId });
+}
+
 export function isDesktopRuntime() {
   return isTauri();
 }

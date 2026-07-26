@@ -36,12 +36,15 @@ import {
   aiExecuteAgent,
   aiPlanAgent,
   cancelOperation,
+  captureEnvironmentDiagnostic,
   cleanupKernelCache,
+  cleanupEnvironmentLocalData,
   clearApiKey,
   configureApiKey,
   createEnvironment,
   createDiagnosticBundle,
   deleteProxyProfile,
+  destroyEnvironment,
   diagnoseProxy,
   eventsSince,
   getSnapshot,
@@ -400,6 +403,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
   const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<Record<string, unknown>>({});
   const rows = snapshot?.environments ?? [];
   const filteredRows = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
@@ -422,13 +426,22 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
     ? `最近同步：${cache.lastSuccessAt ? new Date(cache.lastSuccessAt).toLocaleString("zh-CN") : "刚刚"}`
     : cache?.lastError ?? "尚未从 SDK 服务器同步环境";
 
-  async function runAction(action: string, callback: () => Promise<unknown>) {
+  async function runAction<T>(action: string, callback: () => Promise<T>): Promise<T | null> {
     setBusyAction(action);
     try {
-      await callback();
+      const result = await callback();
+      const value = result && typeof result === "object" ? result as Record<string, unknown> : null;
+      const operationValue = value?.operation && typeof value.operation === "object"
+        ? value.operation as Record<string, unknown>
+        : value;
+      if (operationValue?.status === "failed") {
+        throw new Error(typeof operationValue.message === "string" ? operationValue.message : "环境操作失败");
+      }
       await onRefresh();
+      return result;
     } catch (requestError) {
       onError(requestError instanceof Error ? requestError.message : "环境操作失败");
+      return null;
     } finally {
       setBusyAction("");
     }
@@ -537,13 +550,26 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
       </div>
       {selected && (
         <EnvironmentDetail
+          key={selected.envId}
           environment={selected}
           binding={selectedBinding}
-          busy={busyAction === `detail:${selected.envId}` || busyAction === `check:${selected.envId}`}
+          busy={Boolean(busyAction)}
           desktop={isDesktopRuntime()}
+          diagnostic={diagnostics[selected.envId] ?? null}
           onClose={() => setSelectedEnvId(null)}
+          onStart={() => void runAction(`start:${selected.envId}`, () => startEnvironment(selected.envId))}
+          onStop={() => void runAction(`stop:${selected.envId}`, () => stopEnvironment(selected.envId))}
           onRefresh={() => void runAction(`detail:${selected.envId}`, () => refreshEnvironmentDetail(selected.envId))}
           onOpenCheck={() => void runAction(`check:${selected.envId}`, () => openFingerprintCheck(selected.envId))}
+          onCaptureDiagnostic={() => void (async () => {
+            const result = await runAction(`diagnostic:${selected.envId}`, () => captureEnvironmentDiagnostic(selected.envId));
+            if (result) setDiagnostics((current) => ({ ...current, [selected.envId]: result.response }));
+          })()}
+          onCleanupLocalData={() => void runAction(`cleanup:${selected.envId}`, () => cleanupEnvironmentLocalData(selected.envId))}
+          onDelete={() => void (async () => {
+            const result = await runAction(`delete:${selected.envId}`, () => destroyEnvironment(selected.envId));
+            if (result) setSelectedEnvId(null);
+          })()}
         />
       )}
       </div>

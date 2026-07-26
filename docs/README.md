@@ -75,6 +75,8 @@ brosdk-dashboard/
 
 阶段 12 环境/远端指纹工作台已完成：环境详情通过 `manager_refresh_environment_detail(envId)` 单独调用 `sdk_env_getinfo`，校验业务 `code=200` 后只缓存指纹、掩码代理、内核与少量环境元数据；`cookie`、`storage`、上传路径、DEK、token 和凭据不会进入 SQLite/snapshot。环境详情侧栏直接展示服务端内核、代理、语言、时区和屏幕；“指纹”页改为跨环境结构化查看器，不再以本地 Profile JSON 编辑器作为主流程。浏览器 UI 验收可使用 `?preview=workspace&page=environments|fingerprints`，该模式不启用本机 mutation。
 
+阶段 12 运维动作已接通：环境详情区统一提供启停、详情刷新、指纹检查、页面诊断、本地浏览数据清理和服务端删除。清理与删除只允许 stopped 环境并分别二次确认；页面诊断只允许 ready 环境，并强制关闭 HTML、截图和事件 chunk，只向 Dashboard 返回页数、失败数与去除 path/query/userinfo 的 origin。真实临时环境 E2E 已验证本地清理与服务端删除是两个独立动作，测试环境完成最终对账和清理。
+
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 
 Manager/Runtime Host 创建链路、Dashboard 双字段交互和真实创建/删除验收均已完成：FFI 已加载 `sdk_env_create`/`sdk_env_destroy`，Runtime Host 继续统一脱敏，Manager 校验本地内核、后端业务 `code=200`、创建结果 `data.envId`，并把结果写入本地镜像和 operation。环境页的创建带只显示代理与内核版本，默认本机网络并预选最新本地内核；无可用内核时跳转内核页。`getUserSig` 请求固定使用 `role=user`。真实 DLL 验收使用 Chrome 134 和本机网络完成创建、镜像确认、删除及 `env_page` 对账，测试环境已清理。

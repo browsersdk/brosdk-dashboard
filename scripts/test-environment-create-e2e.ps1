@@ -14,8 +14,22 @@ if (-not $resolvedDataDir.StartsWith($tempRoot, [StringComparison]::OrdinalIgnor
 
 $originalDataDir = $env:BROSDK_DATA_DIR
 $originalWorkDir = $env:BROSDK_WORK_DIR
+$originalMutation = $env:BROSDK_E2E_ALLOW_MUTATION
+$secretAllocated = $false
 
 try {
+    if ([string]::IsNullOrWhiteSpace($env:BROSDK_API_KEY)) {
+        $secure = Read-Host "BroSDK API Key" -AsSecureString
+        $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        try {
+            $env:BROSDK_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+            $secretAllocated = $true
+        }
+        finally {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
+        }
+    }
+    $env:BROSDK_E2E_ALLOW_MUTATION = "1"
     $env:BROSDK_DATA_DIR = $resolvedDataDir
     if ([string]::IsNullOrWhiteSpace($env:BROSDK_WORK_DIR)) {
         $env:BROSDK_WORK_DIR = Join-Path $repoRoot "runtime\sdk-work"
@@ -32,6 +46,14 @@ try {
     }
 }
 finally {
+    if ($null -eq $originalMutation) {
+        Remove-Item Env:BROSDK_E2E_ALLOW_MUTATION -ErrorAction SilentlyContinue
+    } else {
+        $env:BROSDK_E2E_ALLOW_MUTATION = $originalMutation
+    }
+    if ($secretAllocated) {
+        Remove-Item Env:BROSDK_API_KEY -ErrorAction SilentlyContinue
+    }
     if ($null -eq $originalDataDir) {
         Remove-Item Env:BROSDK_DATA_DIR -ErrorAction SilentlyContinue
     } else {

@@ -369,6 +369,18 @@ h2 {
   background: #f7f8fa;
 }
 
+.button.danger {
+  color: #a72f37;
+  border-color: #e3b7bb;
+  background: #fff8f8;
+}
+
+.button.danger:hover:not(:disabled) {
+  color: #ffffff;
+  border-color: #b6323a;
+  background: #b6323a;
+}
+
 .button.compact {
   min-height: 30px;
   padding: 0 10px;
@@ -1167,6 +1179,27 @@ h2 {
   justify-content: center;
 }
 
+.environment-confirm {
+  display: grid;
+  margin: 0 0 12px;
+  padding: 10px;
+  gap: 9px;
+  border: 1px solid #e7c3c6;
+  border-radius: 5px;
+  background: #fffafa;
+}
+
+.environment-confirm strong {
+  color: #743137;
+  font-size: 11px;
+}
+
+.environment-confirm > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
 .environment-runtime-line {
   display: flex;
   align-items: center;
@@ -1175,6 +1208,28 @@ h2 {
   gap: 8px;
   color: #7a8494;
   font-size: 10px;
+}
+
+.environment-diagnostic {
+  display: grid;
+  margin-top: 12px;
+  padding: 10px;
+  gap: 4px;
+  border-top: 2px solid #79a4e9;
+  background: #f5f8fd;
+}
+
+.environment-diagnostic strong {
+  color: #33425a;
+  font-size: 11px;
+}
+
+.environment-diagnostic span,
+.environment-diagnostic small {
+  color: #657188;
+  font-size: 10px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .detail-heading {

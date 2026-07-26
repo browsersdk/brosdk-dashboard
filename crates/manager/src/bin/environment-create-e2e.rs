@@ -64,6 +64,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             return Err("created environment is missing from the local mirror".into());
         }
 
+        let local_cleanup = manager.cleanup_environment_local_data(&env_id).await?;
+        ensure_operation_succeeded(&local_cleanup.operation)?;
+        ensure_cleanup_summary(&local_cleanup.response)?;
+
         cleanup_attempted = true;
         let destroy = manager.destroy_environment(&env_id).await?;
         ensure_operation_succeeded(&destroy)?;
@@ -88,6 +92,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "environmentCountBefore": before.environments.len(),
             "environmentCountAfter": after_destroy.environments.len(),
             "createMirrored": true,
+            "localDataCleanupSucceeded": true,
             "destroyReconciled": true,
             "cleanupAttempted": cleanup_attempted,
             "cleanupSucceeded": cleanup_succeeded,
@@ -127,6 +132,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Err(error)
         }
     }
+}
+
+fn ensure_cleanup_summary(value: &Value) -> Result<(), Box<dyn Error>> {
+    let object = value
+        .as_object()
+        .ok_or("environment cleanup summary is not an object")?;
+    let allowed = ["deleted", "notFound", "failed", "deferred"];
+    if object.keys().any(|key| !allowed.contains(&key.as_str())) {
+        return Err(
+            "environment cleanup response exposed fields outside the summary contract".into(),
+        );
+    }
+    let handled = ["deleted", "notFound"]
+        .iter()
+        .filter_map(|key| object.get(*key).and_then(Value::as_i64))
+        .sum::<i64>();
+    if handled != 1 || object.get("failed").and_then(Value::as_i64) != Some(0) {
+        return Err("environment cleanup did not handle exactly one temporary environment".into());
+    }
+    Ok(())
 }
 
 fn newest_usable_kernel(kernels: &[KernelRecord]) -> Option<&KernelRecord> {
