@@ -298,3 +298,5 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 元数据更新测试只允许 envName/serial，覆盖 Unicode 字符计数、serial 字节长度、运行态拒绝、后端业务码失败和同步后的服务端名称。
 - 指纹对比组件覆盖 2-4 个环境、相同/不同/未知字段、选择上限和详情缓存缺失。
 - 真实 E2E 必须使用两个临时环境，最终停止、清理并删除；报告只记录数量和布尔结果，不输出 envId、名称、序号、页面内容或凭据。
+
+2026-07-26 批量生命周期子阶段结果：新增 3 个批量栏组件测试和 2 个 Manager preflight 测试；Dashboard 22 项、Rust workspace 71 项测试、Clippy 与 production build 通过。应用内浏览器验证多选后显示 `1 可启动/0 可停止`，预览态 mutation 禁用、清除选择可用且 console 无错误。真实双环境启停留给阶段 13 最终 E2E。

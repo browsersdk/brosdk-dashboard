@@ -331,6 +331,30 @@ pub struct EnvironmentCreateInput {
     pub kernel_id: String,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum EnvironmentBatchAction {
+    Start,
+    Stop,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentBatchInput {
+    pub action: EnvironmentBatchAction,
+    pub env_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvironmentBatchResult {
+    pub action: EnvironmentBatchAction,
+    pub requested: usize,
+    pub accepted: usize,
+    pub failed: usize,
+    pub operations: Vec<OperationRecord>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FingerprintProfile {

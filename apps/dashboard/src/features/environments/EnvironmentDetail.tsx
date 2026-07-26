@@ -51,6 +51,8 @@ export function EnvironmentDetail({
   const diagnosticOrigins = Array.isArray(diagnosticPages)
     ? diagnosticPages.map((page) => readRemoteValue(page, ["origin"]))
     : [];
+  const canStart = ["stopped", "failed"].includes(environment.status);
+  const canStop = ["ready", "starting"].includes(environment.status);
   const rows = [
     ["内核", [readRemoteValue(kernel, ["kernel"]), readRemoteValue(kernel, ["version"])].filter(Boolean).join(" ") || "-"],
     ["系统", formatRemoteValue(readRemoteValue(kernel, ["system"]) ?? readRemoteValue(fingerprint, ["system", "platform"]))],
@@ -71,12 +73,12 @@ export function EnvironmentDetail({
         <button className="icon-button" type="button" title="关闭详情" aria-label="关闭详情" onClick={onClose}><X size={16} /></button>
       </div>
       <div className="environment-detail-actions">
-        {environment.status === "ready" || environment.status === "starting" ? (
+        {canStop ? (
           <button className="button secondary compact" type="button" disabled={!desktop || busy} onClick={onStop}>
             <Square size={14} />停止
           </button>
         ) : (
-          <button className="button primary compact" type="button" disabled={!desktop || busy} onClick={onStart}>
+          <button className="button primary compact" type="button" disabled={!desktop || busy || !canStart} onClick={onStart}>
             <Play size={14} />启动
           </button>
         )}

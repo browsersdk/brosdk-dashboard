@@ -416,6 +416,13 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 阶段 0-12 已完成。阶段 13 已完成契约与产品边界规划，按“批量生命周期 -> 远端元数据 -> 指纹对比 -> 双环境 E2E”独立实施、测试、更新文档并提交。
 
+阶段 13 批量生命周期子阶段完成（2026-07-26）：
+
+- Domain/Manager/Tauri 新增批量 start/stop 编排，限制 1-20 个唯一 envId，并在任何 SDK 调用前校验所有环境状态。
+- 批量请求按顺序复用单环境 operation；每个环境继续独立推进 generation、accepted、callback ready/stopped 和错误状态。
+- 环境表增加复选框、当前结果前 20 个全选、选择计数、可启动/停止计数与清除动作；stopping/unknown 等过渡态不会显示成可启动。
+- Dashboard 22 项、Rust workspace 71 项测试、Clippy、production build 通过；应用内浏览器确认选择/清除、预览禁用态和 console 无错误。
+
 阶段 12 安全初始化子阶段完成（2026-07-26）：
 
 - 无凭据时 Manager 不再启动 Host，Dashboard 首屏只显示 API Key 初始化；成功配置后直接进入环境工作台。

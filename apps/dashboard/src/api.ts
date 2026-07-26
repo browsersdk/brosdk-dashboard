@@ -5,6 +5,8 @@ import type {
   AiChatResponse,
   ApiKeyInitializationResult,
   DashboardSnapshot,
+  EnvironmentBatchAction,
+  EnvironmentBatchResult,
   EnvironmentCreateInput,
   FingerprintProfile,
   FingerprintProfileInput,
@@ -64,6 +66,15 @@ export async function startEnvironment(envId: string) {
 
 export async function stopEnvironment(envId: string) {
   return invoke("manager_stop_environment", { envId });
+}
+
+export async function batchEnvironmentAction(
+  action: EnvironmentBatchAction,
+  envIds: string[],
+): Promise<EnvironmentBatchResult> {
+  return invoke<EnvironmentBatchResult>("manager_batch_environment_action", {
+    input: { action, envIds },
+  });
 }
 
 export async function destroyEnvironment(envId: string): Promise<OperationRecord> {

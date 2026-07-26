@@ -35,6 +35,7 @@ import {
   aiChat,
   aiExecuteAgent,
   aiPlanAgent,
+  batchEnvironmentAction,
   cancelOperation,
   captureEnvironmentDiagnostic,
   cleanupKernelCache,
@@ -68,6 +69,7 @@ import {
   updateSettings,
 } from "./api";
 import { EnvironmentCreatePanel } from "./features/environments/EnvironmentCreatePanel";
+import { EnvironmentBatchBar } from "./features/environments/EnvironmentBatchBar";
 import { EnvironmentDetail } from "./features/environments/EnvironmentDetail";
 import { FingerprintPage } from "./features/fingerprints/FingerprintPage";
 import { McpPage } from "./features/mcp/McpPage";
@@ -77,6 +79,7 @@ import type {
   AiAgentPlan,
   AiChatResponse,
   DashboardSnapshot,
+  EnvironmentBatchAction,
   ManagerSettings,
   ProxyProfile,
   SmokeReport,
@@ -401,10 +404,11 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [selectedEnvId, setSelectedEnvId] = useState<string | null>(null);
+  const [selectedEnvIds, setSelectedEnvIds] = useState<string[]>([]);
   const [busyAction, setBusyAction] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [diagnostics, setDiagnostics] = useState<Record<string, unknown>>({});
-  const rows = snapshot?.environments ?? [];
+  const rows = useMemo(() => snapshot?.environments ?? [], [snapshot?.environments]);
   const filteredRows = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     return rows.filter((environment) => {
@@ -424,7 +428,12 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
       : "待同步";
   const cacheTitle = cache?.state === "fresh"
     ? `最近同步：${cache.lastSuccessAt ? new Date(cache.lastSuccessAt).toLocaleString("zh-CN") : "刚刚"}`
-    : cache?.lastError ?? "尚未从 SDK 服务器同步环境";
+      : cache?.lastError ?? "尚未从 SDK 服务器同步环境";
+
+  useEffect(() => {
+    const available = new Set(rows.map((environment) => environment.envId));
+    setSelectedEnvIds((current) => current.filter((envId) => available.has(envId)));
+  }, [rows]);
 
   async function runAction<T>(action: string, callback: () => Promise<T>): Promise<T | null> {
     setBusyAction(action);
@@ -465,6 +474,31 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
       setBusyAction("");
     }
   }
+
+  function toggleEnvironment(envId: string, checked: boolean) {
+    setSelectedEnvIds((current) => {
+      if (!checked) return current.filter((currentId) => currentId !== envId);
+      if (current.includes(envId)) return current;
+      if (current.length >= 20) {
+        onError("每批最多选择 20 个环境");
+        return current;
+      }
+      return [...current, envId];
+    });
+  }
+
+  async function runBatch(action: EnvironmentBatchAction, envIds: string[]) {
+    const result = await runAction(`batch:${action}`, () => batchEnvironmentAction(action, envIds));
+    if (!result) return;
+    if (result.failed > 0) {
+      onError(`${result.failed} 个环境操作未被 SDK 接受`);
+    }
+    setSelectedEnvIds([]);
+  }
+
+  const selectableVisibleIds = filteredRows.slice(0, 20).map((environment) => environment.envId);
+  const allVisibleSelected = selectableVisibleIds.length > 0
+    && selectableVisibleIds.every((envId) => selectedEnvIds.includes(envId));
 
   return (
     <section className={`module-workspace environment-workspace ${selected ? "with-detail" : ""}`}>
@@ -515,13 +549,22 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           onCreate={create}
         />
       )}
+      <EnvironmentBatchBar
+        environments={rows}
+        selectedIds={selectedEnvIds}
+        desktop={isDesktopRuntime()}
+        busy={Boolean(busyAction)}
+        onAction={(action, envIds) => void runBatch(action, envIds)}
+        onClear={() => setSelectedEnvIds([])}
+      />
       <div className="environment-body">
       <div className="table-wrap environment-table-wrap">
         <table className="module-table">
-          <thead><tr><th>环境</th><th>状态</th><th>CDP</th><th>最后事件</th><th aria-label="操作" /></tr></thead>
+          <thead><tr><th className="selection-cell"><input type="checkbox" aria-label="选择当前结果（最多 20 个）" checked={allVisibleSelected} disabled={selectableVisibleIds.length === 0} onChange={(event) => setSelectedEnvIds(event.target.checked ? selectableVisibleIds : [])} /></th><th>环境</th><th>状态</th><th>CDP</th><th>最后事件</th><th aria-label="操作" /></tr></thead>
           <tbody>
             {filteredRows.map((environment) => (
               <tr key={environment.envId} className={selectedEnvId === environment.envId ? "selected" : ""} onClick={() => setSelectedEnvId(environment.envId)}>
+                <td className="selection-cell"><input type="checkbox" aria-label={`选择 ${environment.name}`} checked={selectedEnvIds.includes(environment.envId)} disabled={!selectedEnvIds.includes(environment.envId) && selectedEnvIds.length >= 20} onClick={(event) => event.stopPropagation()} onChange={(event) => toggleEnvironment(environment.envId, event.target.checked)} /></td>
                 <td><div className="resource-name"><span className="resource-icon"><Boxes size={16} /></span><div><strong>{environment.name}</strong><small>{environment.envId}</small></div></div></td>
                 <td><span className={`status-badge ${environment.status}`}>{statusLabel[environment.status] ?? environment.status}</span></td>
                 <td><code>{environment.cdp}</code></td>
@@ -532,7 +575,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
                       {busyAction === `stop:${environment.envId}` ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}
                     </button>
                   ) : (
-                    <button className="icon-button" type="button" title="启动环境" aria-label={`启动 ${environment.name}`} disabled={!isDesktopRuntime() || Boolean(busyAction)} onClick={(event) => { event.stopPropagation(); void runAction(`start:${environment.envId}`, () => startEnvironment(environment.envId)); }}>
+                    <button className="icon-button" type="button" title="启动环境" aria-label={`启动 ${environment.name}`} disabled={!isDesktopRuntime() || Boolean(busyAction) || !["stopped", "failed"].includes(environment.status)} onClick={(event) => { event.stopPropagation(); void runAction(`start:${environment.envId}`, () => startEnvironment(environment.envId)); }}>
                       {busyAction === `start:${environment.envId}` ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
                     </button>
                   )}

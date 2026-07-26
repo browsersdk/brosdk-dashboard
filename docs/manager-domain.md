@@ -96,6 +96,8 @@ queued -> initialize SDK once -> sdk_env_page(page=1..N) -> atomic replace -> su
 
 `fingerprint.check` 同样要求 ready。DLL 原始 target/session/CDP 注入结果在 Manager 内压缩为 opened/newTab/source，不进入 Dashboard、SQLite 或事件。
 
+批量环境启停不创建共享生命周期 operation。Manager 先拒绝空列表、重复 envId、超过 20 个以及状态不允许的整批请求，再按输入顺序调用单环境 start/stop；每个子项拥有独立 operation、generation、pending callback 和失败状态。批量返回只汇总 requested/accepted/failed 与子 operation，不把 DLL 原生 batch 的一个 operation 绑定到多个环境。
+
 创建 operation 的 request snapshot 只保存 `proxyProfileId` 和 `kernelId`。后端 DTO、完整代理 URL、API Key、userSig 和原始响应均不进入 operation request。测试清理使用 `sdk_env_destroy`，成功后事务删除本地 environment/runtime snapshot，environment detail 通过外键级联删除。
 
 数据库和事件 payload 不保存 API Key、userSig、代理密码、Cookie 或完整 Authorization。SDK 数据在 host 出口和 Manager 持久化入口都执行脱敏。

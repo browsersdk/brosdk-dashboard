@@ -12,7 +12,8 @@ use std::{
 use domain::{
     AiAgentExecuteRequest, AiAgentExecution, AiAgentPlan, AiAgentPlanRequest, AiChatRequest,
     AiChatResponse, ApiKeyInitializationResult, ApiKeyStatus, BrowserCommandExecution,
-    DashboardSnapshot, EnvironmentCreateInput, FingerprintProfile, FingerprintProfileInput,
+    DashboardSnapshot, EnvironmentBatchAction, EnvironmentBatchInput, EnvironmentBatchResult,
+    EnvironmentCreateInput, EnvironmentRecord, FingerprintProfile, FingerprintProfileInput,
     HostCommand, KernelInstallInput, KernelRecord, ManagerEvent, ManagerSettings, McpPanel,
     McpToolCallExecution, McpToolCallRequest, McpToolDiscovery, McpToolDiscoveryRequest,
     McpToolScope, McpToolSummary, OperationExecution, OperationRecord, ProxyParseResult,
@@ -35,6 +36,7 @@ mod store;
 const ENVIRONMENT_PAGE_SIZE: usize = 200;
 const MAX_ENVIRONMENT_PAGES: usize = 500;
 const MAX_ENVIRONMENTS: usize = 100_000;
+const MAX_ENVIRONMENT_BATCH_SIZE: usize = 20;
 const API_KEY_SECRET_ID: &str = "sdk-api-key";
 const API_KEY_SECRET_REFERENCE: &str = "sdk-api-key.bin";
 const GLOBAL_MCP_READ_TOOLS: &[&str] = &[
@@ -149,6 +151,10 @@ pub enum ManagerError {
     EnvironmentNotFound,
     #[error("environment is not ready for browser commands (current state: {0})")]
     EnvironmentNotReady(String),
+    #[error("environment batch request is invalid: {0}")]
+    InvalidEnvironmentBatch(String),
+    #[error("environment cannot {action} from state {state}")]
+    InvalidEnvironmentTransition { action: String, state: String },
     #[error("browser command method must not be empty")]
     InvalidBrowserCommand,
     #[error("{0}")]
@@ -1420,6 +1426,44 @@ impl Manager {
         self.execute_environment_operation(env_id, false).await
     }
 
+    pub async fn batch_environment_action(
+        &self,
+        input: EnvironmentBatchInput,
+    ) -> Result<EnvironmentBatchResult, ManagerError> {
+        validate_environment_batch_shape(&input)?;
+        let environments = input
+            .env_ids
+            .iter()
+            .map(|env_id| {
+                self.inner
+                    .store
+                    .environment(env_id)?
+                    .ok_or(ManagerError::EnvironmentNotFound)
+            })
+            .collect::<Result<Vec<_>, ManagerError>>()?;
+        validate_environment_batch_states(&input, &environments)?;
+
+        let mut operations = Vec::with_capacity(input.env_ids.len());
+        for env_id in &input.env_ids {
+            let operation = match input.action {
+                EnvironmentBatchAction::Start => self.start_environment(env_id).await?,
+                EnvironmentBatchAction::Stop => self.stop_environment(env_id).await?,
+            };
+            operations.push(operation);
+        }
+        let failed = operations
+            .iter()
+            .filter(|operation| operation.status == "failed")
+            .count();
+        Ok(EnvironmentBatchResult {
+            action: input.action,
+            requested: input.env_ids.len(),
+            accepted: operations.len() - failed,
+            failed,
+            operations,
+        })
+    }
+
     pub async fn browser_command(
         &self,
         env_id: &str,
@@ -2372,6 +2416,22 @@ impl Manager {
         env_id: &str,
         start: bool,
     ) -> Result<OperationRecord, ManagerError> {
+        let environment = self
+            .inner
+            .store
+            .environment(env_id)?
+            .ok_or(ManagerError::EnvironmentNotFound)?;
+        let action = if start {
+            EnvironmentBatchAction::Start
+        } else {
+            EnvironmentBatchAction::Stop
+        };
+        if !environment_action_state_allowed(action, &environment.status) {
+            return Err(ManagerError::InvalidEnvironmentTransition {
+                action: format!("{action:?}").to_ascii_lowercase(),
+                state: environment.status,
+            });
+        }
         let operation = self.prepare_environment_operation(env_id, start)?;
         let _execution = self.inner.operations.acquire().await;
         self.inner.operations.start(&operation.id, "calling SDK")?;
@@ -2572,6 +2632,53 @@ fn validate_environment_kernel(kernel: &KernelRecord) -> Result<(), ManagerError
     }
     backend_kernel_name(&kernel.kernel_type)?;
     Ok(())
+}
+
+fn validate_environment_batch_shape(input: &EnvironmentBatchInput) -> Result<(), ManagerError> {
+    if input.env_ids.is_empty() {
+        return Err(ManagerError::InvalidEnvironmentBatch(
+            "at least one environment is required".into(),
+        ));
+    }
+    if input.env_ids.len() > MAX_ENVIRONMENT_BATCH_SIZE {
+        return Err(ManagerError::InvalidEnvironmentBatch(format!(
+            "at most {MAX_ENVIRONMENT_BATCH_SIZE} environments are allowed"
+        )));
+    }
+    let unique = input.env_ids.iter().collect::<HashSet<_>>();
+    if unique.len() != input.env_ids.len() {
+        return Err(ManagerError::InvalidEnvironmentBatch(
+            "duplicate environment ids are not allowed".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_environment_batch_states(
+    input: &EnvironmentBatchInput,
+    environments: &[EnvironmentRecord],
+) -> Result<(), ManagerError> {
+    if environments.len() != input.env_ids.len() {
+        return Err(ManagerError::InvalidEnvironmentBatch(
+            "environment preflight was incomplete".into(),
+        ));
+    }
+    for environment in environments {
+        if !environment_action_state_allowed(input.action, &environment.status) {
+            return Err(ManagerError::InvalidEnvironmentBatch(format!(
+                "environment {} cannot {:?} from state {}",
+                environment.env_id, input.action, environment.status
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn environment_action_state_allowed(action: EnvironmentBatchAction, status: &str) -> bool {
+    match action {
+        EnvironmentBatchAction::Start => matches!(status, "stopped" | "failed"),
+        EnvironmentBatchAction::Stop => matches!(status, "ready" | "starting"),
+    }
 }
 
 fn build_environment_create_request(
@@ -3264,6 +3371,8 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::BackendRejected(_) => "BACKEND_REJECTED",
         ManagerError::EnvironmentNotFound => "ENVIRONMENT_NOT_FOUND",
         ManagerError::EnvironmentNotReady(_) => "ENVIRONMENT_NOT_READY",
+        ManagerError::InvalidEnvironmentBatch(_) => "INVALID_ENVIRONMENT_BATCH",
+        ManagerError::InvalidEnvironmentTransition { .. } => "INVALID_ENVIRONMENT_TRANSITION",
         ManagerError::InvalidBrowserCommand => "INVALID_BROWSER_COMMAND",
         ManagerError::Profile(_) => "PROFILE_ERROR",
         ManagerError::Platform(_) => "PLATFORM_ERROR",
@@ -3311,6 +3420,92 @@ mod tests {
             download_available: true,
             updated_at: chrono::Utc::now(),
         }
+    }
+
+    fn environment_record(env_id: &str, status: &str) -> EnvironmentRecord {
+        EnvironmentRecord {
+            env_id: env_id.into(),
+            name: env_id.into(),
+            status: status.into(),
+            cdp: "-".into(),
+            last_event: "synced".into(),
+            generation: 0,
+            request_id: None,
+            current_operation_id: None,
+            updated_at: chrono::Utc::now(),
+        }
+    }
+
+    #[test]
+    fn environment_batch_rejects_empty_duplicate_and_oversized_requests() {
+        let empty = EnvironmentBatchInput {
+            action: EnvironmentBatchAction::Start,
+            env_ids: Vec::new(),
+        };
+        assert!(matches!(
+            validate_environment_batch_shape(&empty),
+            Err(ManagerError::InvalidEnvironmentBatch(_))
+        ));
+
+        let duplicate = EnvironmentBatchInput {
+            action: EnvironmentBatchAction::Start,
+            env_ids: vec!["env-1".into(), "env-1".into()],
+        };
+        assert!(matches!(
+            validate_environment_batch_shape(&duplicate),
+            Err(ManagerError::InvalidEnvironmentBatch(_))
+        ));
+
+        let oversized = EnvironmentBatchInput {
+            action: EnvironmentBatchAction::Stop,
+            env_ids: (0..=MAX_ENVIRONMENT_BATCH_SIZE)
+                .map(|index| format!("env-{index}"))
+                .collect(),
+        };
+        assert!(matches!(
+            validate_environment_batch_shape(&oversized),
+            Err(ManagerError::InvalidEnvironmentBatch(_))
+        ));
+    }
+
+    #[test]
+    fn environment_batch_preflights_every_lifecycle_state() {
+        let start = EnvironmentBatchInput {
+            action: EnvironmentBatchAction::Start,
+            env_ids: vec!["env-1".into(), "env-2".into()],
+        };
+        validate_environment_batch_shape(&start).expect("valid shape");
+        validate_environment_batch_states(
+            &start,
+            &[
+                environment_record("env-1", "stopped"),
+                environment_record("env-2", "failed"),
+            ],
+        )
+        .expect("startable environments");
+        assert!(matches!(
+            validate_environment_batch_states(
+                &start,
+                &[
+                    environment_record("env-1", "stopped"),
+                    environment_record("env-2", "ready"),
+                ],
+            ),
+            Err(ManagerError::InvalidEnvironmentBatch(_))
+        ));
+
+        let stop = EnvironmentBatchInput {
+            action: EnvironmentBatchAction::Stop,
+            env_ids: vec!["env-1".into(), "env-2".into()],
+        };
+        validate_environment_batch_states(
+            &stop,
+            &[
+                environment_record("env-1", "ready"),
+                environment_record("env-2", "starting"),
+            ],
+        )
+        .expect("stoppable environments");
     }
 
     #[test]

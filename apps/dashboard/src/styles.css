@@ -849,6 +849,46 @@ h2 {
   min-width: 0;
 }
 
+.selection-cell {
+  width: 38px;
+  min-width: 38px;
+  text-align: center;
+}
+
+.selection-cell input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #2563eb;
+  cursor: pointer;
+}
+
+.environment-batch-bar {
+  min-height: 44px;
+  padding: 6px 12px;
+  border-bottom: 1px solid #dce3eb;
+  background: #f6f8fb;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.environment-batch-bar > strong {
+  font-size: 13px;
+}
+
+.environment-batch-bar > span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.environment-batch-bar > div {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .environment-empty {
   position: sticky;
   left: 0;
@@ -2163,6 +2203,20 @@ h2 {
 
   .environment-workspace .toolbar-group.actions {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .environment-batch-bar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+  }
+
+  .environment-batch-bar > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px;
+    margin-left: 0;
+    width: 100%;
   }
 
   .environment-create-panel {

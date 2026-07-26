@@ -118,6 +118,17 @@ async fn manager_stop_environment(
 }
 
 #[tauri::command]
+async fn manager_batch_environment_action(
+    manager: tauri::State<'_, manager::Manager>,
+    input: domain::EnvironmentBatchInput,
+) -> Result<domain::EnvironmentBatchResult, String> {
+    manager
+        .batch_environment_action(input)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn manager_destroy_environment(
     manager: tauri::State<'_, manager::Manager>,
     env_id: String,
@@ -457,6 +468,7 @@ pub fn run() {
             manager_reconcile_runtimes,
             manager_start_environment,
             manager_stop_environment,
+            manager_batch_environment_action,
             manager_destroy_environment,
             manager_cleanup_environment_local_data,
             manager_capture_environment_diagnostic,

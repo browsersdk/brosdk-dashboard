@@ -277,6 +277,16 @@ export interface EnvironmentCreateInput {
   kernelId: string;
 }
 
+export type EnvironmentBatchAction = "start" | "stop";
+
+export interface EnvironmentBatchResult {
+  action: EnvironmentBatchAction;
+  requested: number;
+  accepted: number;
+  failed: number;
+  operations: OperationRecord[];
+}
+
 export type OperationRecord = DashboardSnapshot["operations"][number];
 
 export interface OperationExecution {
