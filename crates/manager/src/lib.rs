@@ -1513,6 +1513,7 @@ impl Manager {
                         Some(operation.id.clone()),
                     )
                     .await?;
+                ensure_backend_success("environment detail", &detail)?;
                 self.inner.store.save_environment_detail(
                     &environment.env_id,
                     &profiles::safe_environment_detail(&detail),
@@ -1526,6 +1527,68 @@ impl Manager {
                 &operation.id,
                 &format!("refreshed {count} environment details"),
             )?),
+            Err(error) => Ok(self.inner.operations.fail(
+                &operation.id,
+                manager_error_code(&error),
+                &error.to_string(),
+            )?),
+        }
+    }
+
+    pub async fn refresh_environment_detail(
+        &self,
+        env_id: &str,
+    ) -> Result<OperationRecord, ManagerError> {
+        let generation = self
+            .inner
+            .store
+            .environment(env_id)?
+            .map(|environment| environment.generation)
+            .unwrap_or_default();
+        let operation = self.inner.operations.enqueue(
+            "environment.detail.refresh",
+            Some(env_id),
+            "刷新环境详情",
+            generation,
+            Some(&json!({ "envId": env_id })),
+        )?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "reading sdk_env_getinfo")?;
+        let result = async {
+            self.inner
+                .store
+                .environment(env_id)?
+                .ok_or(ManagerError::EnvironmentNotFound)?;
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            let detail = host
+                .call(
+                    HostCommand::EnvGetInfo {
+                        request: json!({ "envId": env_id }),
+                    },
+                    Some(operation.id.clone()),
+                )
+                .await?;
+            ensure_backend_success("environment detail", &detail)?;
+            self.inner
+                .store
+                .save_environment_detail(env_id, &profiles::safe_environment_detail(&detail))?;
+            self.inner.store.append_event(
+                "environment.detail.refreshed",
+                Some(env_id),
+                Some(&operation.id),
+                &json!({}),
+            )?;
+            Ok::<(), ManagerError>(())
+        }
+        .await;
+        match result {
+            Ok(()) => Ok(self
+                .inner
+                .operations
+                .succeed(&operation.id, "environment detail refreshed")?),
             Err(error) => Ok(self.inner.operations.fail(
                 &operation.id,
                 manager_error_code(&error),

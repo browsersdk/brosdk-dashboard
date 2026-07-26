@@ -82,6 +82,10 @@ export async function refreshEnvironmentDetails() {
   return invoke("manager_refresh_environment_details");
 }
 
+export async function refreshEnvironmentDetail(envId: string): Promise<OperationRecord> {
+  return invoke<OperationRecord>("manager_refresh_environment_detail", { envId });
+}
+
 export async function parseProxyUrl(url: string): Promise<ProxyParseResult> {
   return invoke("manager_parse_proxy_url", { url });
 }
@@ -210,6 +214,7 @@ function isTauri() {
 }
 
 function demoSnapshot(): DashboardSnapshot {
+  const workspacePreview = new URLSearchParams(window.location.search).get("preview") === "workspace";
   return {
     sdk: {
       state: "browser-preview",
@@ -220,8 +225,8 @@ function demoSnapshot(): DashboardSnapshot {
         endpoint: null,
         lastError: null,
       },
-      initialized: false,
-      apiKey: { source: "none", present: false },
+      initialized: workspacePreview,
+      apiKey: { source: workspacePreview ? "preview" : "none", present: workspacePreview },
       hostPath: null,
       dllPath: "libs/windows_x64/brosdk.dll",
       workDir: "runtime/sdk-work",
@@ -304,9 +309,30 @@ function demoSnapshot(): DashboardSnapshot {
       envId: "env-demo-01",
       fingerprintProfileId: "fp-demo",
       proxyProfileId: "proxy-demo",
-      remoteFingerprint: { platform: "Win32", language: "zh-CN", timezone: "Asia/Shanghai" },
-      remoteProxy: "socks5://127.0.0.1:1080",
-      remoteKernel: { kernel: "yun", version: "141" },
+      remoteFingerprint: {
+        system: "All Windows",
+        platform: "Win32",
+        ua: "Mozilla/5.0 Chrome/141.0.0.0",
+        language: ["zh-CN", "zh"],
+        zone: "Asia/Shanghai",
+        dpi: "1920x1080",
+        canvas: 1,
+        webGl: 1,
+        webRTC: 1,
+        cpu: 8,
+        mem: 8,
+      },
+      remoteProxy: {
+        source: "proxy",
+        scheme: "socks5",
+        host: "127.0.0.1",
+        port: 1080,
+        username: "demo",
+        passwordPresent: true,
+        displayUrl: "socks5://demo:***@127.0.0.1:1080",
+      },
+      remoteKernel: { kernel: "yun", version: "141", system: "All Windows" },
+      remoteMetadata: { envName: "Marketing CN", serial: "DEMO-01", enableDevtools: 1 },
       refreshedAt: new Date().toISOString(),
     }],
     fingerprints: [{

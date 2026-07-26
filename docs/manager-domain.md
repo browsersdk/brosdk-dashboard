@@ -21,7 +21,7 @@ Manager 使用 `runtime/data/manager.sqlite3` 持久化设置、operation、本�
 | `operations` | queued/running/succeeded/failed/cancelled 状态机与脱敏 request snapshot |
 | `runtime_snapshots` | 每个 envId 最近一次运行事实 |
 | `proxy_profiles` | 本地代理 profile；只保存 secret reference |
-| `fingerprint_profiles` | 本地指纹 profile JSON |
+| `fingerprint_profiles` | 兼容旧数据的本地指纹 profile；不参与普通环境创建、启动或远端指纹主流程 |
 | `environment_details` | `sdk_env_getinfo` 的可丢弃脱敏指纹/代理/内核缓存 |
 | `kernel_records` | SDK catalog 与本地 `.core.json` 合并视图 |
 | `manager_events` | AUTOINCREMENT sequence 的增量事件流 |
@@ -65,7 +65,7 @@ host 进入 degraded 时，Manager 把 preparing/starting/ready/stopping 环境�
 
 ## Profile 与凭据
 
-- 指纹 profile 只保存用户选择的 JSON 对象和环境绑定；导入/导出格式为 `brosdk-dashboard.fingerprint.v1`。
+- 指纹 profile 表保留旧数据兼容和后续专家能力；普通 Dashboard 不再以本地 JSON profile 作为环境指纹事实或创建输入。
 - 代理 profile 在 SQLite 中保存 scheme、host、port、username、环境绑定和 `secret_ref`。Windows 密码通过当前用户 DPAPI 加密后写入 `<dataDir>/secrets/*.bin`，不会以明文进入 SQLite、事件或诊断包。
 - 环境详情缓存只保留指纹、代理和浏览器/内核摘要，Cookie、token、secret 等字段不进入本地详情表。
 
@@ -87,6 +87,8 @@ queued -> initialize SDK once -> sdk_env_page(page=1..N) -> atomic replace -> su
 `manager_reconcile_runtimes` 调用 `sdk_browser_info`，把存在于返回值中的环境对账为 ready，把本地活动但不再存在的环境改为 stopped。该路径用于手动关闭浏览器后的状态恢复。
 
 `manager_create_environment` 串行执行：校验 proxy profile 和本地已安装内核，临时恢复受保护代理 URL，调用 `sdk_env_create`，校验后端 `code=200` 与 `data.envId`，立即 upsert 创建结果，再尽力执行 `sdk_env_page` 完整对账。远端创建已经成功但后续分页同步失败时，operation 仍成功并标记镜像刷新延后，避免盲目重试造成重复环境。
+
+`manager_refresh_environment_detail(envId)` 只读取一个缓存中存在的环境，调用 `sdk_env_getinfo` 并校验 `code=200`。持久化采用显式响应边界：保留递归脱敏后的 `finger`、从 `browser` 直接读取的内核、去除密码的代理摘要，以及 `envName/serial/enableDevtools/enableStorage` 元数据；不递归猜测 `kernel`，不保存 Cookie、Storage、上传路径或 DEK。operation 与事件都绑定该 `envId`，因此多环境界面不会因为查看一个环境而串行读取全部环境。
 
 创建 operation 的 request snapshot 只保存 `proxyProfileId` 和 `kernelId`。后端 DTO、完整代理 URL、API Key、userSig 和原始响应均不进入 operation request。测试清理使用 `sdk_env_destroy`，成功后事务删除本地 environment/runtime snapshot，environment detail 通过外键级联删除。
 

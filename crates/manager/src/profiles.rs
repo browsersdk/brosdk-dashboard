@@ -83,11 +83,90 @@ pub fn proxy_url(
 
 pub fn safe_environment_detail(value: &Value) -> Value {
     let root = value.pointer("/data").unwrap_or(value);
+    let fingerprint = root
+        .get("finger")
+        .or_else(|| root.get("fingerprint"))
+        .or_else(|| root.get("fingerPrint"))
+        .map(sanitize_remote_value)
+        .unwrap_or(Value::Null);
+    let browser = root.get("browser").and_then(Value::as_object);
+    let fingerprint_object = fingerprint.as_object();
+    let proxy = ["proxy", "bridgeProxy"]
+        .iter()
+        .find_map(|key| {
+            root.get(*key)
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .map(|value| (*key, value))
+        })
+        .map(|(key, value)| safe_remote_proxy(key, value))
+        .unwrap_or(Value::Null);
+
     json!({
-        "fingerprint": first_object(root, &["finger", "fingerprint", "fingerPrint"]),
-        "proxy": first_value(root, &["proxy", "proxyUrl", "bridgeProxy"]),
-        "kernel": first_object(root, &["browser", "kernel", "core"]),
+        "fingerprint": fingerprint,
+        "proxy": proxy,
+        "kernel": {
+            "kernel": direct_value(browser, fingerprint_object, &["kernel"]),
+            "version": direct_value(browser, fingerprint_object, &["version", "kernelVersion"]),
+            "mapId": browser.and_then(|value| value.get("mapId")).cloned(),
+            "system": fingerprint_object.and_then(|value| value.get("system")).cloned(),
+        },
+        "metadata": {
+            "envName": root.get("envName").cloned(),
+            "serial": root.get("serial").cloned(),
+            "enableDevtools": root.get("enableDevtools").cloned(),
+            "enableStorage": root.get("enableStorage").cloned(),
+        },
     })
+}
+
+fn direct_value(
+    primary: Option<&Map<String, Value>>,
+    fallback: Option<&Map<String, Value>>,
+    keys: &[&str],
+) -> Option<Value> {
+    primary
+        .and_then(|value| keys.iter().find_map(|key| value.get(*key)).cloned())
+        .or_else(|| fallback.and_then(|value| keys.iter().find_map(|key| value.get(*key)).cloned()))
+}
+
+fn safe_remote_proxy(source: &str, value: &str) -> Value {
+    match parse_proxy_url(value) {
+        Ok(parsed) => json!({
+            "source": source,
+            "scheme": parsed.summary.scheme,
+            "host": parsed.summary.host,
+            "port": parsed.summary.port,
+            "username": parsed.summary.username,
+            "passwordPresent": parsed.summary.password_present,
+            "displayUrl": parsed.summary.display_url,
+        }),
+        Err(_) => json!({ "source": source, "configured": true }),
+    }
+}
+
+fn sanitize_remote_value(value: &Value) -> Value {
+    match value {
+        Value::Object(values) => Value::Object(
+            values
+                .iter()
+                .filter(|(key, _)| !is_sensitive_remote_key(key))
+                .map(|(key, value)| (key.clone(), sanitize_remote_value(value)))
+                .collect(),
+        ),
+        Value::Array(values) => Value::Array(values.iter().map(sanitize_remote_value).collect()),
+        _ => value.clone(),
+    }
+}
+
+fn is_sensitive_remote_key(key: &str) -> bool {
+    let key = key.to_ascii_lowercase();
+    key.contains("cookie")
+        || key.contains("storage")
+        || key.contains("password")
+        || key.contains("secret")
+        || key.contains("token")
+        || key == "dek"
 }
 
 pub fn environment_bindings(
@@ -120,6 +199,7 @@ pub fn environment_bindings(
                 remote_fingerprint: detail.get("fingerprint").cloned().unwrap_or(Value::Null),
                 remote_proxy: detail.get("proxy").cloned().unwrap_or(Value::Null),
                 remote_kernel: detail.get("kernel").cloned().unwrap_or(Value::Null),
+                remote_metadata: detail.get("metadata").cloned().unwrap_or(Value::Null),
                 refreshed_at,
             }
         })
@@ -267,16 +347,6 @@ fn find_kernel_versions(value: &Value) -> Vec<&Value> {
     }
 }
 
-fn first_object(value: &Value, keys: &[&str]) -> Value {
-    first_value(value, keys)
-}
-
-fn first_value(value: &Value, keys: &[&str]) -> Value {
-    find_value(value, &keys.iter().copied().collect::<HashSet<_>>())
-        .cloned()
-        .unwrap_or(Value::Null)
-}
-
 fn find_value<'a>(value: &'a Value, keys: &HashSet<&str>) -> Option<&'a Value> {
     match value {
         Value::Object(map) => {
@@ -359,14 +429,47 @@ mod tests {
     #[test]
     fn extracts_safe_environment_summary() {
         let summary = safe_environment_detail(&json!({
+            "code": 200,
             "data": {
-                "finger": { "ua": "test" },
-                "proxy": "http://example.test:8080",
+                "finger": {
+                    "ua": "test",
+                    "kernel": "finger-kernel-must-not-replace-browser",
+                    "system": "All Windows",
+                    "nested": { "token": "must not escape" }
+                },
+                "proxy": "socks5://alice:secret@example.test:1080",
                 "cookie": "must not escape",
-                "browser": { "version": "141" }
+                "storage": { "path": "must not escape" },
+                "dek": "must not escape",
+                "browser": { "kernel": "yun", "version": "141", "mapId": 9 },
+                "envName": "Server environment",
+                "serial": "A-100"
             }
         }));
         assert_eq!(summary["fingerprint"]["ua"], "test");
-        assert!(summary.to_string().find("must not escape").is_none());
+        assert_eq!(summary["kernel"]["kernel"], "yun");
+        assert_eq!(summary["kernel"]["version"], "141");
+        assert_eq!(summary["kernel"]["system"], "All Windows");
+        assert_eq!(
+            summary["proxy"]["displayUrl"],
+            "socks5://alice:***@example.test:1080"
+        );
+        assert_eq!(summary["metadata"]["envName"], "Server environment");
+        let serialized = summary.to_string();
+        assert!(!serialized.contains("must not escape"));
+        assert!(!serialized.contains("secret"));
+    }
+
+    #[test]
+    fn invalid_remote_proxy_is_recorded_without_its_raw_value() {
+        let summary = safe_environment_detail(&json!({
+            "data": {
+                "proxy": "alice:secret-without-a-url",
+                "finger": { "language": ["zh-CN"] },
+                "browser": { "kernel": "chrome", "version": "141" }
+            }
+        }));
+        assert_eq!(summary["proxy"]["configured"], true);
+        assert!(!summary.to_string().contains("secret-without-a-url"));
     }
 }

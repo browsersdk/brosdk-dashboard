@@ -209,6 +209,7 @@ export interface EnvironmentBindingSummary {
   remoteFingerprint: unknown;
   remoteProxy: unknown;
   remoteKernel: unknown;
+  remoteMetadata: unknown;
   refreshedAt: string | null;
 }
 

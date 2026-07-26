@@ -96,6 +96,8 @@ brosdk-dashboard/
 
 阶段 3 已落地 SQLite WAL schema、持久化 operation 状态机和递增 Manager 事件。阶段 11 把 environment/environment_details 明确降级为可丢弃缓存：完整分页成功后原子替换，失败时保留旧值并标记 stale。具体 schema、事务边界与 generation 规则见 [manager-domain.md](manager-domain.md)。
 
+环境详情采用按需读取而不是启动时全量拉取：Dashboard 选定环境后通过 Manager 的聚焦 operation 调用 DLL `sdk_env_getinfo`。Host 返回的服务端透明响应包含 Finger、Browser、Proxy，也包含 Cookie、Storage 和 DEK；Manager 只把前述可展示字段的脱敏摘要写入 `environment_details`。远端指纹查看器只读该摘要，不能把本地缓存写回服务端。
+
 ## 7. API 与事件形态
 
 Dashboard 首选 Tauri command/event：

@@ -320,6 +320,7 @@ pub struct EnvironmentBindingSummary {
     pub remote_fingerprint: Value,
     pub remote_proxy: Value,
     pub remote_kernel: Value,
+    pub remote_metadata: Value,
     pub refreshed_at: Option<DateTime<Utc>>,
 }
 

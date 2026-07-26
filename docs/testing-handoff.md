@@ -268,3 +268,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 环境变量来源显示为“系统环境”，Dashboard 禁止更换和移除，避免写入一个重启后不会生效的覆盖值。
 
 2026-07-26 首次初始化子阶段结果：`npm run check`、workspace 63 个 Rust 测试、Dashboard 13 个组件测试和 production build 通过。真实凭据 E2E 同步 1 个环境，`encryptedAtRest=true`、`restartLoaded=true`、`accountStateCleared=true`。Browser 插件完成密码显示切换、预览禁用态和 console 检查；CDP 设备视口复核 390x844 时页面宽度为 390/390、初始化面板边界为 24..366，1440x900 截图也无重叠。
+
+## 14. 阶段 12 环境与远端指纹验收
+
+- `manager_refresh_environment_detail` 必须只请求指定 `envId`，要求环境已在服务端镜像中，并把 operation/event 绑定该环境。
+- `sdk_env_getinfo` 必须校验业务 `code=200`；缓存只能包含递归脱敏 Finger、掩码代理、Browser 内核和允许的元数据，不得出现 Cookie、Storage、上传路径、DEK、token、secret 或代理密码。
+- 指纹页的数据源是 `environmentBindings.remoteFingerprint`，环境详情同时显示 remote kernel/proxy/metadata；本地指纹 JSON CRUD 不再出现在普通主流程。
+- 浏览器预览使用 `http://127.0.0.1:1420/?preview=workspace&page=fingerprints` 或 `page=environments`，只用于布局/交互测试，所有本机动作仍必须 disabled。
+
+2026-07-26 环境/指纹子阶段结果：真实凭据 E2E 同步 1 个环境并完成聚焦 `sdk_env_getinfo`，`focusedDetailLoaded=true`，同时保留 `encryptedAtRest/restartLoaded/accountStateCleared=true`。Dashboard 16 个组件测试和 workspace 65 个 Rust 测试通过；`npm run check`、Clippy 和 production build 通过。Browser 插件确认环境详情与结构化指纹 DOM、禁用态和 console 无错误；截图 API 不可用后使用 Chrome CDP 复核 1440x900 与精确 390x844 设备视口，页面宽度 390/390、环境详情右边界在视口内，移动 9 项主导航无内部溢出。

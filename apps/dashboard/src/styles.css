@@ -1156,6 +1156,27 @@ h2 {
   background: #fbfcfd;
 }
 
+.environment-detail-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0 0 12px;
+  gap: 7px;
+}
+
+.environment-detail-actions .button {
+  justify-content: center;
+}
+
+.environment-runtime-line {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  margin-bottom: 10px;
+  gap: 8px;
+  color: #7a8494;
+  font-size: 10px;
+}
+
 .detail-heading {
   display: flex;
   align-items: flex-start;
@@ -1184,6 +1205,193 @@ h2 {
 
 .detail-list.compact div {
   grid-template-columns: 94px minmax(0, 1fr);
+}
+
+.fingerprint-workspace {
+  min-height: 540px;
+}
+
+.fingerprint-search {
+  width: min(280px, 30vw);
+}
+
+.fingerprint-body {
+  display: grid;
+  grid-template-columns: minmax(260px, 330px) minmax(0, 1fr);
+  min-height: 486px;
+}
+
+.fingerprint-environment-list {
+  min-width: 0;
+  border-right: 1px solid #e3e7ec;
+  background: #fbfcfd;
+}
+
+.fingerprint-environment-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  width: 100%;
+  min-height: 62px;
+  padding: 8px 12px;
+  gap: 9px;
+  border: 0;
+  border-bottom: 1px solid #e8ebef;
+  color: #344054;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fingerprint-environment-row:hover {
+  background: #f5f8fd;
+}
+
+.fingerprint-environment-row.selected {
+  background: #eaf2ff;
+  box-shadow: inset 3px 0 #447cc9;
+}
+
+.fingerprint-environment-row > span:nth-child(2) {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.fingerprint-environment-row strong,
+.fingerprint-environment-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fingerprint-environment-row strong {
+  font-size: 12px;
+}
+
+.fingerprint-environment-row small {
+  color: #8590a1;
+  font-size: 10px;
+}
+
+.fingerprint-viewer {
+  min-width: 0;
+  padding: 18px;
+}
+
+.fingerprint-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  min-height: 42px;
+  margin-bottom: 14px;
+  gap: 12px;
+}
+
+.fingerprint-heading > div {
+  min-width: 0;
+}
+
+.fingerprint-heading small,
+.fingerprint-heading > span {
+  color: #8590a1;
+  font-size: 10px;
+}
+
+.fingerprint-heading h2 {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #273449;
+  font-size: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fingerprint-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin: 0 0 18px;
+  border: 1px solid #e2e7ed;
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.fingerprint-summary > div {
+  min-width: 0;
+  padding: 9px 10px;
+  border-right: 1px solid #e8ebef;
+}
+
+.fingerprint-summary > div:last-child {
+  border-right: 0;
+}
+
+.fingerprint-summary dt,
+.fingerprint-summary dd {
+  margin: 0;
+}
+
+.fingerprint-summary dt {
+  margin-bottom: 5px;
+  color: #8791a0;
+  font-size: 10px;
+}
+
+.fingerprint-summary dd {
+  overflow: hidden;
+  color: #334055;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fingerprint-groups {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px 24px;
+}
+
+.fingerprint-group {
+  min-width: 0;
+}
+
+.fingerprint-group h3 {
+  min-height: 28px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid #dfe4ea;
+  color: #48566b;
+  font-size: 11px;
+}
+
+.fingerprint-group dl {
+  margin: 0;
+}
+
+.fingerprint-group dl > div {
+  display: grid;
+  grid-template-columns: 108px minmax(0, 1fr);
+  min-height: 35px;
+  border-bottom: 1px solid #edf0f3;
+}
+
+.fingerprint-group dt,
+.fingerprint-group dd {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 7px;
+  font-size: 11px;
+}
+
+.fingerprint-group dt {
+  color: #7a8596;
+  background: #fafbfc;
+}
+
+.fingerprint-group dd {
+  overflow-wrap: anywhere;
+  color: #354156;
 }
 
 .empty-state.compact {
@@ -1701,6 +1909,22 @@ h2 {
     border-top: 1px solid #e3e7ec;
     border-left: 0;
   }
+
+  .fingerprint-body {
+    grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  }
+
+  .fingerprint-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .fingerprint-summary > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .fingerprint-summary > div:nth-child(-n + 2) {
+    border-bottom: 1px solid #e8ebef;
+  }
 }
 
 @media (max-width: 900px) {
@@ -1762,19 +1986,17 @@ h2 {
   }
 
   .primary-nav {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(9, minmax(0, 1fr));
     height: 48px;
     margin: 0;
-    gap: 4px;
-    overflow-x: auto;
-    scrollbar-width: none;
+    gap: 2px;
+    overflow: hidden;
   }
 
-  .primary-nav::-webkit-scrollbar { display: none; }
-
   .primary-nav button {
-    flex: 0 0 62px;
     flex-direction: column;
+    min-width: 0;
     height: 48px;
     padding: 0;
     gap: 2px;
@@ -1918,6 +2140,49 @@ h2 {
   .resource-body,
   .operation-body,
   .settings-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fingerprint-workspace .module-toolbar,
+  .fingerprint-workspace .toolbar-group {
+    align-items: stretch;
+  }
+
+  .fingerprint-workspace .module-toolbar {
+    display: grid;
+  }
+
+  .fingerprint-workspace .toolbar-group {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .fingerprint-workspace .toolbar-group.actions {
+    grid-template-columns: 1fr 1fr;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .fingerprint-search {
+    width: 100%;
+  }
+
+  .fingerprint-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fingerprint-environment-list {
+    max-height: 250px;
+    overflow-y: auto;
+    border-right: 0;
+    border-bottom: 1px solid #e3e7ec;
+  }
+
+  .fingerprint-viewer {
+    padding: 14px 12px;
+  }
+
+  .fingerprint-groups {
     grid-template-columns: minmax(0, 1fr);
   }
 

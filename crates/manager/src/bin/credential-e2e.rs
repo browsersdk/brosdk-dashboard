@@ -34,6 +34,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
         return Err("first-run initialization did not reach secure-storage ready state".into());
     }
 
+    let environment = first
+        .environments
+        .first()
+        .ok_or("credential E2E requires at least one server environment")?;
+    let detail_operation = manager
+        .refresh_environment_detail(&environment.env_id)
+        .await?;
+    if detail_operation.status != "succeeded"
+        || detail_operation.env_id.as_deref() != Some(environment.env_id.as_str())
+    {
+        return Err("focused environment detail refresh did not succeed".into());
+    }
+    let detailed = manager.snapshot().await?;
+    let detail = detailed
+        .environment_bindings
+        .iter()
+        .find(|binding| binding.env_id == environment.env_id)
+        .ok_or("focused environment detail was not cached")?;
+    let detail_available = detail.remote_fingerprint.is_object()
+        && detail.remote_kernel.is_object()
+        && detail.refreshed_at.is_some();
+    if !detail_available {
+        return Err("environment detail cache is missing fingerprint or kernel data".into());
+    }
+
     let data_dir = std::path::Path::new(&first.settings.data_dir);
     let protected = fs::read(platform::secrets_dir(data_dir).join("sdk-api-key.bin"))?;
     let plaintext_present = protected
@@ -71,6 +96,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         "encryptedAtRest": !plaintext_present,
         "restartLoaded": restart_loaded,
         "accountStateCleared": account_state_cleared,
+        "focusedDetailLoaded": detail_available,
     }))?;
     Ok(())
 }

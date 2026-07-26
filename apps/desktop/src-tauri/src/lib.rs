@@ -158,6 +158,17 @@ async fn manager_refresh_environment_details(
 }
 
 #[tauri::command]
+async fn manager_refresh_environment_detail(
+    manager: tauri::State<'_, manager::Manager>,
+    env_id: String,
+) -> Result<domain::OperationRecord, String> {
+    manager
+        .refresh_environment_detail(&env_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn manager_parse_proxy_url(
     manager: tauri::State<'_, manager::Manager>,
     url: String,
@@ -417,6 +428,7 @@ pub fn run() {
             manager_update_settings,
             manager_cancel_operation,
             manager_refresh_environment_details,
+            manager_refresh_environment_detail,
             manager_parse_proxy_url,
             manager_save_proxy_profile,
             manager_delete_proxy_profile,

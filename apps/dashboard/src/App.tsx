@@ -10,11 +10,9 @@ import {
   Copy,
   Database,
   Download,
-  FileJson,
   Fingerprint,
   FolderOpen,
   Gauge,
-  Globe2,
   HardDriveDownload,
   KeyRound,
   LoaderCircle,
@@ -30,7 +28,6 @@ import {
   Trash2,
   Search,
   SlidersHorizontal,
-  Upload,
   X,
   TerminalSquare,
 } from "lucide-react";
@@ -44,26 +41,21 @@ import {
   configureApiKey,
   createEnvironment,
   createDiagnosticBundle,
-  deleteFingerprintProfile,
   deleteProxyProfile,
   diagnoseProxy,
   eventsSince,
-  exportFingerprintProfile,
   getSnapshot,
-  importFingerprintProfile,
   installKernel,
   isDesktopRuntime,
   openFingerprintCheck,
   parseProxyUrl,
   pickDirectory,
-  pickJsonFile,
   reconcileRuntimes,
-  refreshEnvironmentDetails,
+  refreshEnvironmentDetail,
   refreshKernels,
   retryOperation,
   runSmoke,
   saveFile,
-  saveFingerprintProfile,
   saveProxyProfile,
   startEnvironment,
   stopEnvironment,
@@ -73,6 +65,8 @@ import {
   updateSettings,
 } from "./api";
 import { EnvironmentCreatePanel } from "./features/environments/EnvironmentCreatePanel";
+import { EnvironmentDetail } from "./features/environments/EnvironmentDetail";
+import { FingerprintPage } from "./features/fingerprints/FingerprintPage";
 import { McpPage } from "./features/mcp/McpPage";
 import { ApiKeySetup } from "./features/setup/ApiKeySetup";
 import type {
@@ -80,7 +74,6 @@ import type {
   AiAgentPlan,
   AiChatResponse,
   DashboardSnapshot,
-  FingerprintProfile,
   ManagerSettings,
   ProxyProfile,
   SmokeReport,
@@ -128,7 +121,10 @@ const stageLabel: Record<SmokeStageStatus, string> = {
 };
 
 export default function App() {
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useState<Page>(() => {
+    const previewPage = new URLSearchParams(window.location.search).get("page");
+    return navItems.some((item) => item.key === previewPage) ? previewPage as Page : "overview";
+  });
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [smoke, setSmoke] = useState<SmokeReport | null>(null);
   const [loading, setLoading] = useState(true);
@@ -415,6 +411,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
     });
   }, [query, rows, status]);
   const selected = rows.find((environment) => environment.envId === selectedEnvId) ?? null;
+  const selectedBinding = snapshot?.environmentBindings.find((binding) => binding.envId === selectedEnvId) ?? null;
   const cache = snapshot?.environmentCache;
   const cacheLabel = cache?.state === "fresh"
     ? `服务端 · ${cache.count}`
@@ -538,152 +535,17 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           </div>
         )}
       </div>
-      {selected && <EnvironmentDetail environment={selected} onClose={() => setSelectedEnvId(null)} />}
-      </div>
-    </section>
-  );
-}
-
-function EnvironmentDetail({ environment, onClose }: {
-  environment: DashboardSnapshot["environments"][number];
-  onClose: () => void;
-}) {
-  const rows = [
-    ["envId", environment.envId],
-    ["状态", statusLabel[environment.status] ?? environment.status],
-    ["Generation", String(environment.generation)],
-    ["ReqId", environment.requestId === null ? "-" : String(environment.requestId)],
-    ["Operation", environment.currentOperationId ?? "-"],
-    ["CDP", environment.cdp],
-    ["最后事件", environment.lastEvent],
-    ["更新时间", new Date(environment.updatedAt).toLocaleString("zh-CN")],
-  ];
-  return (
-    <aside className="environment-detail" aria-label="环境详情">
-      <div className="detail-heading">
-        <div><small>运行详情</small><h2>{environment.name}</h2></div>
-        <button className="icon-button" type="button" title="关闭详情" aria-label="关闭详情" onClick={onClose}><X size={16} /></button>
-      </div>
-      <dl className="detail-list compact">
-        {rows.map(([label, value]) => <div key={label}><dt>{label}</dt><dd title={value}>{value}</dd></div>)}
-      </dl>
-    </aside>
-  );
-}
-
-function FingerprintPage({ snapshot, onRefresh, onError }: {
-  snapshot: DashboardSnapshot | null;
-  onRefresh: () => Promise<void>;
-  onError: (message: string) => void;
-}) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [profileText, setProfileText] = useState("{}");
-  const [boundEnvId, setBoundEnvId] = useState("");
-  const [busy, setBusy] = useState("");
-  const selected = snapshot?.fingerprints.find((profile) => profile.id === selectedId) ?? null;
-  const binding = snapshot?.environmentBindings.find((item) => item.envId === boundEnvId) ?? null;
-
-  useEffect(() => {
-    if (!selected) return;
-    setName(selected.name);
-    setProfileText(JSON.stringify(selected.profile, null, 2));
-    setBoundEnvId(selected.boundEnvIds[0] ?? "");
-  }, [selected]);
-
-  async function run(action: string, callback: () => Promise<unknown>) {
-    setBusy(action);
-    onError("");
-    try {
-      await callback();
-      await onRefresh();
-    } catch (requestError) {
-      onError(errorMessage(requestError, "指纹操作失败"));
-    } finally {
-      setBusy("");
-    }
-  }
-
-  async function importProfile() {
-    const path = await pickJsonFile();
-    if (path) await run("import", () => importFingerprintProfile(path));
-  }
-
-  async function exportProfile(profile: FingerprintProfile) {
-    const path = await saveFile(`${profile.name}.json`, "json");
-    if (path) await run(`export:${profile.id}`, () => exportFingerprintProfile(profile.id, path));
-  }
-
-  async function saveProfile() {
-    let profile: Record<string, unknown>;
-    try {
-      const value: unknown = JSON.parse(profileText);
-      if (!value || Array.isArray(value) || typeof value !== "object") throw new Error();
-      profile = value as Record<string, unknown>;
-    } catch {
-      onError("指纹 JSON 必须是对象");
-      return;
-    }
-    await run("save", () => saveFingerprintProfile({
-      id: selected?.id,
-      name: name.trim() || "未命名指纹",
-      profile,
-      boundEnvIds: boundEnvId ? [boundEnvId] : [],
-    }));
-    setSelectedId(null);
-    setName("");
-    setProfileText("{}");
-    setBoundEnvId("");
-  }
-
-  return (
-    <section className="module-workspace resource-workspace">
-      <div className="module-toolbar">
-        <div className="toolbar-group"><span className="toolbar-title">指纹档案</span></div>
-        <div className="toolbar-group actions">
-          <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("refresh", refreshEnvironmentDetails)}>
-            <RefreshCw className={busy === "refresh" ? "spin" : ""} size={14} />刷新绑定
-          </button>
-          <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void importProfile()}>
-            <Upload size={14} />导入
-          </button>
-          <button className="button primary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => { setSelectedId(null); setName(""); setProfileText("{}"); setBoundEnvId(""); }}>
-            <FileJson size={14} />新建
-          </button>
-        </div>
-      </div>
-      <div className="resource-body">
-        <div className="table-wrap">
-          <table className="module-table">
-            <thead><tr><th>档案</th><th>来源</th><th>绑定环境</th><th>更新时间</th><th aria-label="操作" /></tr></thead>
-            <tbody>
-              {(snapshot?.fingerprints ?? []).map((profile) => (
-                <tr key={profile.id} className={selectedId === profile.id ? "selected" : ""} onClick={() => setSelectedId(profile.id)}>
-                  <td><div className="resource-name"><span className="resource-icon"><Fingerprint size={16} /></span><div><strong>{profile.name}</strong><small>{profile.id}</small></div></div></td>
-                  <td>{profile.source}</td>
-                  <td>{profile.boundEnvIds.length ? profile.boundEnvIds.join(", ") : "未绑定"}</td>
-                  <td>{formatTime(profile.updatedAt)}</td>
-                  <td className="row-actions inline-actions">
-                    <button className="icon-button" type="button" title="导出" aria-label={`导出 ${profile.name}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void exportProfile(profile); }}><Download size={15} /></button>
-                    <button className="icon-button danger" type="button" title="删除" aria-label={`删除 ${profile.name}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void run(`delete:${profile.id}`, () => deleteFingerprintProfile(profile.id)); }}><Trash2 size={15} /></button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {(snapshot?.fingerprints.length ?? 0) === 0 && <div className="environment-empty"><Fingerprint size={18} /><span>暂无指纹档案</span></div>}
-        </div>
-        <aside className="resource-editor">
-          <div className="panel-heading"><SlidersHorizontal size={17} /><h2>{selected ? "编辑指纹" : "新建指纹"}</h2></div>
-          <label className="field"><span>名称</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
-          <label className="field"><span>绑定环境</span><select value={boundEnvId} onChange={(event) => setBoundEnvId(event.target.value)}><option value="">不绑定</option>{snapshot?.environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environment.name}</option>)}</select></label>
-          <label className="field"><span>Profile JSON</span><textarea rows={12} spellCheck={false} value={profileText} onChange={(event) => setProfileText(event.target.value)} /></label>
-          <div className="form-actions"><button className="button primary" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void saveProfile()}><CheckCircle2 size={15} />保存</button></div>
-          {binding && <JsonPreview label="远端指纹摘要" value={binding.remoteFingerprint} />}
-          {boundEnvId && snapshot?.environments.find((environment) => environment.envId === boundEnvId)?.status === "ready" && (
-            <button className="button secondary full-width" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("check", () => openFingerprintCheck(boundEnvId))}><Globe2 size={15} />打开检查页</button>
-          )}
-        </aside>
+      {selected && (
+        <EnvironmentDetail
+          environment={selected}
+          binding={selectedBinding}
+          busy={busyAction === `detail:${selected.envId}` || busyAction === `check:${selected.envId}`}
+          desktop={isDesktopRuntime()}
+          onClose={() => setSelectedEnvId(null)}
+          onRefresh={() => void runAction(`detail:${selected.envId}`, () => refreshEnvironmentDetail(selected.envId))}
+          onOpenCheck={() => void runAction(`check:${selected.envId}`, () => openFingerprintCheck(selected.envId))}
+        />
+      )}
       </div>
     </section>
   );
