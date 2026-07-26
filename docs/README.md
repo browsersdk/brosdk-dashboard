@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-26，阶段 0-12 已完成：
+截至 2026-07-26，阶段 0-13 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-12 的仓库内规划已全部实施并通过当前平台验收。首次 API Key 激活、安全凭据持久化、环境工作台和远端指纹查看已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
+[roadmap.md](roadmap.md) 中阶段 0-13 的仓库内规划已全部实施并通过当前平台验收。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期和远端指纹对比已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -79,7 +79,9 @@ brosdk-dashboard/
 
 阶段 12 最终生命周期验收已完成：`npm run e2e:environment` 使用隐藏 API Key、临时 Manager 数据目录和自动分配的 DLL MCP 端口，账号只有一个环境时自动选择。真实链路完成启动 callback ready、CDP evaluate、内置指纹检查页新标签、脱敏页面诊断、单环境 MCP `tabs/read` 和 SDK 停止；`sdk_browser_env_check` 的 target/session/CDP 原始结果在 Manager 内压缩为布尔摘要，不进入 Dashboard。Dashboard 19 项、Rust workspace 69 项测试及 Clippy、production build 全部通过。
 
-阶段 13 正在实施多环境工作流。批量启停已完成：环境表支持最多 20 个多选、全选当前结果和按状态拆分的启动/停止；Manager 为每个环境编排独立 operation/generation，不复用一个 batch callback。受限远端元数据编辑也已完成：stopped 环境只能修改名称和序号，Manager 校验 Unicode/UTF-8 长度、`code=200` 和服务端回显后刷新列表与详情；旧版 `getEnvInfo` 返回空序号时，只能用 SDK 服务端分页或已确认更新响应补全缓存，不能从表单乐观覆盖。指纹页现已提供详情/对比模式，最多选择 4 个服务端环境，按固定脱敏字段显示相同、不同或未知。服务端没有环境分组/标签契约，因此不新增本地覆盖，也不把 customerId 误用为分组。
+阶段 13 多环境工作流已完成。环境表支持最多 20 个多选、全选当前结果和按状态拆分的启动/停止；Manager 为每个环境编排独立 operation/generation，不复用一个 batch callback。stopped 环境只能修改名称和序号，Manager 校验 Unicode/UTF-8 长度、`code=200` 和服务端回显后刷新列表与详情；旧版 `getEnvInfo` 返回空序号时，只能用 SDK 服务端分页或已确认更新响应补全缓存，不能从表单乐观覆盖。指纹页提供详情/对比模式，最多选择 4 个服务端环境，按固定脱敏字段显示相同、不同或未知。服务端没有环境分组/标签契约，因此不新增本地覆盖，也不把 customerId 误用为分组。
+
+阶段 13 真实双环境验收也已完成：`npm run e2e:multi-environment` 使用隐藏 API Key 和唯一临时 Manager 数据目录，创建两个临时环境，分别更新元数据，再通过批量入口生成两组独立启停 operation；两个环境均到达 callback ready、刷新各自远端指纹详情、停止、清理本地数据并删除服务端记录。测试前后账号环境数均为 1，成功报告只包含数量和布尔值；异常路径会先对账运行态，再补偿停止、清理和删除。Dashboard 28 项、Rust workspace 80 项测试及 Clippy、production build 全部通过。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

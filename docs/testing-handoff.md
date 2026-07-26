@@ -36,6 +36,14 @@ $env:BROSDK_EMBEDDED_PORT = "17891"
 $env:BROSDK_E2E_ALLOW_MUTATION = "1"
 ```
 
+阶段 13 的双环境自动验收使用独立 wrapper，由隐藏提示读取 API Key、自动设置 mutation 门禁，并在唯一临时 Manager 数据目录中运行：
+
+```powershell
+npm run e2e:multi-environment
+```
+
+该 runner 创建两个临时服务端环境并取得所有权，完成元数据更新、独立批量启停、两份远端指纹详情刷新、本地数据清理、服务端删除和最终全量对账。异常路径会尝试停止并删除所有已创建环境；报告只包含阶段、数量和布尔值。
+
 ## 2. 首批测试矩阵
 
 | 测试 | 默认运行 | 说明 |
@@ -227,7 +235,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-12 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-13 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -303,4 +311,6 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 
 2026-07-26 远端元数据子阶段结果：`sdk_env_update` 已接入 FFI、Host、Manager、Tauri 和环境详情侧栏；普通请求只含 envId/envName/serial，且只允许 stopped 环境。Dashboard 25 项、Manager library 48 项、创建 E2E binary 3 项测试、Clippy 和 production build 通过。真实临时环境完成 create -> update -> server confirmation -> page/detail mirror -> local cleanup -> destroy -> env_page，`metadataUpdateSucceeded/metadataMirrored/cleanupSucceeded=true`，最终环境数恢复到 1。实测当前 `getEnvInfo` 对刚更新的 serial 返回空字符串；Manager 只在详情值为空时使用服务端分页或已核对回显的更新响应补全，不接受 UI 乐观写入。桌面与 390x844 应用内浏览器 DOM 完整、mutation 预览态禁用且 console 无 warning/error；当前浏览器后端未提供 screenshot 方法。
 
-2026-07-26 指纹对比子阶段结果：详情/对比模式使用同一份服务端脱敏绑定数据，对比最多 4 个环境，只列固定白名单字段并逐行标记相同/不同/未知；缺少详情不会被推断为相同。新增 3 个组件测试后 Dashboard 28 项测试与 production build 通过，覆盖两环境比较、选择上限和所选详情刷新。应用内浏览器用两个预览环境验证桌面及 390x844 DOM，字段分组和状态完整、预览 mutation 禁用、console 无 warning/error；对比表由局部滚动容器承载，浏览器后端未提供 screenshot/element geometry 方法。真实双环境创建、启停和清理留给阶段 13 最终 E2E。
+2026-07-26 指纹对比子阶段结果：详情/对比模式使用同一份服务端脱敏绑定数据，对比最多 4 个环境，只列固定白名单字段并逐行标记相同/不同/未知；缺少详情不会被推断为相同。新增 3 个组件测试后 Dashboard 28 项测试与 production build 通过，覆盖两环境比较、选择上限和所选详情刷新。应用内浏览器用两个预览环境验证桌面及 390x844 DOM，字段分组和状态完整、预览 mutation 禁用、console 无 warning/error；对比表由局部滚动容器承载，浏览器后端未提供 screenshot/element geometry 方法。真实双环境创建、启停和清理已在阶段 13 最终 E2E 完成。
+
+2026-07-26 双环境最终 E2E 结果：新增 `npm run e2e:multi-environment`，使用隐藏 API Key 和唯一临时 Manager 数据目录创建两个环境。两个环境分别完成元数据服务端确认，批量启动和停止各产生两个独立 operation，均到达 callback ready、刷新非空脱敏指纹详情、停止、本地清理和服务端删除；最终 `env_page` 对账前后环境数均为 1，清理为 2/2。报告没有 envId、名称、序号、页面内容或凭据，退出后无残留 `sdk-host` 和临时目录。Dashboard 28 项、Rust workspace 80 项测试、Clippy 与 production build 全部通过，阶段 13 完成。
