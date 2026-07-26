@@ -79,6 +79,8 @@ brosdk-dashboard/
 
 阶段 12 最终生命周期验收已完成：`npm run e2e:environment` 使用隐藏 API Key、临时 Manager 数据目录和自动分配的 DLL MCP 端口，账号只有一个环境时自动选择。真实链路完成启动 callback ready、CDP evaluate、内置指纹检查页新标签、脱敏页面诊断、单环境 MCP `tabs/read` 和 SDK 停止；`sdk_browser_env_check` 的 target/session/CDP 原始结果在 Manager 内压缩为布尔摘要，不进入 Dashboard。Dashboard 19 项、Rust workspace 69 项测试及 Clippy、production build 全部通过。
 
+阶段 13 正在实施多环境工作流：批量启停继续为每个环境建立独立 operation/generation；服务端元数据编辑只开放名称和序号；指纹页支持最多 4 个远端摘要对比。服务端没有环境分组/标签契约，因此不新增本地覆盖，也不把 customerId 误用为分组。
+
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 
 Manager/Runtime Host 创建链路、Dashboard 双字段交互和真实创建/删除验收均已完成：FFI 已加载 `sdk_env_create`/`sdk_env_destroy`，Runtime Host 继续统一脱敏，Manager 校验本地内核、后端业务 `code=200`、创建结果 `data.envId`，并把结果写入本地镜像和 operation。环境页的创建带只显示代理与内核版本，默认本机网络并预选最新本地内核；无可用内核时跳转内核页。`getUserSig` 请求固定使用 `role=user`。真实 DLL 验收使用 Chrome 134 和本机网络完成创建、镜像确认、删除及 `env_page` 对账，测试环境已清理。

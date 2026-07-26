@@ -291,3 +291,10 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 2026-07-26 运维动作子阶段结果：新增环境详情 3 个组件测试与 Manager 2 个响应摘要测试；Dashboard 19 个组件测试与 workspace 67 个 Rust 测试全部通过。真实临时环境 E2E 完成 create -> local cleanup -> destroy -> env_page，对账后账号环境数恢复到 1，报告不含环境 ID、本地路径或 DLL 原响应。真实 ready 页面诊断留给最终生命周期 E2E。
 
 2026-07-26 最终生命周期结果：真实唯一环境完成 callback ready、CDP evaluate、内置指纹检查页新标签、字段白名单页面诊断、DLL MCP `tabs/read` 和 SDK close；检查页后安全诊断为 3 页，`fingerprintCheckOpened/pageDiagnosticVerified/environmentStopped=true`，MCP 广告 18 个/Manager 放行 7 个。Dashboard 19 项、Rust workspace 69 项测试、Clippy 和 production build 通过；runner 清理临时 Manager 数据目录且无残留 `sdk-host`。报告不含 envId、页面 URL/正文、API Key 或 userSig。
+
+## 16. 阶段 13 多环境验收
+
+- 批量启动/停止测试至少覆盖空列表、重复 envId、超过 20 个、状态不允许、全部 accepted 和单项 SDK 失败；每个环境必须产生独立 operation/generation。
+- 元数据更新测试只允许 envName/serial，覆盖 Unicode 字符计数、serial 字节长度、运行态拒绝、后端业务码失败和同步后的服务端名称。
+- 指纹对比组件覆盖 2-4 个环境、相同/不同/未知字段、选择上限和详情缓存缺失。
+- 真实 E2E 必须使用两个临时环境，最终停止、清理并删除；报告只记录数量和布尔结果，不输出 envId、名称、序号、页面内容或凭据。
