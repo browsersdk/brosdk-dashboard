@@ -39,3 +39,4 @@ uuid = { version = "1.17", features = ["serde", "v4"] }
 url = "2.5"
 walkdir = "2.5"
 zip = { version = "4.3", default-features = false, features = ["deflate"] }
+zeroize = "1.8"

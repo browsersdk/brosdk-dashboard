@@ -11,9 +11,9 @@ use std::{
 
 use domain::{
     AiAgentExecuteRequest, AiAgentExecution, AiAgentPlan, AiAgentPlanRequest, AiChatRequest,
-    AiChatResponse, ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot,
-    EnvironmentCreateInput, FingerprintProfile, FingerprintProfileInput, HostCommand,
-    KernelInstallInput, KernelRecord, ManagerEvent, ManagerSettings, McpPanel,
+    AiChatResponse, ApiKeyInitializationResult, ApiKeyStatus, BrowserCommandExecution,
+    DashboardSnapshot, EnvironmentCreateInput, FingerprintProfile, FingerprintProfileInput,
+    HostCommand, KernelInstallInput, KernelRecord, ManagerEvent, ManagerSettings, McpPanel,
     McpToolCallExecution, McpToolCallRequest, McpToolDiscovery, McpToolDiscoveryRequest,
     McpToolScope, McpToolSummary, OperationExecution, OperationRecord, ProxyParseResult,
     ProxyProfile, ProxyProfileInput, RuntimeHostState, RuntimeHostStatus, SdkPanel, SmokeReport,
@@ -25,6 +25,7 @@ use sha2::{Digest, Sha256};
 use store::{ManagerStore, RuntimeUpdate};
 use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
+use zeroize::{Zeroize, Zeroizing};
 
 mod mirror;
 mod operation;
@@ -34,6 +35,8 @@ mod store;
 const ENVIRONMENT_PAGE_SIZE: usize = 200;
 const MAX_ENVIRONMENT_PAGES: usize = 500;
 const MAX_ENVIRONMENTS: usize = 100_000;
+const API_KEY_SECRET_ID: &str = "sdk-api-key";
+const API_KEY_SECRET_REFERENCE: &str = "sdk-api-key.bin";
 const GLOBAL_MCP_READ_TOOLS: &[&str] = &[
     "sdk.health",
     "sdk.info",
@@ -130,6 +133,14 @@ pub enum ManagerError {
     Store(#[from] store::StoreError),
     #[error("runtime host is not running")]
     RuntimeNotRunning,
+    #[error("API Key is required before the SDK runtime can start")]
+    ApiKeyMissing,
+    #[error("API Key must not be empty")]
+    ApiKeyInvalid,
+    #[error("API Key is managed by BROSDK_API_KEY and cannot be changed in the application")]
+    ApiKeyManagedExternally,
+    #[error("stored API Key is not valid UTF-8")]
+    ApiKeyCorrupt,
     #[error("invalid runtime host response: {0}")]
     InvalidHostResponse(String),
     #[error("SDK backend rejected the request: {0}")]
@@ -234,6 +245,14 @@ impl Manager {
     }
 
     pub async fn start_runtime(&self) -> Result<RuntimeHostStatus, ManagerError> {
+        let (api_key, _) = self.resolve_api_key()?.ok_or(ManagerError::ApiKeyMissing)?;
+        self.start_runtime_with_api_key(&api_key).await
+    }
+
+    async fn start_runtime_with_api_key(
+        &self,
+        api_key: &str,
+    ) -> Result<RuntimeHostStatus, ManagerError> {
         let mut runtime = self.inner.runtime.lock().await;
         if let Some(host) = runtime.as_ref() {
             let status = host.status();
@@ -245,7 +264,7 @@ impl Manager {
             state: RuntimeHostState::Starting,
             ..RuntimeHostStatus::default()
         };
-        match RuntimeHost::start().await {
+        match RuntimeHost::start_with_api_key(api_key).await {
             Ok(host) => {
                 let status = host.status();
                 *self.inner.sdk_initialized.write().await = false;
@@ -311,10 +330,11 @@ impl Manager {
     }
 
     pub async fn snapshot(&self) -> Result<DashboardSnapshot, ManagerError> {
-        if self.inner.runtime.lock().await.is_none() {
+        let api_key_status = self.api_key_status()?;
+        if api_key_status.present && self.inner.runtime.lock().await.is_none() {
             let _ = self.start_runtime().await;
         }
-        if std::env::var_os("BROSDK_API_KEY").is_some()
+        if api_key_status.present
             && self
                 .inner
                 .initial_environment_sync_attempted
@@ -370,10 +390,8 @@ impl Manager {
             sdk: SdkPanel {
                 state: state.into(),
                 runtime: runtime_status,
-                api_key: ApiKeyStatus {
-                    source: "BROSDK_API_KEY".into(),
-                    present: std::env::var_os("BROSDK_API_KEY").is_some(),
-                },
+                initialized: *self.inner.sdk_initialized.read().await,
+                api_key: api_key_status,
                 host_path: host_path.map(|path| path.display().to_string()),
                 dll_path: dll_path.display().to_string(),
                 work_dir: settings.work_dir.clone(),
@@ -419,6 +437,110 @@ impl Manager {
             latest_event_sequence: self.inner.store.latest_event_sequence()?,
             database_path: self.inner.store.path().display().to_string(),
         })
+    }
+
+    pub fn api_key_status(&self) -> Result<ApiKeyStatus, ManagerError> {
+        if environment_api_key_present() {
+            return Ok(ApiKeyStatus {
+                source: "environment".into(),
+                present: true,
+            });
+        }
+        let data_dir = self.credential_data_dir()?;
+        let present = platform::secrets_dir(&data_dir)
+            .join(API_KEY_SECRET_REFERENCE)
+            .is_file();
+        Ok(ApiKeyStatus {
+            source: if present { "secure-storage" } else { "none" }.into(),
+            present,
+        })
+    }
+
+    pub async fn configure_api_key(
+        &self,
+        mut api_key: String,
+    ) -> Result<ApiKeyInitializationResult, ManagerError> {
+        if environment_api_key_present() {
+            api_key.zeroize();
+            return Err(ManagerError::ApiKeyManagedExternally);
+        }
+        let trimmed = api_key.trim().to_owned();
+        api_key.zeroize();
+        if trimmed.is_empty() {
+            return Err(ManagerError::ApiKeyInvalid);
+        }
+        let api_key = Zeroizing::new(trimmed);
+
+        let _ = self.stop_runtime().await;
+        let result = async {
+            self.start_runtime_with_api_key(&api_key).await?;
+            let host = self.runtime_handle().await?;
+            self.ensure_sdk_initialized(&host).await?;
+            let environments = self.fetch_all_environments(&host, None).await?;
+
+            self.inner.store.reset_account_state()?;
+            let data_dir = self.credential_data_dir()?;
+            platform::store_secret(&data_dir, API_KEY_SECRET_ID, api_key.as_bytes())?;
+            self.inner
+                .store
+                .replace_remote_environments(&environments)?;
+            self.inner
+                .initial_environment_sync_attempted
+                .store(true, Ordering::Release);
+            self.inner.store.append_event(
+                "credential.configured",
+                None,
+                None,
+                &json!({ "environmentCount": environments.len() }),
+            )?;
+            Ok(ApiKeyInitializationResult {
+                environment_count: environments.len(),
+                source: "secure-storage".into(),
+            })
+        }
+        .await;
+
+        if result.is_err() {
+            let _ = self.stop_runtime().await;
+        }
+        result
+    }
+
+    pub async fn clear_api_key(&self) -> Result<(), ManagerError> {
+        if environment_api_key_present() {
+            return Err(ManagerError::ApiKeyManagedExternally);
+        }
+        let _ = self.stop_runtime().await;
+        let data_dir = self.credential_data_dir()?;
+        platform::delete_secret(&data_dir, API_KEY_SECRET_REFERENCE)?;
+        self.inner.store.reset_account_state()?;
+        self.inner
+            .initial_environment_sync_attempted
+            .store(false, Ordering::Release);
+        Ok(())
+    }
+
+    fn resolve_api_key(&self) -> Result<Option<(Zeroizing<String>, &'static str)>, ManagerError> {
+        if let Ok(value) = std::env::var("BROSDK_API_KEY")
+            && !value.trim().is_empty()
+        {
+            return Ok(Some((Zeroizing::new(value), "environment")));
+        }
+        let data_dir = self.credential_data_dir()?;
+        let path = platform::secrets_dir(&data_dir).join(API_KEY_SECRET_REFERENCE);
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let value = String::from_utf8(platform::read_secret(&data_dir, API_KEY_SECRET_REFERENCE)?)
+            .map_err(|_| ManagerError::ApiKeyCorrupt)?;
+        if value.trim().is_empty() {
+            return Err(ManagerError::ApiKeyCorrupt);
+        }
+        Ok(Some((Zeroizing::new(value), "secure-storage")))
+    }
+
+    fn credential_data_dir(&self) -> Result<PathBuf, ManagerError> {
+        Ok(PathBuf::from(self.inner.store.settings()?.data_dir))
     }
 
     pub async fn ai_chat(&self, request: AiChatRequest) -> Result<AiChatResponse, ManagerError> {
@@ -2901,6 +3023,10 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::SdkHost(_) => "SDK_HOST_ERROR",
         ManagerError::Store(_) => "STORE_ERROR",
         ManagerError::RuntimeNotRunning => "RUNTIME_NOT_RUNNING",
+        ManagerError::ApiKeyMissing => "API_KEY_MISSING",
+        ManagerError::ApiKeyInvalid => "API_KEY_INVALID",
+        ManagerError::ApiKeyManagedExternally => "API_KEY_MANAGED_EXTERNALLY",
+        ManagerError::ApiKeyCorrupt => "API_KEY_CORRUPT",
         ManagerError::InvalidHostResponse(_) => "INVALID_HOST_RESPONSE",
         ManagerError::BackendRejected(_) => "BACKEND_REJECTED",
         ManagerError::EnvironmentNotFound => "ENVIRONMENT_NOT_FOUND",
@@ -2927,6 +3053,10 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::McpToolNotAllowed(_) => "MCP_TOOL_NOT_ALLOWED",
         ManagerError::InvalidMcpArguments(_) => "INVALID_MCP_ARGUMENTS",
     }
+}
+
+fn environment_api_key_present() -> bool {
+    std::env::var_os("BROSDK_API_KEY").is_some_and(|value| !value.is_empty())
 }
 
 #[cfg(test)]

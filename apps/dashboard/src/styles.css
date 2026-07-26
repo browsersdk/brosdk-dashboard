@@ -24,6 +24,119 @@ body {
   background: #f5f7f9;
 }
 
+.setup-screen {
+  display: grid;
+  width: 100%;
+  min-height: 100%;
+  padding: 24px;
+  place-items: center;
+  background: #eef2f5;
+}
+
+.setup-panel {
+  width: min(420px, 100%);
+  padding: 28px;
+  border: 1px solid #dce2e8;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 18px 50px rgb(28 39 55 / 9%);
+}
+
+.setup-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #111827;
+  font-size: 16px;
+}
+
+.setup-brand span {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 6px;
+  background: #2866dc;
+}
+
+.setup-brand img {
+  width: 18px;
+  filter: invert(1);
+}
+
+.setup-heading {
+  display: grid;
+  margin: 42px 0 26px;
+  gap: 7px;
+}
+
+.setup-heading small,
+.setup-heading p,
+.credential-state {
+  color: #768195;
+  font-size: 12px;
+}
+
+.setup-heading h1 {
+  font-size: 24px;
+}
+
+.credential-form {
+  display: grid;
+  gap: 12px;
+}
+
+.credential-field > div {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 34px;
+  align-items: center;
+  min-height: 40px;
+  border: 1px solid #cfd6df;
+  border-radius: 5px;
+  color: #778296;
+  background: #ffffff;
+}
+
+.credential-field > div:focus-within {
+  border-color: #3974e6;
+  box-shadow: 0 0 0 2px rgb(57 116 230 / 12%);
+}
+
+.credential-field > div > svg {
+  justify-self: end;
+}
+
+.credential-field input {
+  min-width: 0;
+  height: 38px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.credential-reveal {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  color: #687386;
+  background: transparent;
+  cursor: pointer;
+}
+
+.credential-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.credential-error {
+  color: #aa333b;
+  font-size: 12px;
+}
+
 button,
 input,
 select,

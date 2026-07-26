@@ -6,6 +6,25 @@ async fn manager_snapshot(
 }
 
 #[tauri::command]
+async fn manager_configure_api_key(
+    manager: tauri::State<'_, manager::Manager>,
+    api_key: String,
+) -> Result<domain::ApiKeyInitializationResult, String> {
+    manager
+        .configure_api_key(api_key)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+async fn manager_clear_api_key(manager: tauri::State<'_, manager::Manager>) -> Result<(), String> {
+    manager
+        .clear_api_key()
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn run_sdk_smoke(
     manager: tauri::State<'_, manager::Manager>,
 ) -> Result<domain::SmokeReport, String> {
@@ -383,6 +402,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             manager_snapshot,
+            manager_configure_api_key,
+            manager_clear_api_key,
             run_sdk_smoke,
             runtime_host_start,
             runtime_host_stop,

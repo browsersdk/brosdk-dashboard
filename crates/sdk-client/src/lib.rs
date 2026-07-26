@@ -96,10 +96,21 @@ pub struct RuntimeHost {
 
 impl RuntimeHost {
     pub async fn start() -> Result<Self, SdkClientError> {
-        Self::start_with_path(discover_host_path()?).await
+        Self::start_with_path_and_api_key(discover_host_path()?, None).await
+    }
+
+    pub async fn start_with_api_key(api_key: &str) -> Result<Self, SdkClientError> {
+        Self::start_with_path_and_api_key(discover_host_path()?, Some(api_key)).await
     }
 
     pub async fn start_with_path(host_path: PathBuf) -> Result<Self, SdkClientError> {
+        Self::start_with_path_and_api_key(host_path, None).await
+    }
+
+    async fn start_with_path_and_api_key(
+        host_path: PathBuf,
+        api_key: Option<&str>,
+    ) -> Result<Self, SdkClientError> {
         let generation = HOST_GENERATION.fetch_add(1, Ordering::Relaxed);
         let endpoint = unique_endpoint();
         prepare_endpoint(&endpoint)?;
@@ -112,6 +123,9 @@ impl RuntimeHost {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true);
+        if let Some(api_key) = api_key {
+            command.env("BROSDK_API_KEY", api_key);
+        }
         hide_process_window(&mut command);
         let mut child = command.spawn()?;
         let pid = child.id();

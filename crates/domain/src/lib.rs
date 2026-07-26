@@ -112,11 +112,19 @@ pub struct ApiKeyStatus {
 pub struct SdkPanel {
     pub state: String,
     pub runtime: RuntimeHostStatus,
+    pub initialized: bool,
     pub api_key: ApiKeyStatus,
     pub host_path: Option<String>,
     pub dll_path: String,
     pub work_dir: String,
     pub last_smoke: Option<SmokeReport>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeyInitializationResult {
+    pub environment_count: usize,
+    pub source: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

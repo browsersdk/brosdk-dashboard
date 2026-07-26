@@ -32,11 +32,11 @@ libs/windows_x64/brosdk.h
 2. 加载 `brosdk.dll`。
 3. 查找全部必需符号，缺一即失败并上报 capability。
 4. 注册 result/log/cookie/security callbacks。
-5. 使用环境变量或系统密钥库中的 API Key 调用 `sdk_get_user_sig`。
+5. 使用 Manager 注入到子进程环境的 API Key 调用 `sdk_get_user_sig`。
 6. 使用返回的 userSig 调用 `sdk_init`。
 7. 所有 SDK 调用由 `sdk-host` 单线程串行入口接收，内部可按 SDK 语义等待异步回调。
 
-当前 `sdk-host serve --endpoint <pipe-or-socket>` 已实现上述隔离入口。Manager 不传 API Key 到 IPC；host 进程从继承的 `BROSDK_API_KEY` 环境变量读取认证信息。IPC 响应和 callback event 在发送前统一脱敏。
+当前 `sdk-host serve --endpoint <pipe-or-socket>` 已实现上述隔离入口。Manager 不传 API Key 到 IPC：桌面凭据从平台安全存储读取，测试凭据可从父进程环境读取，二者都只通过新建 `sdk-host` 的子进程环境注入。IPC 响应和 callback event 在发送前统一脱敏。
 
 不要让 Dashboard 或 Manager 直接持有 DLL 函数指针。
 
@@ -47,6 +47,15 @@ libs/windows_x64/brosdk.h
 ```text
 BROSDK_API_KEY -> sdk_get_user_sig -> userSig -> sdk_init -> sdk_info
 ```
+
+桌面首次初始化链路：
+
+```text
+API Key 输入 -> Manager 候选验证 -> sdk-host 子进程环境 -> sdk_get_user_sig(role=user)
+              -> sdk_init -> env_page 全量同步 -> 平台安全存储
+```
+
+候选验证或同步失败时不保存新凭据；更换/移除凭据时先停止 Host，再清空环境、详情、运行态和旧环境绑定。userSig 始终由 DLL 初始化链路持有，不进入 Dashboard、SQLite 或 Manager IPC。
 
 示例请求形态：
 

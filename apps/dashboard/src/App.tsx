@@ -40,6 +40,8 @@ import {
   aiPlanAgent,
   cancelOperation,
   cleanupKernelCache,
+  clearApiKey,
+  configureApiKey,
   createEnvironment,
   createDiagnosticBundle,
   deleteFingerprintProfile,
@@ -72,6 +74,7 @@ import {
 } from "./api";
 import { EnvironmentCreatePanel } from "./features/environments/EnvironmentCreatePanel";
 import { McpPage } from "./features/mcp/McpPage";
+import { ApiKeySetup } from "./features/setup/ApiKeySetup";
 import type {
   AiAgentExecution,
   AiAgentPlan,
@@ -130,6 +133,7 @@ export default function App() {
   const [smoke, setSmoke] = useState<SmokeReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [smokeBusy, setSmokeBusy] = useState(false);
+  const [credentialBusy, setCredentialBusy] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -186,6 +190,37 @@ export default function App() {
     } finally {
       setSmokeBusy(false);
     }
+  }
+
+  async function initialize(apiKey: string) {
+    setCredentialBusy(true);
+    setError("");
+    try {
+      await configureApiKey(apiKey);
+      await load();
+      setPage("environments");
+    } catch (requestError) {
+      setError(errorMessage(requestError, "初始化失败"));
+    } finally {
+      setCredentialBusy(false);
+    }
+  }
+
+  if (loading && !snapshot) {
+    return <main className="setup-screen"><LoaderCircle className="spin" size={24} aria-label="读取客户端状态" /></main>;
+  }
+
+  if (snapshot && !snapshot.sdk.apiKey.present) {
+    return (
+      <ApiKeySetup
+        mode="first-run"
+        desktop={isDesktopRuntime()}
+        source={snapshot.sdk.apiKey.source}
+        busy={credentialBusy}
+        error={error}
+        onSubmit={initialize}
+      />
+    );
   }
 
   return (
@@ -268,7 +303,7 @@ export default function App() {
         {page === "mcp" && <McpPage snapshot={snapshot} desktop={isDesktopRuntime()} onRefresh={load} onError={setError} />}
         {page === "ai" && <AiPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "operations" && <OperationsPage snapshot={snapshot} onRefresh={load} onError={setError} />}
-        {page === "settings" && <SettingsPage snapshot={snapshot} onRefresh={load} onError={setError} />}
+        {page === "settings" && <SettingsPage snapshot={snapshot} onRefresh={load} onError={setError} onCredentialChange={initialize} credentialBusy={credentialBusy} />}
       </main>
     </div>
   );
@@ -957,10 +992,12 @@ function OperationsPage({ snapshot, onRefresh, onError }: {
   );
 }
 
-function SettingsPage({ snapshot, onRefresh, onError }: {
+function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, credentialBusy }: {
   snapshot: DashboardSnapshot | null;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
+  onCredentialChange: (apiKey: string) => Promise<void>;
+  credentialBusy: boolean;
 }) {
   const [settings, setSettings] = useState<ManagerSettings | null>(snapshot?.settings ?? null);
   const [busy, setBusy] = useState("");
@@ -986,6 +1023,10 @@ function SettingsPage({ snapshot, onRefresh, onError }: {
     if (path) await run("diagnostics", () => createDiagnosticBundle(path));
   }
 
+  async function removeCredential() {
+    await run("credential", clearApiKey);
+  }
+
   return (
     <section className="settings-layout">
       <div className="settings-section">
@@ -1005,8 +1046,16 @@ function SettingsPage({ snapshot, onRefresh, onError }: {
       <div className="settings-section">
         <div className="section-heading"><div><ShieldCheck size={17} /><h2>安全与诊断</h2></div></div>
         <dl className="detail-list">
-          <div><dt>API Key 来源</dt><dd>{snapshot?.sdk.apiKey.source ?? "BROSDK_API_KEY"}</dd></div><div><dt>API Key 状态</dt><dd>{snapshot?.sdk.apiKey.present ? "present" : "missing"}</dd></div><div><dt>SQLite</dt><dd>{snapshot?.databasePath ?? "-"}</dd></div><div><dt>DLL</dt><dd>{snapshot?.sdk.dllPath ?? "-"}</dd></div><div><dt>Host</dt><dd>{snapshot?.sdk.hostPath ?? "-"}</dd></div>
+          <div><dt>API Key 来源</dt><dd>{credentialSourceLabel(snapshot?.sdk.apiKey.source)}</dd></div><div><dt>SDK 初始化</dt><dd>{snapshot?.sdk.initialized ? "已完成" : "待重试"}</dd></div><div><dt>SQLite</dt><dd>{snapshot?.databasePath ?? "-"}</dd></div><div><dt>DLL</dt><dd>{snapshot?.sdk.dllPath ?? "-"}</dd></div><div><dt>Host</dt><dd>{snapshot?.sdk.hostPath ?? "-"}</dd></div>
         </dl>
+        <ApiKeySetup
+          mode="settings"
+          desktop={isDesktopRuntime()}
+          source={snapshot?.sdk.apiKey.source ?? "none"}
+          busy={busy === "credential" || credentialBusy}
+          onSubmit={onCredentialChange}
+          onClear={removeCredential}
+        />
         <button className="button secondary full-width diagnostic-button" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void exportDiagnostics()}>{busy === "diagnostics" ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}导出脱敏诊断包</button>
       </div>
     </section>
@@ -1026,6 +1075,7 @@ function JsonPreview({ label, value }: { label: string; value: unknown }) {
 }
 
 function errorMessage(error: unknown, fallback: string) { return error instanceof Error ? error.message : fallback; }
+function credentialSourceLabel(source?: string) { return ({ environment: "系统环境", "secure-storage": "系统安全存储", none: "未设置" } as Record<string, string>)[source ?? "none"] ?? "未知"; }
 function formatTime(value: string) { return new Date(value).toLocaleString("zh-CN"); }
 function proxyDisplayUrl(profile: ProxyProfile) { return `${profile.scheme}://${profile.username ? `${profile.username}@` : ""}${profile.host}:${profile.port}`; }
 function matchesActiveOperation(status: string) { return status === "queued" || status === "running"; }

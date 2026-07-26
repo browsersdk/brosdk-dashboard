@@ -10,6 +10,14 @@ PowerShell 设置方式：
 $env:BROSDK_API_KEY = "<api-key>"
 ```
 
+首次初始化安全存储 E2E 使用独立变量并通过隐藏输入提示获取，不把密钥放进命令参数：
+
+```powershell
+npm run e2e:credential
+```
+
+该 runner 使用唯一系统临时数据目录，验证初始化、DPAPI 密文、Manager 重建恢复和移除后的账号缓存隔离，退出时清理临时目录。普通桌面使用 `manager_configure_api_key` 写入平台安全存储；`BROSDK_API_KEY` 仅保留给测试和受管部署。
+
 可选测试变量：
 
 ```powershell
@@ -216,8 +224,8 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-11 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
-6. 所有 API Key 只从环境变量读取，不写入仓库、日志或截图。
+5. 当前阶段 0-11 已完成，阶段 12 正在实施；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+6. 产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
 
@@ -251,3 +259,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 2026-07-26 Manager MCP 子阶段结果：MCP client 4 个测试和 Manager 40 个测试（含二进制测试）通过，覆盖全局/环境 endpoint、session lifecycle、工具元数据解析、参数归一化、mutation 拒绝和未激活端口。真实隔离 smoke 通过 `getUserSig(role=user)` 初始化 DLL，发现 16 个全局工具、Manager 放行 9 个，协议为 `2025-11-25`；`sdk.health`、`env.list`、`mcp.endpoint` 均成功，未输出环境 ID 或工具正文，runtime 正常停止，临时数据库和端口已清理。单环境扩展读取与 Dashboard 视觉验收留给下一子阶段。
 
 2026-07-26 Dashboard/单环境 MCP 子阶段结果：新增 5 个 MCP 组件测试，Dashboard 共 10 个测试通过；真实生命周期 E2E 发现 18 个单环境工具、Manager 放行 7 个，并完成 `tabs(list)`、从脱敏响应提取 page id、`read(page)` 和 SDK close，报告不包含 envId、页面正文或 URL。Browser 插件完成 DOM/交互/console 检查；因当前截图 API 不可用，截图和几何测量使用本机 Chrome Playwright，1440x900 与 390x844 均无 framework overlay、应用 warning/error、页面级或 MCP 控件横向溢出。测试数据目录和 MCP 端口均已清理。
+
+## 13. 阶段 12 首次初始化验收
+
+- `npm run e2e:credential` 必须验证合法 API Key 完成 `getUserSig(role=user) -> init -> env_page`，并且报告不输出 API Key、userSig、路径或后端正文。
+- 加密文件不得包含 API Key 明文字节；Manager 重建后必须从安全存储恢复并完成初始化。
+- 移除凭据后 Host 为 stopped，环境、详情、运行态、operation 和旧环境绑定为空；本地代理配置和内核记录可保留。
+- 环境变量来源显示为“系统环境”，Dashboard 禁止更换和移除，避免写入一个重启后不会生效的覆盖值。
+
+2026-07-26 首次初始化子阶段结果：`npm run check`、workspace 63 个 Rust 测试、Dashboard 13 个组件测试和 production build 通过。真实凭据 E2E 同步 1 个环境，`encryptedAtRest=true`、`restartLoaded=true`、`accountStateCleared=true`。Browser 插件完成密码显示切换、预览禁用态和 console 检查；CDP 设备视口复核 390x844 时页面宽度为 390/390、初始化面板边界为 24..366，1440x900 截图也无重叠。

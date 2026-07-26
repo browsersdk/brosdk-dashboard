@@ -201,7 +201,7 @@ DLL callback 函数只在回调有效期内复制 `data/len` 到无界队列，�
 
 - API Key 只来自环境变量或系统密钥库，不写入文档、仓库、SQLite 明文字段或普通日志。
 - userSig、代理密码、Cookie、CDK/DEK、Authorization、URL query 中的敏感值统一脱敏。
-- Dashboard 不展示完整密钥，只显示来源、最后校验时间和尾号摘要。
+- Dashboard 不展示密钥、摘要或尾号，只显示凭据来源与初始化状态。
 - 可选 loopback API 默认只监听 `127.0.0.1`，mutation 检查 Origin。
 - 诊断包默认不包含密钥、Cookie 明文、代理密码和完整启动 URL。
 

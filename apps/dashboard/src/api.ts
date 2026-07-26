@@ -3,6 +3,7 @@ import type {
   AiAgentExecution,
   AiAgentPlan,
   AiChatResponse,
+  ApiKeyInitializationResult,
   DashboardSnapshot,
   EnvironmentCreateInput,
   FingerprintProfile,
@@ -25,6 +26,17 @@ export async function getSnapshot(): Promise<DashboardSnapshot> {
     return invoke<DashboardSnapshot>("manager_snapshot");
   }
   return demoSnapshot();
+}
+
+export async function configureApiKey(apiKey: string): Promise<ApiKeyInitializationResult> {
+  if (!isTauri()) {
+    throw new Error("请在桌面客户端中完成初始化");
+  }
+  return invoke<ApiKeyInitializationResult>("manager_configure_api_key", { apiKey });
+}
+
+export async function clearApiKey(): Promise<void> {
+  return invoke("manager_clear_api_key");
 }
 
 export async function runSmoke(): Promise<SmokeReport> {
@@ -208,7 +220,8 @@ function demoSnapshot(): DashboardSnapshot {
         endpoint: null,
         lastError: null,
       },
-      apiKey: { source: "BROSDK_API_KEY", present: false },
+      initialized: false,
+      apiKey: { source: "none", present: false },
       hostPath: null,
       dllPath: "libs/windows_x64/brosdk.dll",
       workDir: "runtime/sdk-work",

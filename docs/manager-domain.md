@@ -59,6 +59,8 @@ queued -> running -> succeeded
 
 `manager_snapshot` 返回 SDK/runtime、环境缓存、`environmentCache` 新鲜度、最近 100 条 operation、settings、数据库路径和 `latestEventSequence`。进程启动时持久化缓存先视为 stale；API Key 可用时首次 snapshot 自动尝试刷新一次。Dashboard 可从该 sequence 调用 `manager_events_since`，每次最多读取 500 条事件。
 
+未配置 API Key 时 snapshot 不启动 Runtime Host，Dashboard 只渲染首次初始化页。`manager_configure_api_key` 使用候选 Key 新建 Host，依次完成 `sdk_get_user_sig(role=user)`、`sdk_init` 和完整 `sdk_env_page`；全部成功后才写入平台安全存储并替换账号缓存。`manager_clear_api_key` 与成功换号会清除环境、详情、runtime snapshot、operation、event、Agent 幂等记录和旧环境绑定，保留本地代理/内核资源。环境变量来源是测试/受管部署覆盖项，不能从 Dashboard 更改。
+
 host 进入 degraded 时，Manager 把 preparing/starting/ready/stopping 环境改为 unknown，并把 queued/running operation 标为 `HOST_DEGRADED`。Manager 不自动无限重启 host。
 
 ## Profile 与凭据

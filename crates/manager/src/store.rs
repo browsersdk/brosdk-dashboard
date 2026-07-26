@@ -527,6 +527,27 @@ impl ManagerStore {
         Ok(())
     }
 
+    pub fn reset_account_state(&self) -> Result<(), StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        transaction.execute_batch(
+            r#"DELETE FROM environment_details;
+               DELETE FROM runtime_snapshots;
+               DELETE FROM environments;
+               DELETE FROM operations;
+               DELETE FROM manager_events;
+               DELETE FROM ai_agent_executions;
+               UPDATE proxy_profiles SET bound_env_ids_json = '[]';
+               UPDATE fingerprint_profiles SET bound_env_ids_json = '[]';
+               UPDATE environment_cache_status SET
+                   state = 'empty', cache_count = 0, last_success_at = NULL,
+                   last_attempt_at = NULL, last_error = NULL
+               WHERE id = 1;"#,
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn save_environment_detail(&self, env_id: &str, detail: &Value) -> Result<(), StoreError> {
         self.connection()?.execute(
             r#"INSERT INTO environment_details(env_id, detail_json, refreshed_at)
@@ -1860,6 +1881,49 @@ mod tests {
         assert_eq!(status.last_error.as_deref(), Some("second page failed"));
         assert!(status.last_success_at.is_some());
         assert!(status.last_attempt_at.is_some());
+    }
+
+    #[test]
+    fn account_reset_removes_remote_and_runtime_state_but_keeps_local_resources() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("environment");
+        store
+            .save_environment_detail("env-1", &json!({ "finger": { "language": "zh-CN" } }))
+            .expect("detail");
+        store
+            .upsert_proxy_profile(
+                "proxy-1",
+                "Proxy",
+                "socks5",
+                "127.0.0.1",
+                1080,
+                None,
+                None,
+                &["env-1".into()],
+            )
+            .expect("proxy");
+        store
+            .create_operation("environment.start", Some("env-1"), "start", 1, None)
+            .expect("operation");
+
+        store.reset_account_state().expect("reset account state");
+
+        assert!(store.list_environments().expect("environments").is_empty());
+        assert!(store.environment_details().expect("details").is_empty());
+        assert!(store.list_operations(10).expect("operations").is_empty());
+        let proxies = store.list_proxy_profiles().expect("proxies");
+        assert_eq!(proxies.len(), 1);
+        assert!(proxies[0].bound_env_ids.is_empty());
+        let status = store.environment_cache_status().expect("cache status");
+        assert_eq!(status.state, "empty");
+        assert_eq!(status.count, 0);
     }
 
     #[test]

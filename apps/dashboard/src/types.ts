@@ -64,6 +64,7 @@ export interface DashboardSnapshot {
       endpoint: string | null;
       lastError: string | null;
     };
+    initialized: boolean;
     apiKey: {
       source: string;
       present: boolean;
@@ -125,6 +126,11 @@ export interface DashboardSnapshot {
   settings: ManagerSettings;
   latestEventSequence: number;
   databasePath: string;
+}
+
+export interface ApiKeyInitializationResult {
+  environmentCount: number;
+  source: string;
 }
 
 export interface AiProviderStatus {

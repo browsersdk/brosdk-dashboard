@@ -380,6 +380,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 阶段 0-11 的仓库内规划已完成。阶段 12 已完成契约审计并进入实施；按“安全初始化 -> 环境/远端指纹工作台 -> 运维动作 -> 真实 E2E”拆分，每一部分独立执行自动测试、更新文档并提交。
 
+阶段 12 安全初始化子阶段完成（2026-07-26）：
+
+- 无凭据时 Manager 不再启动 Host，Dashboard 首屏只显示 API Key 初始化；成功配置后直接进入环境工作台。
+- API Key 候选通过子进程环境注入隔离 Host，完成 `getUserSig(role=user) -> init -> 完整 env_page` 后才使用平台安全存储持久化；Manager IPC、SQLite 和 snapshot 不含密钥。
+- 环境变量仍作为测试/受管部署覆盖项；设置页只读显示该来源。安全存储来源支持更换和移除，账号边界变化会清除环境、详情、运行态、operation、event、Agent 记录和旧环境绑定。
+- 新增 `npm run e2e:credential`，使用唯一临时数据目录验证 DPAPI 密文、Manager 重建恢复和移除隔离；真实结果为 1 个环境、`encryptedAtRest/restartLoaded/accountStateCleared=true`。
+- `npm run check`、workspace Rust 测试、Dashboard 13 个组件测试和 production build 通过；1440x900 与 CDP 390x844 视觉/几何检查无溢出，控制台无 warning/error。
+
 阶段 11 远端缓存子阶段完成（2026-07-26）：
 
 - `sdk_env_page` 默认请求 200 条并按 `data.total` 拉取完整分页，按 envId 去重，限制最多 500 页/100000 条；异常总数、重复页和提前空页均 fail closed。
