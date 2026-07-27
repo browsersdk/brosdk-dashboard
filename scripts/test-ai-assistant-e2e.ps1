@@ -54,14 +54,7 @@ try {
         throw "AI API key is unavailable from the environment and secure storage"
     }
 
-    $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-    $listener.Start()
-    try {
-        $env:BROSDK_EMBEDDED_PORT = [string]$listener.LocalEndpoint.Port
-    }
-    finally {
-        $listener.Stop()
-    }
+    Remove-Item Env:BROSDK_EMBEDDED_PORT -ErrorAction SilentlyContinue
     $env:BROSDK_E2E_ALLOW_MUTATION = "1"
     $env:BROSDK_DATA_DIR = $resolvedDataDir
     if ([string]::IsNullOrWhiteSpace($env:BROSDK_AI_BASE_URL)) {

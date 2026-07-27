@@ -50,6 +50,10 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
         let _ = window.unminimize();
         let _ = window.set_focus();
     }
+    let manager = app.state::<manager::Manager>().inner().clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = manager.apply_startup_policy().await;
+    });
 }
 
 fn exit_from_tray<R: Runtime>(app: &AppHandle<R>) {

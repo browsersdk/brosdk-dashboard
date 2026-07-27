@@ -873,7 +873,7 @@ function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, creden
           <DirectoryField label="日志目录" value={settings.logDir} onChange={(value) => setSettings({ ...settings, logDir: value })} onPick={() => void choose("logDir")} />
           <label className="field"><span>SDK API URL</span><input placeholder="使用 DLL 默认地址" value={settings.sdkApiUrl ?? ""} onChange={(event) => setSettings({ ...settings, sdkApiUrl: event.target.value || null })} /></label>
           <label className="field"><span>启动策略</span><select value={settings.startupPolicy} onChange={(event) => setSettings({ ...settings, startupPolicy: event.target.value })}><option value="restore-none">不恢复环境</option><option value="reconcile">启动后对账</option></select></label>
-          <label className="field"><span>DLL MCP 端口</span><input inputMode="numeric" placeholder="留空则关闭" value={settings.embeddedMcpPort ?? ""} onChange={(event) => setSettings({ ...settings, embeddedMcpPort: event.target.value ? Number(event.target.value) : null })} /></label>
+          <label className="field"><span>DLL MCP 端口</span><input inputMode="numeric" placeholder="留空则自动选择" value={settings.embeddedMcpPort ?? ""} onChange={(event) => setSettings({ ...settings, embeddedMcpPort: event.target.value ? Number(event.target.value) : null })} /></label>
           <label className="toggle-field"><span><strong>Debug 日志</strong><small>增加 SDK 与 Manager 诊断信息</small></span><input type="checkbox" checked={settings.debug} onChange={(event) => setSettings({ ...settings, debug: event.target.checked })} /></label>
         </div>
         <p className="section-note">数据目录变更会迁移 SQLite 与受保护凭据，并在下次启动生效。</p>

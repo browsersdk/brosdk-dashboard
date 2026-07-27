@@ -34,6 +34,7 @@
 | 27. AI 原生工具与安全自检 | P0 | 已完成 | Chat/Agent 按模式绑定原生 tools，自检迁入空闲期诊断，README 产品截图 |
 | 28. AI 会话作用域与自动 Agent 闭环 | P0 | 已完成 | 创建时固定全局/单环境目录，原生多轮工具完成重启，AI 输入区重排 |
 | 29. AI 会话最新消息跟随 | P1 | 已完成 | 新消息、Agent 状态和会话切换后自动滚动到最新内容 |
+| 30. MCP 自动激活与 AI 运行态强对账 | P0 | 已完成 | 自动环回端口启用全局 MCP，AI 决策前强制刷新 BrowserInfo |
 
 ## 2. 阶段 0：项目骨架
 
@@ -880,3 +881,16 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 滚动发生在 React 提交并完成列表布局之后，不改变本地历史结构、MCP 作用域或消息数量上限。
 - Dashboard 组件测试验证最新 AI 回复触发 `scrollHeight` 目标滚动；Playwright 用 48 条历史消息在桌面和移动视口验证真实溢出列表最终到达底部。
 - Dashboard 53 项、Playwright 20 项、TypeScript check 和 production build 全部通过。
+
+## 33. 阶段 30：MCP 自动激活与 AI 运行态强对账
+
+目标：让正式客户端默认获得 DLL 全局 MCP，并保证 AI 不根据上次客户端遗留的运行状态决定生命周期操作。
+
+实现结果（2026-07-27）：
+
+- `embeddedMcpPort=null` 的语义从关闭改为自动：Manager 在 `sdk_init` 前绑定临时 loopback listener 获取可用端口，释放后交给隔离 Host/DLL；固定端口和测试环境变量仍可覆盖。
+- 首次 Dashboard snapshot、托盘恢复和第二实例唤醒都执行 `sdk_browser_info` 对账；桌面启动策略直接使用同一严格函数，不再只创建一个可能失败但被忽略的 operation。
+- Chat 状态读取、Agent 计划、自动 Agent 初始上下文及批准执行前强制对账；计划与执行之间状态变化会由既有 `expectedState` 二次校验拒绝。
+- 设置页明确显示“留空则自动选择”，MCP panel 只在成功初始化后显示 active；Host 停止或 degraded 仍立即清空 active port。
+- 真实 SDK/DeepSeek E2E 不设置 `BROSDK_EMBEDDED_PORT`，验证自动 MCP 激活、Agent 启动 stopped 环境、重启 stop/start/ready 和初始状态恢复。
+- Dashboard 53 项、Rust workspace 115 项、Playwright 20 项、check/Clippy、production build 和 Windows 托盘/单实例 E2E 全部通过。

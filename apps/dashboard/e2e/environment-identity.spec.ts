@@ -28,6 +28,7 @@ test("overview prioritizes runtime activity and keeps SDK self-check in diagnost
   await expect(selfCheck).toBeVisible();
   await expect(selfCheck).toBeDisabled();
   await expect(page.getByText("需先停止全部环境并完成状态对账", { exact: true })).toBeVisible();
+  await expect(page.getByPlaceholder("留空则自动选择")).toBeVisible();
   expect(issues).toEqual([]);
 });
 

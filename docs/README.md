@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-27，阶段 0-29 已完成：
+截至 2026-07-27，阶段 0-30 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-29 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、不可变作用域 AI 会话、原生 tools 驱动的 Chat/Agent、DLL 全局多环境 MCP、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复和桌面单实例已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
+[roadmap.md](roadmap.md) 中阶段 0-30 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、不可变作用域 AI 会话、原生 tools 驱动的 Chat/Agent、DLL 全局多环境 MCP、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复和桌面单实例已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -114,6 +114,8 @@ brosdk-dashboard/
 阶段 28 AI 会话作用域与自动 Agent 闭环已完成：新建会话必须选择全局或单环境，作用域和关联 envId 创建后只读。虽然 DLL 只提供一个 `/sdk/v1/mcp` endpoint，Manager 给模型的工具目录互斥：全局会话只绑定全局工具，单环境会话只绑定该 ready 环境的浏览器工具；单环境 Agent 提及其它 envId 会 fail closed。自动 Agent 使用最多 4 轮原生 tool loop，真实“重启环境”会等待 stop 到 stopped 后再 start 到 ready。输入区改为居中多行编辑器、右下图标发送键，Enter 发送、Shift+Enter 换行。真实 DeepSeek E2E 的全局 Chat、单环境 Chat、Chat 写操作提示和 2 轮自动重启均通过；真实 Tauri 完成新建单环境会话、CDP/内部通道、全局 Chat Enter 发送和环境状态恢复。最终 Dashboard 52 项、Rust workspace 114 项、Playwright 18 项、check/Clippy、production build、README 截图及 Windows NSIS/便携发布验证通过。
 
 阶段 29 AI 会话最新消息跟随已完成：消息列表监听当前会话 id 和消息集合变化，在用户发送、AI 回复、Agent 状态变化及历史会话切换完成布局后平滑滚动到最新内容。组件测试单独验证回复追加会触发正确滚动位置；Playwright 使用 48 条本地历史消息在 1440x900 与 390x844 视口确认列表确有溢出且最终到达底部。最终 Dashboard 53 项、Playwright 20 项、TypeScript check 和 production build 通过。
+
+阶段 30 MCP 自动激活与 AI 运行态强对账已完成：正式客户端未设置固定端口时自动选择可用环回端口并在 `sdk_init` 中启用 DLL 全局 MCP，设置页空值语义改为“自动选择”。首次 snapshot、托盘恢复和第二实例唤醒都会读取 `sdk_browser_info`；Chat 状态读取、Agent 规划、自动 Agent 和批准执行前也再次严格对账，杜绝窗口隐藏期间或客户端重启后使用遗留 `ready` 状态。真实 DeepSeek/DLL E2E 不再注入 MCP 端口，验证自动激活、stopped 环境 Agent 启动、两轮自动重启和最终状态恢复。Dashboard 53 项、Rust workspace 115 项、Playwright 20 项、check/Clippy、production build 和托盘 E2E 全部通过。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

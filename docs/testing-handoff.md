@@ -245,7 +245,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-29 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-30 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -481,3 +481,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 会话 id 切换和消息集合变化都应触发滚动，以覆盖历史会话、Chat 回复及 Agent 执行状态更新。
 
 2026-07-27 阶段 29 结果：Dashboard 53 项、Playwright 桌面/移动 20 项、TypeScript check 和 production build 通过。48 条历史消息在两个视口均形成真实滚动区域并自动到达底部。
+
+## 32. 阶段 30 MCP 自动激活与 AI 状态强对账验收
+
+- `embeddedMcpPort=null` 且 DLL capability 可用时，初始化必须获得非零自动端口并让 snapshot 报告 `mcp.active=true`；显式端口仍优先于环境变量和自动端口。
+- AI Chat 状态读取、Agent 规划、自动运行和批准执行都必须在读取环境状态前调用真实 `sdk_browser_info`；对账失败时返回错误，不能回退到 SQLite 缓存继续决策。
+- `npm run e2e:ai-assistant` 不得设置 `BROSDK_EMBEDDED_PORT`，必须报告 `automaticMcpActivated/agentStartObserved=true`，并继续验证自动重启和状态恢复。
+- 设置页在桌面与移动 Playwright 中必须显示“留空则自动选择”，不能再暗示空值会关闭 Agent 所需的 MCP。
+
+2026-07-27 阶段 30 真实结果：DeepSeek `deepseek-v4-flash` 与当前 DLL 报告自动 MCP 激活、stopped 环境启动、重启 stop/start/ready、全局/单环境 Chat 和初始状态恢复全部通过；未向 runner 注入固定端口。Dashboard 53 项、Rust workspace 115 项、Playwright 20 项、check/Clippy、production build 和托盘/单实例 E2E 通过，无 Dashboard、sdk-host 或隔离测试目录残留。

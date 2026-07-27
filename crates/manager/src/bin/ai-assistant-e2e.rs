@@ -36,6 +36,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         failed_stage = "environment-sync";
         ensure_operation_succeeded(&manager.sync_environments().await?)?;
         ensure_operation_succeeded(&manager.reconcile_runtimes().await?)?;
+        let initialized = manager.snapshot().await?;
+        if !initialized.mcp.active || initialized.settings.embedded_mcp_port.is_some() {
+            return Err("DLL MCP did not activate on an automatic loopback port".into());
+        }
         let initial = environment(&manager, &env_id).await?;
         if !matches!(initial.status.as_str(), "stopped" | "ready") {
             return Err(format!(
@@ -45,10 +49,28 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .into());
         }
         initial_status = Some(initial.status.clone());
-        if initial.status == "stopped" {
-            failed_stage = "ready-baseline";
-            ensure_operation_active_or_succeeded(&manager.start_environment(&env_id).await?)?;
-            wait_for_state(&manager, &env_id, "ready", READY_TIMEOUT).await?;
+        if initial.status == "ready" {
+            failed_stage = "stopped-baseline";
+            ensure_operation_active_or_succeeded(&manager.stop_environment(&env_id).await?)?;
+            wait_for_state(&manager, &env_id, "stopped", STOP_TIMEOUT).await?;
+        }
+
+        failed_stage = "agent-automatic-start";
+        let start_run = manager
+            .ai_run_agent(AiAgentRunRequest {
+                prompt: format!("启动环境 {env_id}，等待运行完成后告诉我最终状态。"),
+                context_env_id: Some(env_id.clone()),
+                history: Vec::new(),
+                approved: true,
+            })
+            .await?;
+        if !start_run
+            .steps
+            .iter()
+            .any(|step| step.plan.action == "environment.start")
+            || environment(&manager, &env_id).await?.status != "ready"
+        {
+            return Err("automatic Agent did not start the stopped environment".into());
         }
 
         failed_stage = "chat-mutation-guard";
@@ -136,6 +158,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         Ok::<Value, Box<dyn Error>>(json!({
             "status": "passed",
+            "automaticMcpActivated": true,
+            "agentStartObserved": true,
             "chatMutationReplyVerified": true,
             "globalChatReplyVerified": true,
             "environmentChatReplyVerified": true,

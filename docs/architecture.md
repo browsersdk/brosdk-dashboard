@@ -138,9 +138,9 @@ Manager 根据 `kernelId` 生成服务端 `dto.FingerReqDto` 的顶层 `kernel` 
 
 DLL 的 `/sdk/v1/env/create` 与第三方服务端 `/api/v2/browser/create` 复用同一个 Go handler 和 `dto.FingerReqDto`，差异仅在认证中间件：DLL 初始化后使用 userSig，第三方接口直接使用 API Key。C ABI 的同步返回成功只代表 HTTP/FFI 调用完成；Manager 还必须校验响应业务字段 `code=200`，并要求 `data.envId` 存在。
 
-`brosdk.dll` 本身已经包含内嵌 MCP / HTTP 能力。新客户端把它作为 `sdk-host` 的 platform capability 暴露：当 Manager 明确配置端口时，由 `sdk_init` 的 `port` 字段启用 DLL 内嵌端点；Dashboard 不直接依赖该端点，仍通过 Manager 统一处理 envId 路由、operation 状态、安全策略和未来审批。
+`brosdk.dll` 本身已经包含内嵌 MCP / HTTP 能力。新客户端把它作为 `sdk-host` 的 platform capability 暴露：Manager 使用固定或自动选择的环回端口，由 `sdk_init` 的 `port` 字段启用 DLL 内嵌端点；Dashboard 不直接依赖该端点，仍通过 Manager 统一处理 envId 路由、operation 状态、安全策略和未来审批。
 
-Manager MCP adapter 只连接 DLL Streamable HTTP 全局端点 `/sdk/v1/mcp`。全局 session 的浏览器工具使用 `env.*` 名称，每次调用由 Manager 在 arguments 中强制写入已选择的 `envId`；`?envId=` 和 `/sdk/v1/mcp/env/{envId}` 只属于 DLL 向旧客户端保留的兼容面，本项目不再使用。adapter 严格执行 `initialize -> notifications/initialized -> tools/list -> tools/call -> DELETE`；仅发现工具时省略 `tools/call`。全局写工具仍由 Manager 对应 operation 代替；单环境目录从同一次全局 `tools/list` 中选取 `env.*` 浏览器工具，并显式排除 `env.create/update/destroy` 等环境管理工具。每次发现与调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。设置端口只代表下次 init 的配置，只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。
+Manager MCP adapter 只连接 DLL Streamable HTTP 全局端点 `/sdk/v1/mcp`。全局 session 的浏览器工具使用 `env.*` 名称，每次调用由 Manager 在 arguments 中强制写入已选择的 `envId`；`?envId=` 和 `/sdk/v1/mcp/env/{envId}` 只属于 DLL 向旧客户端保留的兼容面，本项目不再使用。adapter 严格执行 `initialize -> notifications/initialized -> tools/list -> tools/call -> DELETE`；仅发现工具时省略 `tools/call`。全局写工具仍由 Manager 对应 operation 代替；单环境目录从同一次全局 `tools/list` 中选取 `env.*` 浏览器工具，并显式排除 `env.create/update/destroy` 等环境管理工具。每次发现与调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。固定端口设置只代表下次 init 的配置；留空时 Manager 自动选择可用环回端口。只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。
 
 ## 8. 运行状态语义
 

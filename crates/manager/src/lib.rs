@@ -243,7 +243,7 @@ pub enum ManagerError {
     AgentEnvironmentTimeout { env_id: String, expected: String },
     #[error("embedded MCP request failed")]
     Mcp(#[from] mcp_client::McpClientError),
-    #[error("DLL embedded MCP is not configured; set an embedded MCP port and restart the runtime")]
+    #[error("DLL embedded MCP is not active; SDK initialization may still be pending or failed")]
     McpNotConfigured,
     #[error("embedded MCP tool is not allowed by Manager policy: {0}")]
     McpToolNotAllowed(String),
@@ -357,7 +357,7 @@ impl Manager {
     pub async fn apply_startup_policy(&self) -> Result<(), ManagerError> {
         // Reconciliation only observes SDK state; it never restores or opens a browser.
         // It is therefore required for every startup policy after an unclean client exit.
-        let _ = self.reconcile_runtimes().await?;
+        self.refresh_runtime_state(None).await?;
         Ok(())
     }
 
@@ -401,6 +401,7 @@ impl Manager {
                 .is_ok()
         {
             let _ = self.sync_environments().await;
+            let _ = self.refresh_runtime_state(None).await;
         }
 
         let dll_path = sdk_ffi::default_library_path();
@@ -427,6 +428,7 @@ impl Manager {
         let settings = self.inner.store.settings()?;
         let configured_mcp_port = settings.embedded_mcp_port.or_else(embedded_port);
         let active_mcp_port = *self.inner.active_mcp_port.read().await;
+        let automatic_mcp = configured_mcp_port.is_none() && capabilities.embedded_mcp;
         let environments = self.inner.store.list_environments()?;
         let fingerprints = self.inner.store.list_fingerprint_profiles()?;
         let proxies = self.inner.store.list_proxy_profiles()?;
@@ -461,7 +463,7 @@ impl Manager {
             mcp: McpPanel {
                 mode: "manager-routed".into(),
                 embedded_available: capabilities.embedded_mcp,
-                configured: configured_mcp_port.is_some(),
+                configured: configured_mcp_port.is_some() || automatic_mcp,
                 active: active_mcp_port.is_some(),
                 allowed_tools: GLOBAL_MCP_READ_TOOLS
                     .iter()
@@ -471,7 +473,8 @@ impl Manager {
                 endpoint_hint: active_mcp_port
                     .map(|port| format!("active on 127.0.0.1:{port}"))
                     .or_else(|| configured_mcp_port.map(|port| format!("configured on 127.0.0.1:{port}; runtime initialization pending")))
-                    .unwrap_or_else(|| "not configured; internal IPC does not require a TCP port".into()),
+                    .or_else(|| automatic_mcp.then(|| "automatic loopback port; runtime initialization pending".into()))
+                    .unwrap_or_else(|| "embedded MCP is unavailable in this SDK build".into()),
                 notes: vec![
                     "Dashboard communicates with Manager through Tauri commands.".into(),
                     "Manager communicates with sdk-host through a supervised named pipe/UDS.".into(),
@@ -808,6 +811,7 @@ impl Manager {
                 read_only: true,
             });
         }
+        self.refresh_runtime_state(None).await?;
         let context = self.ai_context(request.context_env_id.as_deref()).await?;
         let tools = self
             .ai_mcp_tools(request.context_env_id.as_deref(), false)
@@ -889,6 +893,7 @@ impl Manager {
     ) -> Result<AiAgentPlan, ManagerError> {
         let prompt = require_prompt(&request.prompt)?;
         validate_ai_history(&request.history)?;
+        self.refresh_runtime_state(None).await?;
         let environments = self.inner.store.list_environments()?;
         let target_env_id =
             resolve_agent_target(prompt, request.context_env_id.as_deref(), &environments)?;
@@ -937,6 +942,7 @@ impl Manager {
             return replay_agent_execution(previous, &plan_hash);
         }
 
+        self.refresh_runtime_state(None).await?;
         self.validate_expected_state(&request.plan)?;
         let reservation = AiAgentExecution {
             action: request.plan.action.clone(),
@@ -1167,6 +1173,7 @@ impl Manager {
         }
         let prompt = require_prompt(&request.prompt)?;
         validate_ai_history(&request.history)?;
+        self.refresh_runtime_state(None).await?;
         let environments = self.inner.store.list_environments()?;
         let target_env_id =
             resolve_agent_target(prompt, request.context_env_id.as_deref(), &environments)?;
@@ -1322,6 +1329,7 @@ impl Manager {
         let settings = self.inner.store.settings()?;
         let capabilities = sdk_ffi::capabilities_for_path(sdk_ffi::default_library_path());
         let runtime = self.inner.last_runtime_status.read().await.clone();
+        let embedded_mcp_active = self.inner.active_mcp_port.read().await.is_some();
         Ok(json!({
             "capabilities": {
                 "platform": capabilities.platform,
@@ -1404,7 +1412,7 @@ impl Manager {
                 "debug": settings.debug,
                 "startupPolicy": settings.startup_policy,
                 "sdkApiOverridePresent": settings.sdk_api_url.is_some(),
-                "embeddedMcpEnabled": settings.embedded_mcp_port.is_some(),
+                "embeddedMcpEnabled": embedded_mcp_active,
             },
             "agentPolicy": {
                 "allowedActions": allowed_agent_actions(),
@@ -2021,20 +2029,7 @@ impl Manager {
         self.inner
             .operations
             .start(&operation.id, "reading sdk_browser_info")?;
-        let result = async {
-            let host = self.runtime_handle().await?;
-            self.ensure_sdk_initialized(&host).await?;
-            let value = host
-                .call(HostCommand::BrowserInfo, Some(operation.id.clone()))
-                .await?;
-            let running = mirror::running_environments(&value);
-            let observed = mirror::observed_environment_ids(&value);
-            self.inner
-                .store
-                .reconcile_running_environments(&running, &observed)?;
-            Ok::<usize, ManagerError>(running.len())
-        }
-        .await;
+        let result = self.refresh_runtime_state(Some(operation.id.clone())).await;
         match result {
             Ok(count) => Ok(self.inner.operations.succeed(
                 &operation.id,
@@ -2046,6 +2041,21 @@ impl Manager {
                 &error.to_string(),
             )?),
         }
+    }
+
+    async fn refresh_runtime_state(
+        &self,
+        operation_id: Option<String>,
+    ) -> Result<usize, ManagerError> {
+        let host = self.runtime_handle().await?;
+        self.ensure_sdk_initialized(&host).await?;
+        let value = host.call(HostCommand::BrowserInfo, operation_id).await?;
+        let running = mirror::running_environments(&value);
+        let observed = mirror::observed_environment_ids(&value);
+        self.inner
+            .store
+            .reconcile_running_environments(&running, &observed)?;
+        Ok(observed.len())
     }
 
     pub fn prepare_environment_operation(
@@ -2969,6 +2979,12 @@ impl Manager {
                 "unsupported startup policy",
             )));
         }
+        if settings.embedded_mcp_port == Some(0) {
+            return Err(ManagerError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "DLL MCP port must be between 1 and 65535, or empty for automatic selection",
+            )));
+        }
         settings.ai_base_url = settings
             .ai_base_url
             .as_deref()
@@ -3250,7 +3266,7 @@ impl Manager {
             return Ok(());
         }
         let settings = self.inner.store.settings()?;
-        let port = settings.embedded_mcp_port.or_else(embedded_port);
+        let port = embedded_mcp_port_for_initialization(&settings)?;
         host.initialize(
             settings.work_dir,
             port,
@@ -3849,6 +3865,35 @@ fn embedded_port() -> Option<u16> {
     std::env::var("BROSDK_EMBEDDED_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
+}
+
+fn embedded_mcp_port_for_initialization(
+    settings: &ManagerSettings,
+) -> Result<Option<u16>, ManagerError> {
+    let capabilities = sdk_ffi::capabilities_for_path(sdk_ffi::default_library_path());
+    select_embedded_mcp_port(
+        settings.embedded_mcp_port,
+        embedded_port(),
+        capabilities.embedded_mcp,
+    )
+}
+
+fn select_embedded_mcp_port(
+    configured_port: Option<u16>,
+    environment_port: Option<u16>,
+    embedded_mcp_available: bool,
+) -> Result<Option<u16>, ManagerError> {
+    if let Some(port) = configured_port
+        .or(environment_port)
+        .filter(|port| *port != 0)
+    {
+        return Ok(Some(port));
+    }
+    if !embedded_mcp_available {
+        return Ok(None);
+    }
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    Ok(Some(listener.local_addr()?.port()))
 }
 
 fn accepted_code(value: &serde_json::Value) -> Option<i32> {
@@ -4982,6 +5027,29 @@ fn environment_value(name: &str) -> Option<String> {
 mod tests {
     use super::*;
     use crate::store::StoreError;
+
+    #[test]
+    fn embedded_mcp_uses_explicit_port_or_allocates_an_automatic_loopback_port() {
+        assert_eq!(
+            select_embedded_mcp_port(Some(17891), Some(18891), true).expect("configured port"),
+            Some(17891)
+        );
+        assert_eq!(
+            select_embedded_mcp_port(None, Some(18891), true).expect("environment port"),
+            Some(18891)
+        );
+        assert_eq!(
+            select_embedded_mcp_port(None, None, false).expect("unsupported SDK"),
+            None
+        );
+
+        let automatic = select_embedded_mcp_port(None, None, true)
+            .expect("automatic port")
+            .expect("available MCP port");
+        assert_ne!(automatic, 0);
+        std::net::TcpListener::bind(("127.0.0.1", automatic))
+            .expect("automatic port should be released for SDK initialization");
+    }
 
     fn usable_kernel() -> KernelRecord {
         KernelRecord {

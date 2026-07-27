@@ -16,8 +16,8 @@ BroSDK Dashboard 是基于 BroSDK 的 Windows 多指纹浏览器桌面控制台�
 - 支持环境创建、同步、启动、进度回调、停止、更新、删除、详情和关键指纹查看。
 - 运行时由隔离的 `sdk-host.exe` 加载 DLL；Dashboard 和 Host 均为 Windows GUI 子系统，不显示终端窗口。
 - 应用单实例运行；关闭主窗口后驻留系统托盘，重复启动会唤醒已有窗口，避免相同 appId 被重复初始化。
-- 使用 DLL 全局 `/sdk/v1/mcp` 入口，页面工具采用 `env.* + arguments.envId`；Manager 强制注入选中环境并实施工具白名单。
-- AI 会话创建时固定为“全局”或“单环境”：全局会话只绑定全局 MCP 目录，单环境会话只绑定所选 ready 环境的页面工具，创建后不可修改作用域；所有 mutation 仍经过 Manager 状态机。会话历史保存在本地，发送、回复和执行状态更新后自动跟随最新消息。
+- 使用 DLL 全局 `/sdk/v1/mcp` 入口，未指定端口时自动选择本机环回端口；页面工具采用 `env.* + arguments.envId`，Manager 强制注入选中环境并实施工具白名单。
+- AI 会话创建时固定为“全局”或“单环境”：全局会话只绑定全局 MCP 目录，单环境会话只绑定所选 ready 环境的页面工具，创建后不可修改作用域；所有 mutation 仍经过 Manager 状态机。Chat 读取、Agent 规划和执行前强制通过 DLL `sdk_browser_info` 更新运行状态，不使用上次客户端遗留的 ready/stopped 缓存。会话历史保存在本地，发送、回复和执行状态更新后自动跟随最新消息。
 
 ## 界面预览
 
@@ -182,6 +182,8 @@ http://127.0.0.1:<embedded-port>/sdk/v1/mcp
 ```
 
 Manager 从运行时 `tools/list` 动态发现工具及 `inputSchema`。所有调用都连接同一个 DLL 全局 endpoint，但会话的模型工具目录是互斥的：全局会话获得 `sdk.*`、`env.list/get` 等全局读取，单环境会话获得 `env.tabs`、`env.read`、`env.snapshot`、`env.act` 等页面工具。单环境调用由 Manager 覆盖写入绑定的 `arguments.envId`；`env.list/resolve/get/create/update/destroy` 不会混入单环境页面工具白名单。
+
+端口设置留空时，Manager 会在 SDK 初始化前自动选择一个可用的 `127.0.0.1` 端口并传给 DLL。设置具体端口只用于需要固定 endpoint 的集成场景，修改后需重启 Runtime Host。
 
 Chat 与 Agent 都通过 OpenAI-compatible 原生 `tools/tool_calls` 接入。Chat 只允许当前会话目录中的读取工具；Agent 额外绑定受控 Manager 动作，并把模型函数调用转换为可批准计划或最多 4 轮的自动工具循环。全局 Agent 可在请求中明确指定任一 envId；单环境 Agent 只能操作创建时绑定的 envId，提示词中的其它环境会被拒绝。AI 不直接持有 API Key、userSig、完整 CDP URL 或代理凭据。
 
