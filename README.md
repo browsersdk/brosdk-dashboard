@@ -17,7 +17,23 @@ BroSDK Dashboard 是基于 BroSDK 的 Windows 多指纹浏览器桌面控制台�
 - 运行时由隔离的 `sdk-host.exe` 加载 DLL；Dashboard 和 Host 均为 Windows GUI 子系统，不显示终端窗口。
 - 应用单实例运行；关闭主窗口后驻留系统托盘，重复启动会唤醒已有窗口，避免相同 appId 被重复初始化。
 - 使用 DLL 全局 `/sdk/v1/mcp` 入口，页面工具采用 `env.* + arguments.envId`；Manager 强制注入选中环境并实施工具白名单。
-- AI Chat/Agent 支持本地会话历史、精确环境上下文、逐次批准和显式自动执行模式；所有 mutation 仍经过 Manager 状态机。
+- AI Chat/Agent 按模式向模型绑定 OpenAI-compatible 原生 tools：Chat 只绑定读取工具，Agent 绑定受控 Manager 动作和所选 ready 环境的 MCP 工具；所有 mutation 仍经过 Manager 状态机。
+
+## 界面预览
+
+### 运行总览
+
+![BroSDK Dashboard 运行总览](docs/assets/dashboard-overview.png)
+
+### 多环境工作台
+
+![BroSDK Dashboard 多环境工作台](docs/assets/environment-workspace.png)
+
+### AI Agent
+
+![BroSDK Dashboard AI Agent 工作台](docs/assets/ai-agent-workspace.png)
+
+截图来自内置只读预览数据，可通过 `npm run docs:screenshots` 在 1440x900 视口重新生成；脚本同时检查浏览器错误与横向溢出。
 
 ## 架构
 
@@ -156,9 +172,9 @@ Remove-Item Env:BROSDK_API_KEY
 http://127.0.0.1:<embedded-port>/sdk/v1/mcp
 ```
 
-Manager 从运行时 `tools/list` 动态发现工具。环境页面工具使用真实 `env.tabs`、`env.read`、`env.snapshot`、`env.act` 等名称，每次调用由 Manager 覆盖写入 `arguments.envId`。`env.list/resolve/get/create/update/destroy` 属于环境管理工具，不会进入单环境页面工具白名单；创建、更新、删除和启停继续走可审计 operation。
+Manager 从运行时 `tools/list` 动态发现工具及 `inputSchema`。环境页面工具使用真实 `env.tabs`、`env.read`、`env.snapshot`、`env.act` 等名称，每次调用由 Manager 覆盖写入 `arguments.envId`。`env.list/resolve/get/create/update/destroy` 属于环境管理工具，不会进入单环境页面工具白名单；创建、更新、删除和启停继续走可审计 operation。
 
-AI Agent 不直接持有 API Key、userSig、完整 CDP URL 或代理凭据。会话可以绑定一个精确 `envId`，自动执行模式也不会绕过环境状态、工具目录和幂等校验。
+Chat 与 Agent 都通过 OpenAI-compatible 原生 `tools/tool_calls` 接入。Chat 只绑定全局读取和所选 ready 环境的读取工具；Agent 绑定 Manager 动作及所选环境的运行时 MCP 目录，再把模型函数调用转换为可批准计划。AI 不直接持有 API Key、userSig、完整 CDP URL 或代理凭据，自动执行模式也不会绕过环境状态、工具目录和幂等校验。
 
 ## 数据与安全
 

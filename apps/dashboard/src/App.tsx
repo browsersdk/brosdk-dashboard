@@ -176,8 +176,7 @@ export default function App() {
   }, [load, snapshot?.latestEventSequence]);
 
   const latestSmoke = smoke ?? snapshot?.sdk.lastSmoke ?? null;
-  const failedStages = latestSmoke?.stages.filter((stage) => stage.status === "failed").length ?? 0;
-  const passedStages = latestSmoke?.stages.filter((stage) => stage.status === "passed").length ?? 0;
+  const readyEnvironmentCount = snapshot?.environments.filter((environment) => environment.status === "ready").length ?? 0;
 
   async function executeSmoke() {
     setSmokeBusy(true);
@@ -187,7 +186,7 @@ export default function App() {
       setSmoke(report);
       await load();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "SDK smoke 执行失败");
+      setError(requestError instanceof Error ? requestError.message : "SDK 自检执行失败");
     } finally {
       setSmokeBusy(false);
     }
@@ -271,10 +270,6 @@ export default function App() {
               <RefreshCw className={loading ? "spin" : ""} size={16} />
               刷新
             </button>
-            <button className="button primary smoke-button" type="button" onClick={() => void executeSmoke()} disabled={smokeBusy}>
-              {smokeBusy ? <LoaderCircle className="spin" size={16} /> : <Play size={16} />}
-              SDK Smoke
-            </button>
           </div>
         </header>
 
@@ -286,11 +281,11 @@ export default function App() {
               <Metric icon={ServerCog} tone="blue" label="SDK" value={statusLabel[snapshot?.sdk.state ?? ""] ?? "-"} detail={snapshot?.capabilities.dllExists ? "DLL present" : "DLL missing"} />
               <Metric icon={ShieldCheck} tone="green" label="API Key" value={snapshot?.sdk.apiKey.present ? "已设置" : "未设置"} detail={snapshot?.sdk.apiKey.source ?? "BROSDK_API_KEY"} />
               <Metric icon={Bot} tone="amber" label="内嵌 MCP" value={snapshot?.capabilities.embeddedMcp ? "可用" : "未知"} detail={snapshot?.mcp.endpointHint ?? "-"} />
-              <Metric icon={Database} tone="gray" label="Smoke" value={latestSmoke ? `${passedStages}/${latestSmoke.stages.length}` : "未运行"} detail={failedStages ? `${failedStages} failed` : latestSmoke?.skipped ? "live skipped" : "ready"} />
+              <Metric icon={Boxes} tone="gray" label="环境" value={String(snapshot?.environments.length ?? 0)} detail={`${readyEnvironmentCount} 个运行中`} />
             </section>
             <section className="workspace overview-grid">
               <SdkPanel snapshot={snapshot} />
-              <SmokePanel report={latestSmoke} busy={smokeBusy} />
+              <EnvironmentActivityPanel snapshot={snapshot} />
             </section>
           </>
         )}
@@ -309,7 +304,18 @@ export default function App() {
         {page === "mcp" && <McpPage snapshot={snapshot} desktop={isDesktopRuntime()} onRefresh={load} onError={setError} />}
         {page === "ai" && <AiPage snapshot={snapshot} onRefresh={load} onError={setError} onOpenSettings={() => setPage("settings")} />}
         {page === "operations" && <OperationsPage snapshot={snapshot} onRefresh={load} onError={setError} />}
-        {page === "settings" && <SettingsPage snapshot={snapshot} onRefresh={load} onError={setError} onCredentialChange={initialize} credentialBusy={credentialBusy} />}
+        {page === "settings" && (
+          <SettingsPage
+            snapshot={snapshot}
+            onRefresh={load}
+            onError={setError}
+            onCredentialChange={initialize}
+            credentialBusy={credentialBusy}
+            selfCheckReport={latestSmoke}
+            selfCheckBusy={smokeBusy}
+            onRunSelfCheck={executeSmoke}
+          />
+        )}
       </main>
     </div>
   );
@@ -381,23 +387,54 @@ function SdkPanel({ snapshot }: { snapshot: DashboardSnapshot | null }) {
   );
 }
 
-function SmokePanel({ report, busy }: { report: SmokeReport | null; busy: boolean }) {
+function EnvironmentActivityPanel({ snapshot }: { snapshot: DashboardSnapshot | null }) {
+  const environments = snapshot?.environments ?? [];
+  const recentOperations = (snapshot?.operations ?? []).slice(0, 5);
+  const statusCounts = [
+    { label: "运行中", count: environments.filter((environment) => environment.status === "ready").length },
+    { label: "变更中", count: environments.filter((environment) => ["starting", "stopping"].includes(environment.status)).length },
+    { label: "已停止", count: environments.filter((environment) => environment.status === "stopped").length },
+    { label: "需关注", count: environments.filter((environment) => !["ready", "starting", "stopping", "stopped"].includes(environment.status)).length },
+  ];
   return (
     <section className="panel">
-      <div className="panel-heading"><Activity size={17} /><h2>Smoke 阶段</h2>{busy && <LoaderCircle className="spin" size={16} />}</div>
-      <div className="stage-list">
-        {report?.stages.length ? report.stages.map((stage) => <StageRow key={stage.name} stage={stage} />) : (
-          <div className="empty-state"><CircleDot size={22} /><span>等待执行</span></div>
+      <div className="panel-heading"><Activity size={17} /><h2>运行活动</h2></div>
+      <div className="overview-status-grid">
+        {statusCounts.map((item) => (
+          <div key={item.label}><strong>{item.count}</strong><span>{item.label}</span></div>
+        ))}
+      </div>
+      <div className="overview-operation-list">
+        {recentOperations.length ? recentOperations.map((operation) => (
+          <article key={operation.id}>
+            <span className={`status-dot ${operation.status}`} />
+            <div><strong>{operation.label}</strong><small>{operation.envId ?? "全局"}</small></div>
+            <em>{statusLabel[operation.status] ?? operation.status}</em>
+          </article>
+        )) : (
+          <div className="empty-state compact"><CircleDot size={20} /><span>暂无操作记录</span></div>
         )}
       </div>
-      {report && (
-        <footer className="panel-footer">
-          <span>result cb {report.callbacks.result}</span>
-          <span>log cb {report.callbacks.log}</span>
-          <span>{report.embeddedMcpPort ? `MCP :${report.embeddedMcpPort}` : "MCP off"}</span>
-        </footer>
-      )}
     </section>
+  );
+}
+
+function SelfCheckResult({ report }: { report: SmokeReport | null }) {
+  if (!report) return null;
+  const failed = report.stages.filter((stage) => stage.status === "failed").length;
+  const passed = report.stages.filter((stage) => stage.status === "passed").length;
+  return (
+    <div className="self-check-result">
+      <header><strong>最近自检</strong><span className={failed ? "failed" : "passed"}>{failed ? `${failed} 项失败` : `${passed}/${report.stages.length} 通过`}</span></header>
+      <div className="stage-list">
+        {report.stages.map((stage) => <StageRow key={stage.name} stage={stage} />)}
+      </div>
+      <footer className="panel-footer">
+        <span>result cb {report.callbacks.result}</span>
+        <span>log cb {report.callbacks.log}</span>
+        <span>{report.embeddedMcpPort ? `MCP :${report.embeddedMcpPort}` : "MCP off"}</span>
+      </footer>
+    </div>
   );
 }
 
@@ -786,15 +823,19 @@ function KernelPage({ snapshot, onRefresh, onError }: {
   );
 }
 
-function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, credentialBusy }: {
+function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, credentialBusy, selfCheckReport, selfCheckBusy, onRunSelfCheck }: {
   snapshot: DashboardSnapshot | null;
   onRefresh: () => Promise<void>;
   onError: (message: string) => void;
   onCredentialChange: (apiKey: string) => Promise<void>;
   credentialBusy: boolean;
+  selfCheckReport: SmokeReport | null;
+  selfCheckBusy: boolean;
+  onRunSelfCheck: () => Promise<void>;
 }) {
   const [settings, setSettings] = useState<ManagerSettings | null>(snapshot?.settings ?? null);
   const [busy, setBusy] = useState("");
+  const selfCheckBlocked = (snapshot?.environments ?? []).some((environment) => environment.status !== "stopped");
   useEffect(() => { if (snapshot?.settings) setSettings(snapshot.settings); }, [snapshot?.settings]);
   if (!settings) return <section className="module-workspace"><div className="empty-state"><LoaderCircle className="spin" size={18} />读取设置</div></section>;
 
@@ -850,7 +891,12 @@ function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, creden
           onSubmit={onCredentialChange}
           onClear={removeCredential}
         />
-        <button className="button secondary full-width diagnostic-button" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void exportDiagnostics()}>{busy === "diagnostics" ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}导出脱敏诊断包</button>
+        <div className="diagnostic-actions">
+          <button className="button secondary" type="button" disabled={!isDesktopRuntime() || Boolean(busy) || selfCheckBusy} onClick={() => void exportDiagnostics()}>{busy === "diagnostics" ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}导出诊断包</button>
+          <button className="button primary" type="button" disabled={!isDesktopRuntime() || Boolean(busy) || selfCheckBusy || selfCheckBlocked} onClick={() => void onRunSelfCheck()}>{selfCheckBusy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}运行 SDK 自检</button>
+        </div>
+        {selfCheckBlocked && <p className="section-note self-check-blocked"><CircleAlert size={13} />需先停止全部环境并完成状态对账</p>}
+        <SelfCheckResult report={selfCheckReport} />
       </div>
       <AiProviderSettings snapshot={snapshot} onRefresh={onRefresh} onError={onError} />
     </section>

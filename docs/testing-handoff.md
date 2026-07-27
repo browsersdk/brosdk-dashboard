@@ -24,7 +24,7 @@ npm run e2e:credential
 npm run e2e:dashboard:desktop
 ```
 
-该 runner 驱动 Windows Tauri 窗口中的环境表按钮；已有已初始化窗口时直接复用，没有窗口时启动隔离桌面进程并通过隐藏 API Key 完成初始化。它必须等待目标环境所在表格行明确显示“运行中”，不能把启动中已经可用的停止按钮误判为 ready；随后验证 AI 关联环境、CDP 地址或 DLL 内部控制通道、AI Provider 设置入口、停止状态和操作中心身份。测试结束前会把目标环境恢复为 stopped，隔离启动时还会关闭进程并清理临时数据目录。可用 `-AgentLifecycle -TargetEnvironmentId <envId>` 改为从 AI Agent 生成计划和批准启动。
+该 runner 驱动 Windows Tauri 窗口中的设置与环境控件；初始化后先在全部环境 stopped 时执行一次 SDK 自检并要求 `sdkSelfCheckObserved=true`，再启动目标环境。它必须等待目标环境所在表格行明确显示“运行中”，不能把启动中已经可用的停止按钮误判为 ready；随后验证 AI 关联环境、CDP 地址或 DLL 内部控制通道、AI Provider 设置入口、停止状态和操作中心身份。测试结束前会把目标环境恢复为 stopped，隔离启动时还会关闭进程并清理临时数据目录。可用 `-AgentLifecycle -TargetEnvironmentId <envId>` 改为从 AI Agent 生成计划和批准启动。
 
 可选测试变量：
 
@@ -93,6 +93,8 @@ npm run sdk:runtime-smoke
 ```
 
 该命令先构建 `sdk-host`，再验证 health/capability、正常 shutdown 和强制 kill。预期正常路径状态为 `stopped`，强制 kill 路径状态为 `degraded`，完成后没有残留 `sdk-host.exe`。可设置 `BROSDK_IPC_TRACE=1` 输出不含 payload 的 IPC 阶段诊断。
+
+Dashboard 的同类入口位于“设置 -> 安全与诊断”。只要任一环境为 ready、starting、stopping、failed 或 unknown，按钮必须禁用；可执行时 Manager 使用安全存储中的 API Key，先停止长期 Runtime Host，再运行一次性 smoke，最后重启 Runtime Host。它不应出现在总览快捷操作中，也不能在环境运行时被当作普通健康检查。
 
 Manager Domain smoke：
 
@@ -225,7 +227,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 - Chat 上下文只包含脱敏摘要，不包含数据目录、workDir、logDir、完整代理 URL、CDP endpoint、API Key 或 userSig。
 - 同一 `idempotencyKey` 只能对应一个序列化计划；不同计划复用必须返回 `INVALID_AGENT_PLAN`。
 - Agent 在调用工具前写入 reservation；中断或结果未落盘时相同 key 必须返回 `AGENT_EXECUTION_UNCERTAIN`，不能重复执行。
-- `npm run ai:smoke` 只记录模型、只读标志和回答长度。
+- `npm run ai:smoke` 同时验证普通只读回答和一次原生 function tool round；只记录模型、只读标志、工具调用布尔值和回答长度。
 - MCP 单元测试必须验证 `initialize -> initialized notification -> tools/list -> tools/call -> DELETE` 和 session/version headers。
 - 设置 `BROSDK_EMBEDDED_PORT` 的环境 E2E 必须完成一次 Manager 路由的 `tabs(list)`，输出只记录 `embeddedMcpToolVerified=true`，不记录 envId、页面 URL 或工具正文。
 
@@ -243,7 +245,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-20 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-27 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -450,3 +452,13 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - `npm run e2e:environment` 必须发现 allowed=advertised 的 18 个浏览器工具，通过 `env.tabs/env.read` 后停止环境，报告中不输出 envId 或页面正文。
 
 2026-07-27 阶段 25 结果：Dashboard 51 项、Rust workspace 101 项、Playwright 桌面/移动 16 项、check 与 Clippy 全部通过。真实 DLL 生命周期 E2E 报告 `embeddedMcpAdvertisedToolCount=18`、`embeddedMcpAllowedToolCount=18`、`embeddedMcpToolVerified/embeddedMcpReadVerified/environmentStopped=true`；全局管理集合未进入单环境白名单，凭据和真实 envId 未写入输出。
+
+## 29. 阶段 27 AI 原生工具与安全自检验收
+
+- AI Provider 首轮请求必须携带标准 function `tools`；返回 `tool_calls` 后，Chat 只执行绑定的读取工具，并以 `role=tool/tool_call_id` 完成第二轮回答。第二轮再次请求工具必须拒绝。
+- Chat 不得绑定 `env.navigate/env.act/env.evaluate/upload/download` 等 mutation；Agent 可以从所选 ready 环境的运行时目录选择这些工具，但模型调用只能先生成一个计划。
+- DLL `inputSchema` 必须进入模型工具定义；单环境 schema 移除 `envId/env_id`。模型参数伪造 envId 时，Manager 计划仍绑定用户选择或文本解析出的精确环境。
+- `npm run e2e:dashboard` 必须验证总览无 `SDK Smoke`、设置页存在“运行 SDK 自检”且有运行环境时禁用；真实桌面 runner 必须在环境启动前完成自检。
+- `npm run docs:screenshots` 必须生成三张 README PNG，并对每个页面检查控制台 warning/error 和横向溢出。
+
+2026-07-27 阶段 27 结果：DeepSeek `deepseek-v4-flash` 完成标准 `tools -> tool_calls -> role=tool` 回合；真实 Tauri 报告 `sdkSelfCheckObserved/agentPlanObserved/agentApprovalInvoked/agentOperationObserved/readyObservedInDashboard/stoppedObservedInDashboard=true`。底层环境 E2E 经全局 endpoint 发现并放行 18/18 个单环境工具，`env.tabs/env.read`、启动进度、页面诊断和指纹检查通过，环境最终 stopped。Dashboard 51 项、Rust workspace 110 项、Playwright 桌面/移动 18 项、check、Clippy、production build、三张 README 截图和 Windows NSIS/便携发布校验全部通过；截图和报告不含真实 envId、API Key、userSig 或 MCP 响应正文。

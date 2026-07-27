@@ -28,6 +28,10 @@
 | 21. Windows Runtime Host 后台化 | P0 | 已完成 | sdk-host 全部启动路径不创建终端窗口，保留 IPC 与诊断输出捕获 |
 | 22. Windows 桌面生命周期 | P0 | 已完成 | Dashboard/Host GUI subsystem、关闭到托盘、托盘恢复/退出和 release PE 门禁 |
 | 23. 环境启动回调进度 | P0 | 已完成 | DLL percent/statusName 进入 operation 与环境表，真实 callback 和响应式 E2E 通过 |
+| 24. 客户端重启状态恢复与单实例 | P0 | 已完成 | 新 runtime 对账遗留状态，桌面单实例避免相同 appId 重复初始化 |
+| 25. 新版全局多环境 MCP | P0 | 已完成 | 单一全局 endpoint、`env.* + arguments.envId` 与动态单环境目录 |
+| 26. GitHub 首页与发布产物收口 | P1 | 已完成 | README、DLL/头文件、构建命令和 Windows 发布产物闭环 |
+| 27. AI 原生工具与安全自检 | P0 | 已完成 | Chat/Agent 按模式绑定原生 tools，自检迁入空闲期诊断，README 产品截图 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -836,3 +840,16 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 开发与发布命令已集中说明；`target/` 定义为 Cargo/Tauri 原始构建区，`apps/dashboard/dist/` 定义为 Vite 中间产物，`dist/release/` 定义为经过发布脚本整理和验证的最终交付区。
 - 更新后的 `libs/windows_x64/brosdk.dll` 和 `brosdk.h` 纳入版本库；本地服务端接口快照 `doc.json`/`docs.json` 显式忽略，不会随 GitHub 上传。
 - 默认 Windows x64 NSIS 与便携 ZIP 使用当前代码和 DLL 重建，并通过发布清单、SHA-256、ZIP 布局、PE GUI subsystem 和签名状态校验；静默安装/首次初始化/卸载及便携版单实例/托盘 E2E 通过。
+
+## 30. 阶段 27：AI 原生工具与安全自检
+
+目标：让 Chat/Agent 使用 Provider 原生函数调用连接 DLL MCP，同时把会中断 Runtime Host 的 SDK smoke 收口为明确、安全的诊断操作。
+
+实现结果（2026-07-27）：
+
+- `mcp-client -> domain -> manager` 完整保留 `tools/list.inputSchema`。Chat 只绑定全局读取和所选 ready 环境的读取白名单；Agent 绑定 Manager 生命周期/诊断动作及该环境当次广告的全部页面工具。
+- DeepSeek/OpenAI-compatible 请求使用标准 `tools/tool_calls`。Chat 最多执行 4 个只读调用和一轮 `role=tool` 回填；Agent 只接受一个函数选择，再转换为既有计划、批准/自动执行和 operation 流程。
+- 模型 schema 不暴露 `envId/env_id`；Manager 始终用关联环境覆盖注入，并继续限制参数、响应大小、敏感字段、状态前置条件和幂等键。
+- Overview 不再提供会影响运行环境的 Smoke。设置页“安全与诊断”只在全部环境 stopped 时启用 SDK 自检，并从 Manager 安全凭据启动一次性 Host，完成后恢复长期 Runtime Host。
+- `npm run docs:screenshots` 以只读预览数据生成总览、环境工作台和 AI Agent 三张 1440x900 README 图片，同时检查浏览器错误与横向溢出。
+- 最终验证通过 51 项 Dashboard 测试、110 项 Rust workspace 测试、18 项桌面/移动 Playwright、check/Clippy、production build 和 Windows NSIS/便携发布校验。真实 DeepSeek 完成原生 tool round；真实 Tauri 自检、Agent 启停和底层全局 MCP 18/18 工具生命周期均通过，目标环境最终 stopped。

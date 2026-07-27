@@ -65,21 +65,31 @@ impl SdkHostClient {
     }
 
     pub async fn capabilities(&self) -> Result<SdkCapabilities, SdkClientError> {
-        self.run_json(["capabilities", "--json"]).await
+        self.run_json(["capabilities", "--json"], None).await
     }
 
     pub async fn smoke(&self) -> Result<SmokeReport, SdkClientError> {
-        self.run_json(["smoke", "--json"]).await
+        self.run_json(["smoke", "--json"], None).await
     }
 
-    async fn run_json<T, const N: usize>(&self, args: [&str; N]) -> Result<T, SdkClientError>
+    pub async fn smoke_with_api_key(&self, api_key: &str) -> Result<SmokeReport, SdkClientError> {
+        self.run_json(["smoke", "--json"], Some(api_key)).await
+    }
+
+    async fn run_json<T, const N: usize>(
+        &self,
+        args: [&str; N],
+        api_key: Option<&str>,
+    ) -> Result<T, SdkClientError>
     where
         T: serde::de::DeserializeOwned,
     {
-        let output = background_host_command(&self.host_path)
-            .args(args)
-            .output()
-            .await?;
+        let mut command = background_host_command(&self.host_path);
+        command.args(args);
+        if let Some(api_key) = api_key {
+            command.env("BROSDK_API_KEY", api_key);
+        }
+        let output = command.output().await?;
         if !output.status.success() {
             return Err(SdkClientError::Exit {
                 code: output.status.code(),

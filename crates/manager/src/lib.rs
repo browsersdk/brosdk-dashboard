@@ -48,6 +48,7 @@ const MAX_AI_HISTORY_BYTES: usize = 128 * 1024;
 const MAX_MCP_ARGUMENT_BYTES: usize = 64 * 1024;
 const MAX_MCP_ARGUMENT_DEPTH: usize = 16;
 const MAX_MCP_STRING_CHARS: usize = 16 * 1024;
+const MAX_AI_TOOL_RESULT_BYTES: usize = 64 * 1024;
 const GLOBAL_MCP_READ_TOOLS: &[&str] = &[
     "sdk.health",
     "sdk.info",
@@ -76,6 +77,23 @@ const ENVIRONMENT_MCP_READ_TOOLS: &[&str] = &[
     "grep",
     "screenshot",
 ];
+
+#[derive(Debug, Clone)]
+struct AiBoundTool {
+    definition: ai_agent::AiToolDefinition,
+    target: AiBoundToolTarget,
+}
+
+#[derive(Debug, Clone)]
+enum AiBoundToolTarget {
+    ManagerAction(&'static str),
+    Mcp {
+        scope: McpToolScope,
+        env_id: Option<String>,
+        tool: String,
+        read_only: bool,
+    },
+}
 
 #[derive(Default)]
 struct EnvironmentPageAccumulator {
@@ -156,6 +174,8 @@ pub enum ManagerError {
     ApiKeyMissing,
     #[error("API Key must not be empty")]
     ApiKeyInvalid,
+    #[error("SDK 自检要求全部环境处于已停止状态（当前有 {0} 个运行中、变更中或状态未知）")]
+    SdkSelfCheckBusy(usize),
     #[error("API Key is managed by BROSDK_API_KEY and cannot be changed in the application")]
     ApiKeyManagedExternally,
     #[error("stored API Key is not valid UTF-8")]
@@ -730,14 +750,123 @@ impl Manager {
         )?)
     }
 
+    async fn ai_mcp_tools(
+        &self,
+        context_env_id: Option<&str>,
+        include_environment_mutations: bool,
+    ) -> Result<Vec<AiBoundTool>, ManagerError> {
+        if self.inner.active_mcp_port.read().await.is_none() {
+            return Ok(Vec::new());
+        }
+
+        let mut tools = ai_bindings_from_discovery(
+            self.discover_embedded_mcp_tools(McpToolDiscoveryRequest {
+                scope: McpToolScope::Global,
+                env_id: None,
+            })
+            .await?,
+            true,
+        );
+
+        if let Some(env_id) = context_env_id {
+            let environment = self
+                .inner
+                .store
+                .environment(env_id)?
+                .ok_or(ManagerError::EnvironmentNotFound)?;
+            if environment.status == "ready" {
+                tools.extend(ai_bindings_from_discovery(
+                    self.discover_embedded_mcp_tools(McpToolDiscoveryRequest {
+                        scope: McpToolScope::Environment,
+                        env_id: Some(env_id.into()),
+                    })
+                    .await?,
+                    include_environment_mutations,
+                ));
+            }
+        }
+
+        let mut names = HashSet::new();
+        tools.retain(|tool| names.insert(tool.definition.name.clone()));
+        Ok(tools)
+    }
+
     pub async fn ai_chat(&self, request: AiChatRequest) -> Result<AiChatResponse, ManagerError> {
         let prompt = require_prompt(&request.prompt)?;
         validate_ai_history(&request.history)?;
         let context = self.ai_context(request.context_env_id.as_deref()).await?;
-        Ok(self
-            .ai_client()?
-            .chat(prompt, &context, &request.history)
-            .await?)
+        let tools = self
+            .ai_mcp_tools(request.context_env_id.as_deref(), false)
+            .await?;
+        let definitions = tools
+            .iter()
+            .map(|tool| tool.definition.clone())
+            .collect::<Vec<_>>();
+        let client = self.ai_client()?;
+        let model = client.model().to_string();
+        let first = client
+            .chat_turn(prompt, &context, &request.history, &definitions)
+            .await?;
+        if first.tool_calls.is_empty() {
+            return Ok(AiChatResponse {
+                answer: first.content.ok_or(ai_agent::AiError::EmptyResponse)?,
+                model,
+                read_only: true,
+            });
+        }
+
+        let mut results = Vec::with_capacity(first.tool_calls.len());
+        for call in &first.tool_calls {
+            let binding = tools
+                .iter()
+                .find(|tool| tool.definition.name == call.name)
+                .ok_or_else(|| {
+                    ai_agent::AiError::InvalidToolCall(format!(
+                        "function {} is not bound for Chat",
+                        call.name
+                    ))
+                })?;
+            let AiBoundToolTarget::Mcp {
+                scope,
+                env_id,
+                tool,
+                read_only: true,
+            } = &binding.target
+            else {
+                return Err(ai_agent::AiError::InvalidToolCall(format!(
+                    "function {} is not read-only",
+                    call.name
+                ))
+                .into());
+            };
+            let execution = self
+                .call_embedded_mcp(McpToolCallRequest {
+                    scope: *scope,
+                    env_id: env_id.clone(),
+                    tool: tool.clone(),
+                    arguments: call.arguments.clone(),
+                })
+                .await?;
+            results.push(ai_agent::AiToolResult {
+                tool_call_id: call.id.clone(),
+                content: bounded_ai_tool_result(&execution.response),
+            });
+        }
+        let final_turn = client
+            .chat_after_tools(
+                prompt,
+                &context,
+                &request.history,
+                &definitions,
+                &first,
+                &results,
+            )
+            .await?;
+        Ok(AiChatResponse {
+            answer: final_turn.content.ok_or(ai_agent::AiError::EmptyResponse)?,
+            model,
+            read_only: true,
+        })
     }
 
     pub async fn ai_plan_agent(
@@ -750,10 +879,17 @@ impl Manager {
         let target_env_id =
             resolve_agent_target(prompt, request.context_env_id.as_deref(), &environments)?;
         let context = self.ai_context(target_env_id.as_deref()).await?;
-        let mut plan = self
+        let mut tools = manager_agent_tools();
+        tools.extend(self.ai_mcp_tools(target_env_id.as_deref(), true).await?);
+        let definitions = tools
+            .iter()
+            .map(|tool| tool.definition.clone())
+            .collect::<Vec<_>>();
+        let turn = self
             .ai_client()?
-            .plan(prompt, &context, &request.history)
+            .plan_turn(prompt, &context, &request.history, &definitions)
             .await?;
+        let mut plan = agent_plan_from_turn(turn, &tools)?;
         prepare_agent_plan(&mut plan, target_env_id.as_deref(), &environments)?;
         validate_agent_plan(&plan)?;
         Ok(plan)
@@ -1339,6 +1475,7 @@ impl Manager {
                     .map(|tool| McpToolSummary {
                         name: tool.name,
                         description: tool.description,
+                        input_schema: tool.input_schema,
                         read_only_hint: tool.read_only_hint,
                         destructive_hint: tool.destructive_hint,
                     })
@@ -2707,15 +2844,27 @@ impl Manager {
     }
 
     pub async fn run_sdk_smoke(&self) -> Result<SmokeReport, ManagerError> {
+        let unsafe_environments =
+            sdk_self_check_blocking_count(&self.inner.store.list_environments()?);
+        if unsafe_environments > 0 {
+            return Err(ManagerError::SdkSelfCheckBusy(unsafe_environments));
+        }
+        let (api_key, _) = self.resolve_api_key()?.ok_or(ManagerError::ApiKeyMissing)?;
         let should_restart = self.inner.runtime.lock().await.is_some();
         if should_restart {
             self.stop_runtime().await?;
         }
-        let result = SdkHostClient::discover()?.smoke().await;
+        let result = SdkHostClient::discover()?
+            .smoke_with_api_key(&api_key)
+            .await;
+        let mut restart_error = None;
         if should_restart {
-            let _ = self.start_runtime().await;
+            restart_error = self.start_runtime().await.err();
         }
         let report = result?;
+        if let Some(error) = restart_error {
+            return Err(error);
+        }
         *self.inner.last_smoke.write().await = Some(report.clone());
         Ok(report)
     }
@@ -3585,6 +3734,275 @@ fn validate_ai_history(history: &[AiConversationMessage]) -> Result<(), ManagerE
     Ok(())
 }
 
+fn ai_bindings_from_discovery(
+    discovery: McpToolDiscovery,
+    include_environment_mutations: bool,
+) -> Vec<AiBoundTool> {
+    let allowed = discovery.allowed_tools.into_iter().collect::<HashSet<_>>();
+    discovery
+        .advertised_tools
+        .into_iter()
+        .filter(|tool| allowed.contains(&tool.name))
+        .filter_map(|tool| {
+            let read_only = match discovery.scope {
+                McpToolScope::Global => true,
+                McpToolScope::Environment => ai_environment_tool_is_read_only(&tool.name),
+            };
+            if discovery.scope == McpToolScope::Environment
+                && !include_environment_mutations
+                && !read_only
+            {
+                return None;
+            }
+            let model_name = ai_mcp_function_name(discovery.scope, &tool.name);
+            let description = tool.description.unwrap_or_else(|| match discovery.scope {
+                McpToolScope::Global => format!("Read BroSDK data using {}", tool.name),
+                McpToolScope::Environment => {
+                    format!("Use {} on the selected browser environment", tool.name)
+                }
+            });
+            Some(AiBoundTool {
+                definition: ai_agent::AiToolDefinition {
+                    name: model_name,
+                    description,
+                    parameters: ai_tool_parameters(
+                        tool.input_schema,
+                        discovery.scope == McpToolScope::Environment,
+                    ),
+                },
+                target: AiBoundToolTarget::Mcp {
+                    scope: discovery.scope,
+                    env_id: discovery.env_id.clone(),
+                    tool: tool.name,
+                    read_only,
+                },
+            })
+        })
+        .collect()
+}
+
+fn ai_environment_tool_is_read_only(tool: &str) -> bool {
+    tool.strip_prefix("env.")
+        .is_some_and(|base| ENVIRONMENT_MCP_READ_TOOLS.contains(&base))
+}
+
+fn ai_mcp_function_name(scope: McpToolScope, tool: &str) -> String {
+    let prefix = match scope {
+        McpToolScope::Global => "mcp_global_",
+        McpToolScope::Environment => "mcp_env_",
+    };
+    let base = tool.strip_prefix("env.").unwrap_or(tool);
+    let normalized = base
+        .chars()
+        .map(|value| {
+            if value.is_ascii_alphanumeric() || value == '_' {
+                value
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let candidate = format!("{prefix}{normalized}");
+    if candidate.len() <= 64 {
+        return candidate;
+    }
+    let digest = format!("{:x}", Sha256::digest(tool.as_bytes()));
+    format!("{}_{}", &candidate[..47], &digest[..16])
+}
+
+fn ai_tool_parameters(
+    mut schema: serde_json::Value,
+    environment_scoped: bool,
+) -> serde_json::Value {
+    if !schema.is_object() {
+        schema = json!({ "type": "object", "properties": {} });
+    }
+    let object = schema.as_object_mut().expect("schema is an object");
+    object.insert("type".into(), serde_json::Value::String("object".into()));
+    if environment_scoped {
+        if let Some(properties) = object
+            .get_mut("properties")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            properties.remove("envId");
+            properties.remove("env_id");
+        }
+        if let Some(required) = object
+            .get_mut("required")
+            .and_then(serde_json::Value::as_array_mut)
+        {
+            required.retain(|value| !matches!(value.as_str(), Some("envId") | Some("env_id")));
+        }
+    }
+    schema
+}
+
+fn manager_agent_tools() -> Vec<AiBoundTool> {
+    [
+        (
+            "manager_environment_start",
+            "Start one browser environment. An envId is required.",
+            "environment.start",
+            json!({
+                "type": "object",
+                "properties": { "envId": { "type": "string" } },
+                "required": ["envId"],
+                "additionalProperties": false
+            }),
+        ),
+        (
+            "manager_environment_stop",
+            "Stop one browser environment. An envId is required.",
+            "environment.stop",
+            json!({
+                "type": "object",
+                "properties": { "envId": { "type": "string" } },
+                "required": ["envId"],
+                "additionalProperties": false
+            }),
+        ),
+        (
+            "manager_environment_sync",
+            "Synchronize the environment list from the SDK server.",
+            "environment.sync",
+            json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+        ),
+        (
+            "manager_runtime_reconcile",
+            "Reconcile local browser runtime states with the SDK.",
+            "runtime.reconcile",
+            json!({ "type": "object", "properties": {}, "additionalProperties": false }),
+        ),
+        (
+            "manager_proxy_diagnose",
+            "Run a bounded proxy connectivity diagnostic.",
+            "proxy.diagnose",
+            json!({
+                "type": "object",
+                "properties": {
+                    "profileId": { "type": "string" },
+                    "url": { "type": "string" }
+                },
+                "additionalProperties": false
+            }),
+        ),
+        (
+            "manager_environment_diagnose",
+            "Open the built-in fingerprint check in one ready environment.",
+            "environment.diagnose",
+            json!({
+                "type": "object",
+                "properties": { "envId": { "type": "string" } },
+                "required": ["envId"],
+                "additionalProperties": false
+            }),
+        ),
+    ]
+    .into_iter()
+    .map(|(name, description, action, parameters)| AiBoundTool {
+        definition: ai_agent::AiToolDefinition {
+            name: name.into(),
+            description: description.into(),
+            parameters,
+        },
+        target: AiBoundToolTarget::ManagerAction(action),
+    })
+    .collect()
+}
+
+fn agent_plan_from_turn(
+    turn: ai_agent::AiModelTurn,
+    tools: &[AiBoundTool],
+) -> Result<AiAgentPlan, ManagerError> {
+    if turn.tool_calls.len() > 1 {
+        return Err(ManagerError::InvalidAgentPlan(
+            "one Agent plan can call only one model tool".into(),
+        ));
+    }
+    let Some(call) = turn.tool_calls.into_iter().next() else {
+        return Ok(AiAgentPlan {
+            summary: turn
+                .content
+                .unwrap_or_else(|| "No action is required.".into()),
+            action: "none".into(),
+            env_id: None,
+            expected_state: None,
+            idempotency_key: String::new(),
+            arguments: json!({}),
+        });
+    };
+    let binding = tools
+        .iter()
+        .find(|tool| tool.definition.name == call.name)
+        .ok_or_else(|| {
+            ManagerError::InvalidAgentPlan(format!(
+                "model selected an unbound function {}",
+                call.name
+            ))
+        })?;
+    let summary = turn
+        .content
+        .unwrap_or_else(|| binding.definition.description.clone());
+    let (action, env_id, arguments) = match &binding.target {
+        AiBoundToolTarget::ManagerAction(action) => {
+            let mut arguments = call.arguments;
+            let env_id = arguments
+                .get("envId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string);
+            if let Some(object) = arguments.as_object_mut() {
+                object.remove("envId");
+            }
+            ((*action).to_string(), env_id, arguments)
+        }
+        AiBoundToolTarget::Mcp { env_id, tool, .. } => (
+            "mcp.call".into(),
+            env_id.clone(),
+            json!({ "tool": tool, "arguments": call.arguments }),
+        ),
+    };
+    Ok(AiAgentPlan {
+        summary,
+        action,
+        env_id,
+        expected_state: None,
+        idempotency_key: String::new(),
+        arguments,
+    })
+}
+
+fn bounded_ai_tool_result(value: &serde_json::Value) -> String {
+    let serialized = serde_json::to_string(value).unwrap_or_else(|_| "null".into());
+    if serialized.len() <= MAX_AI_TOOL_RESULT_BYTES {
+        return serialized;
+    }
+    let mut preview_end = (MAX_AI_TOOL_RESULT_BYTES / 4).min(serialized.len());
+    while !serialized.is_char_boundary(preview_end) {
+        preview_end -= 1;
+    }
+    let result = serde_json::to_string(&json!({
+        "truncated": true,
+        "originalBytes": serialized.len(),
+        "preview": &serialized[..preview_end],
+    }))
+    .unwrap_or_else(|_| "{\"truncated\":true}".into());
+    if result.len() <= MAX_AI_TOOL_RESULT_BYTES {
+        result
+    } else {
+        format!(
+            "{{\"truncated\":true,\"originalBytes\":{}}}",
+            serialized.len()
+        )
+    }
+}
+
+fn sdk_self_check_blocking_count(environments: &[EnvironmentRecord]) -> usize {
+    environments
+        .iter()
+        .filter(|environment| environment.status != "stopped")
+        .count()
+}
+
 fn resolve_agent_target(
     prompt: &str,
     selected_env_id: Option<&str>,
@@ -4259,6 +4677,7 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::RuntimeNotRunning => "RUNTIME_NOT_RUNNING",
         ManagerError::ApiKeyMissing => "API_KEY_MISSING",
         ManagerError::ApiKeyInvalid => "API_KEY_INVALID",
+        ManagerError::SdkSelfCheckBusy(_) => "SDK_SELF_CHECK_BUSY",
         ManagerError::ApiKeyManagedExternally => "API_KEY_MANAGED_EXTERNALLY",
         ManagerError::ApiKeyCorrupt => "API_KEY_CORRUPT",
         ManagerError::InvalidAiProvider(_) => "AI_PROVIDER_INVALID",
@@ -5283,5 +5702,105 @@ mod tests {
             .await
             .expect_err("inactive port must fail");
         assert!(matches!(error, ManagerError::McpNotConfigured));
+    }
+
+    #[test]
+    fn native_agent_tool_call_becomes_a_manager_plan() {
+        let tools = manager_agent_tools();
+        let plan = agent_plan_from_turn(
+            ai_agent::AiModelTurn {
+                content: Some("启动指定环境".into()),
+                tool_calls: vec![ai_agent::AiToolCall {
+                    id: "call-1".into(),
+                    name: "manager_environment_start".into(),
+                    arguments: json!({ "envId": "2044366881367789568" }),
+                }],
+            },
+            &tools,
+        )
+        .expect("plan");
+        assert_eq!(plan.action, "environment.start");
+        assert_eq!(plan.env_id.as_deref(), Some("2044366881367789568"));
+        assert_eq!(plan.arguments, json!({}));
+    }
+
+    #[test]
+    fn native_mcp_tool_call_keeps_the_bound_environment() {
+        let tools = vec![AiBoundTool {
+            definition: ai_agent::AiToolDefinition {
+                name: "mcp_env_tabs".into(),
+                description: "List tabs".into(),
+                parameters: json!({ "type": "object", "properties": {} }),
+            },
+            target: AiBoundToolTarget::Mcp {
+                scope: McpToolScope::Environment,
+                env_id: Some("env-selected".into()),
+                tool: "env.tabs".into(),
+                read_only: true,
+            },
+        }];
+        let plan = agent_plan_from_turn(
+            ai_agent::AiModelTurn {
+                content: None,
+                tool_calls: vec![ai_agent::AiToolCall {
+                    id: "call-2".into(),
+                    name: "mcp_env_tabs".into(),
+                    arguments: json!({ "action": "list", "envId": "spoofed" }),
+                }],
+            },
+            &tools,
+        )
+        .expect("plan");
+        assert_eq!(plan.action, "mcp.call");
+        assert_eq!(plan.env_id.as_deref(), Some("env-selected"));
+        assert_eq!(plan.arguments["tool"], "env.tabs");
+    }
+
+    #[test]
+    fn environment_model_schema_hides_manager_injected_env_id() {
+        let schema = ai_tool_parameters(
+            json!({
+                "type": "object",
+                "properties": {
+                    "envId": { "type": "string" },
+                    "action": { "type": "string" }
+                },
+                "required": ["envId", "action"]
+            }),
+            true,
+        );
+        assert!(schema["properties"].get("envId").is_none());
+        assert_eq!(schema["required"], json!(["action"]));
+    }
+
+    #[test]
+    fn chat_gets_only_environment_reads_while_agent_can_use_mutations() {
+        assert!(ai_environment_tool_is_read_only("env.tabs"));
+        assert!(ai_environment_tool_is_read_only("env.snapshot"));
+        assert!(!ai_environment_tool_is_read_only("env.navigate"));
+        assert!(!ai_environment_tool_is_read_only("env.act"));
+        assert!(!ai_environment_tool_is_read_only("env.create"));
+        assert!(!ai_environment_tool_is_read_only("tabs"));
+    }
+
+    #[test]
+    fn sdk_self_check_is_blocked_by_any_non_stopped_environment() {
+        assert_eq!(
+            sdk_self_check_blocking_count(&[
+                environment_record("stopped", "stopped"),
+                environment_record("ready", "ready"),
+                environment_record("unknown", "unknown"),
+            ]),
+            2
+        );
+    }
+
+    #[test]
+    fn ai_tool_result_limit_is_measured_in_utf8_bytes() {
+        let result = bounded_ai_tool_result(&json!({
+            "payload": "中\\\"".repeat(MAX_AI_TOOL_RESULT_BYTES),
+        }));
+        assert!(result.len() <= MAX_AI_TOOL_RESULT_BYTES);
+        assert!(result.contains("\"truncated\":true"));
     }
 }

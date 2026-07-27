@@ -14,6 +14,23 @@ test("browser first run offers a working workspace preview entry", async ({ page
   expect(issues).toEqual([]);
 });
 
+test("overview prioritizes runtime activity and keeps SDK self-check in diagnostics", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  await page.goto(`/?${scenario}`);
+  await expectHealthyDashboard(page, "总览");
+  await expect(page.getByRole("button", { name: "SDK Smoke" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "运行活动" })).toBeVisible();
+  await expect(page.getByText("2 个运行中", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await expectHealthyDashboard(page, "设置");
+  const selfCheck = page.getByRole("button", { name: "运行 SDK 自检" });
+  await expect(selfCheck).toBeVisible();
+  await expect(selfCheck).toBeDisabled();
+  await expect(page.getByText("需先停止全部环境并完成状态对账", { exact: true })).toBeVisible();
+  expect(issues).toEqual([]);
+});
+
 test("same-name environments remain independently searchable and selectable", async ({ page }) => {
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=environments`);

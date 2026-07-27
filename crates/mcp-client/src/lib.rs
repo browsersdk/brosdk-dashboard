@@ -46,6 +46,7 @@ pub enum McpClientError {
 pub struct McpToolDefinition {
     pub name: String,
     pub description: Option<String>,
+    pub input_schema: Value,
     pub read_only_hint: Option<bool>,
     pub destructive_hint: Option<bool>,
 }
@@ -409,6 +410,11 @@ fn advertised_tools(result: &Value) -> Vec<McpToolDefinition> {
                     .get("description")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                input_schema: tool
+                    .get("inputSchema")
+                    .filter(|value| value.is_object())
+                    .cloned()
+                    .unwrap_or_else(|| json!({ "type": "object", "properties": {} })),
                 read_only_hint: annotations
                     .and_then(|value| value.get("readOnlyHint"))
                     .and_then(Value::as_bool),
@@ -469,14 +475,24 @@ mod tests {
             "tools": [{
                 "name": "tabs",
                 "description": "Manage tabs",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": { "action": { "type": "string" } },
+                    "required": ["action"]
+                },
                 "annotations": { "readOnlyHint": false, "destructiveHint": true }
             }, { "name": "snapshot" }]
         }));
         assert_eq!(tools[0].name, "tabs");
         assert_eq!(tools[0].description.as_deref(), Some("Manage tabs"));
+        assert_eq!(tools[0].input_schema["required"], json!(["action"]));
         assert_eq!(tools[0].read_only_hint, Some(false));
         assert_eq!(tools[0].destructive_hint, Some(true));
         assert_eq!(tools[1].name, "snapshot");
+        assert_eq!(
+            tools[1].input_schema,
+            json!({ "type": "object", "properties": {} })
+        );
     }
 
     #[tokio::test]

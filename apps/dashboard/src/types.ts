@@ -192,6 +192,7 @@ export interface McpToolCallExecution {
 export interface McpToolSummary {
   name: string;
   description: string | null;
+  inputSchema?: unknown;
   readOnlyHint: boolean | null;
   destructiveHint: boolean | null;
 }

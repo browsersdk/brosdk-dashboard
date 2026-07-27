@@ -17,6 +17,9 @@ Add-Type -AssemblyName UIAutomationClient
 $initializeLabel = -join ([char[]](0x521D, 0x59CB, 0x5316))
 $environmentLabel = -join ([char[]](0x73AF, 0x5883))
 $operationsLabel = -join ([char[]](0x64CD, 0x4F5C))
+$settingsLabel = -join ([char[]](0x8BBE, 0x7F6E))
+$runSdkSelfCheckLabel = (-join ([char[]](0x8FD0, 0x884C))) + " SDK " + (-join ([char[]](0x81EA, 0x68C0)))
+$recentSelfCheckLabel = -join ([char[]](0x6700, 0x8FD1, 0x81EA, 0x68C0))
 $reconcileLabel = -join ([char[]](0x5BF9, 0x8D26))
 $aiLabel = "AI " + (-join ([char[]](0x52A9, 0x624B)))
 $aiProviderSettingsLabel = "AI Provider " + (-join ([char[]](0x8BBE, 0x7F6E)))
@@ -56,6 +59,7 @@ $operationIdentityObserved = $false
 $aiEnvironmentContextObserved = $false
 $cdpEndpointObserved = $false
 $aiProviderSettingsObserved = $false
+$sdkSelfCheckObserved = $false
 $agentPlanObserved = $false
 $agentApprovalInvoked = $false
 $agentOperationObserved = $false
@@ -257,6 +261,25 @@ try {
         $initializedThroughUi = $true
     }
 
+    $settingsButton = Wait-ForDashboardValue {
+        Find-DashboardButton $window $settingsLabel -Enabled
+    } "settings navigation before SDK self-check"
+    Invoke-DashboardButton $settingsButton
+    $selfCheckButton = Wait-ForDashboardValue {
+        Find-DashboardButton $window $runSdkSelfCheckLabel -Enabled
+    } "enabled SDK self-check button"
+    Invoke-DashboardButton $selfCheckButton
+    Wait-ForDashboardValue {
+        $elements = Get-DashboardElements $window
+        $report = @($elements) | Where-Object {
+            $_.Current.Name -eq $recentSelfCheckLabel
+        } | Select-Object -First 1
+        $enabledButton = Find-DashboardButton $window $runSdkSelfCheckLabel -Enabled
+        if ($report -and $enabledButton) { return $true }
+        return $false
+    } "completed SDK self-check" | Out-Null
+    $sdkSelfCheckObserved = $true
+
     $environmentButton = Wait-ForDashboardValue {
         Find-DashboardButton $window $environmentLabel -Enabled
     } "environment navigation"
@@ -444,6 +467,7 @@ try {
         aiEnvironmentContextObserved = $aiEnvironmentContextObserved
         cdpEndpointObserved = $cdpEndpointObserved
         aiProviderSettingsObserved = $aiProviderSettingsObserved
+        sdkSelfCheckObserved = $sdkSelfCheckObserved
         agentLifecycleRequested = [bool]$AgentLifecycle
         agentPlanObserved = $agentPlanObserved
         agentApprovalInvoked = $agentApprovalInvoked

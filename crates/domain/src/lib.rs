@@ -516,7 +516,7 @@ pub struct McpPanel {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum McpToolScope {
     Global,
@@ -559,6 +559,8 @@ pub struct McpToolDiscoveryRequest {
 pub struct McpToolSummary {
     pub name: String,
     pub description: Option<String>,
+    #[serde(default)]
+    pub input_schema: Value,
     pub read_only_hint: Option<bool>,
     pub destructive_hint: Option<bool>,
 }

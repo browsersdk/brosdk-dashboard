@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-26 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/会话与关联环境、Agent 手动/自动执行、DLL 全局多环境 MCP、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复和桌面单实例已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
+[roadmap.md](roadmap.md) 中阶段 0-27 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/会话与关联环境、原生 tools 驱动的 Chat/Agent、DLL 全局多环境 MCP、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复和桌面单实例已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -109,6 +109,8 @@ brosdk-dashboard/
 
 阶段 26 GitHub 与发布入口已完成：仓库根目录新增面向使用者的 README，覆盖首次启动、核心能力、架构、安全边界、开发、测试和 Windows 打包命令；`target/`、`apps/dashboard/dist/` 和 `dist/release/` 的中间产物/交付职责已经明确。更新后的 `brosdk.dll` 与 `brosdk.h` 纳入版本管理，根目录 `doc.json`/`docs.json` 显式忽略；默认 Windows 发布重新构建并通过清单、静默安装/卸载以及便携版单实例/托盘 E2E。
 
+阶段 27 AI 原生工具与安全自检已完成：`mcp-client` 保留 DLL `inputSchema`，Chat 只向模型绑定全局/单环境读取工具并完成一轮受限回填，Agent 绑定 Manager 动作和所选 ready 环境的动态 MCP 目录；模型不再通过提示词 JSON 假装调用工具。Manager 继续覆盖 envId、校验状态和持久化幂等。Overview 的 SDK Smoke 已移到设置页“安全与诊断”，仅在全部环境 stopped 时可运行，并使用受保护 API Key 停止、一次性自检、重启 Runtime Host。根 README 收录三张可复现的 1440x900 产品截图。最终 51 项 Dashboard、110 项 Rust、18 项 Playwright、真实 DeepSeek tool round、真实 Tauri 自检/Agent、全局 MCP 18/18 生命周期和 Windows NSIS/便携发布校验通过，环境恢复 stopped。
+
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 
 Manager/Runtime Host 创建链路、Dashboard 双字段交互和真实创建/删除验收均已完成：FFI 已加载 `sdk_env_create`/`sdk_env_destroy`，Runtime Host 继续统一脱敏，Manager 校验本地内核、后端业务 `code=200`、创建结果 `data.envId`，并把结果写入本地镜像和 operation。环境页的创建带只显示代理与内核版本，默认本机网络并预选最新本地内核；无可用内核时跳转内核页。`getUserSig` 请求固定使用 `role=user`。真实 DLL 验收使用 Chrome 134 和本机网络完成创建、镜像确认、删除及 `env_page` 对账，测试环境已清理。
@@ -125,6 +127,6 @@ Dashboard MCP 页面使用“全局/单环境”授权视图、ready 环境选�
 
 阶段 8 已完成平台路径、UDS、系统 keyring 和 capability 边界；Windows、Linux x64 和 macOS x64 的核心平台 crates 均通过编译检查。仓库当前仍只携带 Windows x64 SDK 动态库，因此其他平台会明确显示 unavailable，直到对应库加入 `libs/<platform>_<arch>`。
 
-阶段 9 建立的 DeepSeek/OpenAI 兼容 AI 与 DLL MCP adapter 已在阶段 20 扩展：Chat 仍为只读；Agent 默认逐次批准，也可按会话显式选择自动执行，两种模式都必须通过 Manager 的 action、状态和持久化幂等校验。MCP 对 ready 环境使用运行时工具目录，所有发现和调用都有 operation。
+阶段 9 建立的 DeepSeek/OpenAI 兼容 AI 与 DLL MCP adapter 已在阶段 27 改为原生 `tools/tool_calls`：Chat 仍为只读；Agent 默认逐次批准，也可按会话显式选择自动执行，两种模式都必须通过 Manager 的 action、状态和持久化幂等校验。MCP 对 ready 环境使用运行时工具目录，所有发现和调用都有 operation。
 
 2026-07-26 最终验收已完成：DeepSeek smoke、`getUserSig(role=user) -> init -> env_page`、runtime/Manager smoke、环境 ready、页面级 CDP、DLL MCP `tabs(list)`、手动关闭对账、workspace 测试/Clippy、Dashboard production build，以及 1440x900 与 390x844 的 AI/MCP 页面交互和无横向溢出检查均通过。测试凭据未写入仓库。
