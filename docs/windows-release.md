@@ -21,6 +21,13 @@ npm run release:windows
 npm run release:verify
 ```
 
+若正在运行 `dist/release/BroSDK-Dashboard-portable`，Windows 会锁定其中的 DLL。不要强制结束用户进程，可改为在仓库 `dist/` 下的独立目录构建和验证：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-release.ps1 -ReleaseDirectory dist/release-next
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-release.ps1 -ReleaseRoot dist/release-next
+```
+
 产物统一写入 `dist/release`：
 
 ```text

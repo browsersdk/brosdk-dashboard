@@ -1,12 +1,24 @@
 param(
   [switch]$PortableOnly,
   [switch]$Msi,
-  [string]$TargetTriple = "x86_64-pc-windows-msvc"
+  [string]$TargetTriple = "x86_64-pc-windows-msvc",
+  [string]$ReleaseDirectory = "dist\release"
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$releaseRoot = Join-Path $root "dist\release"
+$distRoot = [IO.Path]::GetFullPath((Join-Path $root "dist"))
+$releaseRoot = if ([IO.Path]::IsPathRooted($ReleaseDirectory)) {
+  [IO.Path]::GetFullPath($ReleaseDirectory)
+}
+else {
+  [IO.Path]::GetFullPath((Join-Path $root $ReleaseDirectory))
+}
+$distPrefix = $distRoot.TrimEnd('\') + '\'
+if ($releaseRoot -ne $distRoot -and
+    -not $releaseRoot.StartsWith($distPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+  throw "ReleaseDirectory must stay within the repository dist directory: $releaseRoot"
+}
 $portableRoot = Join-Path $releaseRoot "BroSDK-Dashboard-portable"
 $sidecarScript = Join-Path $PSScriptRoot "prepare-windows-sidecar.ps1"
 $toolsScript = Join-Path $PSScriptRoot "prepare-tauri-windows-tools.ps1"
