@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { assertEnvironmentIdentity } from "./environmentIdentity";
 import type {
   AiAgentExecution,
+  AiAgentRun,
   AiAgentPlan,
   AiChatResponse,
   AiConversationTurn,
@@ -218,6 +219,16 @@ export async function aiExecuteAgent(
 ): Promise<AiAgentExecution> {
   return invoke<AiAgentExecution>("manager_ai_execute_agent", {
     request: { plan, approved: true, automatic },
+  });
+}
+
+export async function aiRunAgent(
+  prompt: string,
+  contextEnvId: string | null,
+  history: AiConversationTurn[] = [],
+): Promise<AiAgentRun> {
+  return invoke<AiAgentRun>("manager_ai_run_agent", {
+    request: { prompt, contextEnvId, history, approved: true },
   });
 }
 

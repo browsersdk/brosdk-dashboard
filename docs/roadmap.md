@@ -32,6 +32,7 @@
 | 25. 新版全局多环境 MCP | P0 | 已完成 | 单一全局 endpoint、`env.* + arguments.envId` 与动态单环境目录 |
 | 26. GitHub 首页与发布产物收口 | P1 | 已完成 | README、DLL/头文件、构建命令和 Windows 发布产物闭环 |
 | 27. AI 原生工具与安全自检 | P0 | 已完成 | Chat/Agent 按模式绑定原生 tools，自检迁入空闲期诊断，README 产品截图 |
+| 28. AI 会话作用域与自动 Agent 闭环 | P0 | 已完成 | 创建时固定全局/单环境目录，原生多轮工具完成重启，AI 输入区重排 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -722,14 +723,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 - 会话与关联环境分离；支持本地历史、新建、切换、清空、删除和页面重载恢复。
 - Chat/Agent 携带有界历史，Manager 拒绝非法角色、空消息和超限输入。
-- 用户文本明确包含一个已同步 envId 时优先绑定该环境；多 envId 单计划 fail closed。
+- 全局会话的用户文本明确包含一个已同步 envId 时定位该环境；单环境会话在阶段 28 收紧为不可越过创建时绑定，多个 envId 的单计划 fail closed。
 - Manager 在计划返回 UI 前写入真实 `expectedState` 和 UUID 幂等键，批准时再次校验状态。
 - 显示 Tauri 返回的具体错误，不用“Agent 执行失败”覆盖真实原因。
 - 对照服务端 browser API、DLL C API、全局/单环境 MCP 建立产品覆盖矩阵并纠正 capability 误报。
 
 验收：
 
-- 精确复现 `启动环境 2044366881367789568`：即使旧关联环境为另一个 ready 环境，计划仍绑定目标 envId 和其当前 stopped 状态。
+- 精确复现全局会话中的 `启动环境 2044366881367789568`：计划绑定目标 envId 和其当前 stopped 状态。
 - 批准后必须创建 `environment.start` operation；DLL accepted 后继续等待 callback/browser info 才能报告 ready。
 - 第二轮请求带上第一轮 user/assistant 历史；重载后历史存在，清空和删除立即生效。
 - 未绑定的 cookie/security callbacks 与 `sdk_token_update` 不再出现在 capability。
@@ -738,7 +739,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 实现结果（2026-07-26）：
 
 - AI 页面已将会话历史与关联环境拆开；会话在本机支持新建、切换、清空、删除和重载恢复，Chat/Agent 第二轮请求携带有界历史。
-- Manager 已覆盖精确指令 `启动环境 2044366881367789568`：文本 envId 覆盖旧选择，计划状态从最新镜像写为 `stopped`，幂等键由 Manager 生成；多个已知 envId 的单动作请求 fail closed。
+- Manager 已覆盖全局会话精确指令 `启动环境 2044366881367789568`：计划状态从最新镜像写为 `stopped`，幂等键由 Manager 生成；阶段 28 后单环境会话不能用文本切换目标。
 - Windows Tauri Agent E2E 真实点击生成计划和批准按钮，观察到 operation、目标 ready、`browser-open-success` 和最终 stopped；当前 DLL 继续报告端口 0，未伪造 CDP TCP 地址。
 - Dashboard 46 项、Rust workspace 92 项、Playwright 12 项和 production build 通过；测试结束后无桌面测试进程或 `sdk-host` 残留。
 
@@ -759,7 +760,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 - `mcp-client` 单元测试确认无 envId 为全局 URL，有 envId 时查询参数正确编码，并完成完整 Streamable HTTP session。
 - 真实 ready 环境的 `allowedTools` 与 `advertisedTools` 数量一致，当前 DLL 每环境实测至少 18 个；未广告工具仍由 client fail closed。
-- Agent 在错误关联环境下仍根据文本精确 envId 启停目标；手动与自动模式分别覆盖，失败计划不可复用同一批准按钮。
+- 全局 Agent 根据文本精确 envId 启停目标；单环境 Agent 只操作绑定 envId。手动与自动模式分别覆盖，失败计划不可复用同一批准按钮。
 - Agent 自己规划并执行 `mcp.call -> env.tabs(list)`，operation 绑定正确 envId。
 - 两个临时环境最终 stopped、本地清理、服务端删除，测试前后账号环境总数一致。
 - Dashboard 组件、桌面/移动 Playwright、Rust、production build 和敏感信息扫描通过。
@@ -769,7 +770,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - MCP transport 在该阶段通过查询别名完成 discovery 和 call；阶段 25 已改为只连接全局 endpoint。全局保持 9 个读取策略，ready 单环境目录完全跟随 `tools/list`，当前发现 18/18。
 - MCP 控制台显示动态目录，已知读取工具用表单，其余工具用 64 KiB JSON 参数区；Agent 支持 `mcp.call`，旧 `mcp.read` 保留严格读取兼容。
 - 每个 AI 会话独立持久化执行方式，自动模式直接执行新计划；首次尝试后计划按钮锁定，防止状态不确定时重放幂等键。
-- 真实 E2E 创建两个临时环境，Agent 手动/自动启停、显式 envId 覆盖错误上下文、Agent MCP tabs 调用、指纹详情和 2/2 清理均通过，环境数 1 -> 1。
+- 真实 E2E 创建两个临时环境，全局 Agent 按显式 envId 启停、单环境 Agent 调用绑定环境 MCP tabs、指纹详情和 2/2 清理均通过，环境数 1 -> 1。
 - Dashboard 49 项组件测试、Playwright 14 项、Rust workspace 93 项、check 与 production build 通过；桌面和 390x844 截图无重叠或横向溢出。
 
 ## 24. 阶段 21：Windows Runtime Host 后台化
@@ -847,9 +848,23 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 实现结果（2026-07-27）：
 
-- `mcp-client -> domain -> manager` 完整保留 `tools/list.inputSchema`。Chat 只绑定全局读取和所选 ready 环境的读取白名单；Agent 绑定 Manager 生命周期/诊断动作及该环境当次广告的全部页面工具。
+- `mcp-client -> domain -> manager` 完整保留 `tools/list.inputSchema`。阶段 28 后 Chat 按会话只绑定全局读取或所选 ready 环境的读取白名单；Agent 绑定 Manager 生命周期/诊断动作及同一作用域的工具目录。
 - DeepSeek/OpenAI-compatible 请求使用标准 `tools/tool_calls`。Chat 最多执行 4 个只读调用和一轮 `role=tool` 回填；Agent 只接受一个函数选择，再转换为既有计划、批准/自动执行和 operation 流程。
 - 模型 schema 不暴露 `envId/env_id`；Manager 始终用关联环境覆盖注入，并继续限制参数、响应大小、敏感字段、状态前置条件和幂等键。
 - Overview 不再提供会影响运行环境的 Smoke。设置页“安全与诊断”只在全部环境 stopped 时启用 SDK 自检，并从 Manager 安全凭据启动一次性 Host，完成后恢复长期 Runtime Host。
 - `npm run docs:screenshots` 以只读预览数据生成总览、环境工作台和 AI Agent 三张 1440x900 README 图片，同时检查浏览器错误与横向溢出。
 - 最终验证通过 51 项 Dashboard 测试、110 项 Rust workspace 测试、18 项桌面/移动 Playwright、check/Clippy、production build 和 Windows NSIS/便携发布校验。真实 DeepSeek 完成原生 tool round；真实 Tauri 自检、Agent 启停和底层全局 MCP 18/18 工具生命周期均通过，目标环境最终 stopped。
+
+## 31. 阶段 28：AI 会话作用域与自动 Agent 闭环
+
+目标：把全局/单环境 MCP 选择提升为不可变会话属性，并让需要多个动作的 Agent 请求通过 Provider 原生工具回合完整执行。
+
+实现结果（2026-07-27）：
+
+- 新会话弹窗显式选择“全局/单环境”和 envId；主界面只读显示作用域，删除最后一个会话后创建全局会话，不存在静默改绑路径。
+- DLL 仍只建立一个全局 MCP endpoint。Manager 按会话互斥生成工具目录：全局只发现全局管理读取，单环境只发现绑定 ready 环境的页面工具，并排除全局环境管理工具。
+- 全局 Agent 可按提示词中的精确 envId 操作不同环境；单环境 Agent 的绑定 envId 优先且不可覆盖，提示词出现其它已知 envId 时返回 `INVALID_AGENT_PLAN`。
+- 自动 Agent 使用 Provider 原生 `tool_calls -> role=tool` 循环，最多 4 轮；生命周期工具等待 DLL callback/BrowserInfo 确认终态后才进入下一轮，因此重启严格执行 stop 后 start。
+- AI composer 改为常见的居中多行输入框和右下发送图标；Enter 发送、Shift+Enter 换行，桌面和 390x844 移动视口均无溢出。
+- 真实 DeepSeek E2E 分别验证全局 Chat、单环境 Chat、Chat mutation guard 和自动重启 stop/start/ready，2 个工具回合完成，环境恢复初始状态。
+- 真实 Windows Tauri E2E 验证首次初始化、SDK 自检、单环境会话 envId 选择、CDP/内部通道、全局 Chat Enter 发送、停止和操作中心；Dashboard 52 项、Rust workspace 114 项、Playwright 18 项、check/Clippy、production build、截图与 Windows release 构建验证全部通过。

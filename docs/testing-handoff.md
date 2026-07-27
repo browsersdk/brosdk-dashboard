@@ -24,7 +24,7 @@ npm run e2e:credential
 npm run e2e:dashboard:desktop
 ```
 
-该 runner 驱动 Windows Tauri 窗口中的设置与环境控件；初始化后先在全部环境 stopped 时执行一次 SDK 自检并要求 `sdkSelfCheckObserved=true`，再启动目标环境。它必须等待目标环境所在表格行明确显示“运行中”，不能把启动中已经可用的停止按钮误判为 ready；随后验证 AI 关联环境、CDP 地址或 DLL 内部控制通道、AI Provider 设置入口、停止状态和操作中心身份。测试结束前会把目标环境恢复为 stopped，隔离启动时还会关闭进程并清理临时数据目录。可用 `-AgentLifecycle -TargetEnvironmentId <envId>` 改为从 AI Agent 生成计划和批准启动。
+该 runner 驱动 Windows Tauri 窗口中的设置与环境控件；初始化后先在全部环境 stopped 时执行一次 SDK 自检并要求 `sdkSelfCheckObserved=true`，再启动目标环境。它必须等待目标环境所在表格行明确显示“运行中”，不能把启动中已经可用的停止按钮误判为 ready；随后新建绑定目标 envId 的单环境 AI 会话，验证 CDP 地址或 DLL 内部控制通道、AI Provider 设置入口，再新建全局 Chat 验证 Enter 发送。测试结束前会把目标环境恢复为 stopped，隔离启动时还会关闭进程并清理临时数据目录。可用 `-AgentLifecycle -TargetEnvironmentId <envId>` 改为从单环境 Agent 生成计划和批准启动。
 
 可选测试变量：
 
@@ -245,7 +245,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-27 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-28 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -385,27 +385,27 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 
 ## 22. 阶段 19 AI 会话与 Agent 执行验收
 
-- AI 页面必须同时存在“会话”和“关联环境”，不得继续把环境选择器命名为会话上下文。
+- AI 页面必须同时存在“会话”和只读“会话作用域”；阶段 28 后关联环境只能在新建会话弹窗中选择。
 - 会话支持新建、切换、清空、删除和重载恢复；本地最多 20 个会话、每个 80 条，发送历史最多 40 条。
 - Manager 必须限制 history 为 user/assistant、最多 40 条、单条 16 KiB、总计 128 KiB。
-- 计划生成遇到用户文本中的单个已知 envId 时必须覆盖旧关联环境；多个已知 envId 必须拒绝为单动作计划。
+- 全局会话遇到用户文本中的单个已知 envId 时定位该环境；单环境会话不得覆盖绑定 envId，多个已知 envId 必须拒绝为单动作计划。
 - `expectedState` 和 `idempotencyKey` 由 Manager 基于最新环境镜像生成，不能信任模型值；批准时仍做并发状态复验。
 - 真实 Agent E2E 使用目标环境当前 stopped 状态生成计划，批准后看到 environment.start operation，等待 ready，再恢复 stopped。
 - capability 只列实际 FFI 绑定；Cookie/security callback 与 token update 在接通前不得报告。
 
-2026-07-26 阶段 19 结果：Dashboard 46 项、Rust workspace 92 项和 Playwright 桌面/移动 12 项通过，production build 通过。真实 Tauri 使用 `-AgentLifecycle -TargetEnvironmentId 2044366881367789568` 执行精确中文启动指令；即使会话旧关联环境不同，计划仍显示目标 envId 的 `stopped` 前置状态，批准后生成 operation，DLL callback 把目标推进到 ready，最后恢复 stopped。报告的 `agentPlanObserved/agentApprovalInvoked/agentOperationObserved/readyObservedInDashboard/stoppedObservedInDashboard` 均为 true；当前 DLL 端口仍为 0，`cdpEndpointObserved=false`。测试窗口与 `sdk-host` 已关闭，原 1420 开发服务未被测试停止。
+2026-07-26 阶段 19 结果：Dashboard 46 项、Rust workspace 92 项和 Playwright 桌面/移动 12 项通过，production build 通过。真实 Tauri 使用 `-AgentLifecycle -TargetEnvironmentId 2044366881367789568` 执行精确中文启动指令并恢复 stopped。当时允许文本 envId 覆盖旧关联环境；阶段 28 已将该行为限定为全局会话，单环境会话固定绑定。当前 DLL 端口仍为 0，`cdpEndpointObserved=false`。
 
 ## 23. 阶段 20 多环境 Agent 与完整单环境 MCP 验收
 
 - `mcp-client` 的统一入口接收 `Option<envId>`；阶段 25 后两种作用域都请求 `/sdk/v1/mcp`，环境调用使用 `env.*` 并在 JSON arguments 中注入 envId。
 - 全局仍只允许 9 个管理读取。ready 单环境的 `allowedTools` 必须等于 DLL 当次广告目录；不能把 17、18 或 19 写成产品常量。
 - 任意单环境工具参数必须是 JSON object，最大 64 KiB、最多 16 层、单字符串最多 16 KiB；常用读取继续有结构化表单，其余工具使用高级 JSON 参数区。
-- Agent 支持 `mcp.call`。显式 envId 必须覆盖错误的关联环境，Manager 写入最新 `expectedState`；执行时仍走 reservation、operation 和 DLL `tools/list` 校验。
+- Agent 支持 `mcp.call`。全局会话使用显式 envId，单环境会话固定使用绑定 envId；Manager 写入最新 `expectedState`，执行时仍走 reservation、operation 和 DLL `tools/list` 校验。
 - 每个 AI 会话独立保存“每次批准/自动执行”，默认每次批准。自动执行只省略 UI 的逐次点击，不跳过 Manager 状态、action、幂等和 ready 门禁。
 - 执行尝试后不得再次显示同一计划的批准按钮；失败视为状态可能不确定，必须重新生成计划。
 - `npm run e2e:multi-environment` 从当前用户安全存储复制 SDK/AI 加密 secret 到唯一临时数据目录，不把明文放入命令行；创建两个临时环境，结束时停止、清理、删除并核对账号环境总数恢复。
 
-2026-07-26 阶段 20 结果：真实双环境 E2E 覆盖 Agent 手动和自动启停、错误关联环境下的精确 envId 解析、两个环境均 ready/stopped、每环境最少 18 个工具、Agent 自动 MCP tabs 调用、远端指纹刷新和补偿清理。该阶段的查询参数路由已由阶段 25 的全局 `env.tabs + arguments.envId` 替代。临时环境清理 2/2，账号环境数 1 -> 1，无 `sdk-host` 残留。Dashboard 49 项组件测试、Playwright 桌面/移动 14 项、Rust workspace 93 项和 production build 通过。
+2026-07-26 阶段 20 结果：真实双环境 E2E 覆盖 Agent 手动和自动启停、两个环境均 ready/stopped、每环境最少 18 个工具、Agent MCP tabs 调用、远端指纹刷新和补偿清理。该阶段允许文本覆盖旧关联环境的行为已在阶段 28 收紧为“仅全局会话可按显式 envId 定位，单环境会话固定绑定”。查询参数路由也已由阶段 25 的全局 `env.tabs + arguments.envId` 替代。临时环境清理 2/2，账号环境数 1 -> 1，无 `sdk-host` 残留。
 
 ## 24. 阶段 21 Windows Runtime Host 后台化验收
 
@@ -462,3 +462,13 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - `npm run docs:screenshots` 必须生成三张 README PNG，并对每个页面检查控制台 warning/error 和横向溢出。
 
 2026-07-27 阶段 27 结果：DeepSeek `deepseek-v4-flash` 完成标准 `tools -> tool_calls -> role=tool` 回合；真实 Tauri 报告 `sdkSelfCheckObserved/agentPlanObserved/agentApprovalInvoked/agentOperationObserved/readyObservedInDashboard/stoppedObservedInDashboard=true`。底层环境 E2E 经全局 endpoint 发现并放行 18/18 个单环境工具，`env.tabs/env.read`、启动进度、页面诊断和指纹检查通过，环境最终 stopped。Dashboard 51 项、Rust workspace 110 项、Playwright 桌面/移动 18 项、check、Clippy、production build、三张 README 截图和 Windows NSIS/便携发布校验全部通过；截图和报告不含真实 envId、API Key、userSig 或 MCP 响应正文。
+
+## 30. 阶段 28 AI 会话作用域与自动 Agent 验收
+
+- 新建会话必须显式选择全局或单环境；创建后主页面不得存在可编辑关联环境控件，重载和切换会话必须保持原作用域。
+- 全局会话的模型 tools 只能来自全局 discovery；单环境会话只能来自绑定环境 discovery，不能混入 `env.list/resolve/get/create/update/destroy`。
+- 单环境 Agent 文本指定其它 envId 必须 fail closed；全局 Agent 可指定一个已知 envId，多个目标仍拒绝。
+- `npm run e2e:ai-assistant` 使用真实 SDK/AI 凭据，依次验证全局 Chat、单环境 Chat、Chat mutation guard 和自动 Agent 重启；结束必须恢复目标环境初始状态。
+- Dashboard 单元测试验证 Enter 发送、Shift+Enter 换行；Playwright 在 1440x900 与 390x844 验证会话弹窗、不可变作用域、输入区和发送按钮无溢出。
+
+2026-07-27 阶段 28 结果：真实 DeepSeek 报告 `globalChatReplyVerified/environmentChatReplyVerified/chatMutationReplyVerified=true`，自动重启观察到 stop、start 和最终 ready，使用 2 个工具回合并恢复初始状态。真实 Tauri 报告初始化、自检、ready/stopped、单环境上下文、Provider 设置、全局 Chat Enter 回复和 operation 身份均通过；DLL 未暴露 TCP CDP，`cdpEndpointObserved=false`。Dashboard 52 项、Rust workspace 114 项、Playwright 18 项、check/Clippy、production build、三张 README 截图、NSIS/便携构建和 release verify 全部通过；无 Dashboard、sdk-host 或临时 UI E2E 目录残留。

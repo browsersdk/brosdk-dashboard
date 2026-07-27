@@ -73,6 +73,39 @@ pub struct AiToolResult {
     pub content: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct AiAgentSession {
+    messages: Vec<Value>,
+}
+
+impl AiAgentSession {
+    pub fn record_tool_results(
+        &mut self,
+        assistant: &AiModelTurn,
+        results: &[AiToolResult],
+    ) -> Result<(), AiError> {
+        if assistant.tool_calls.len() != results.len()
+            || assistant
+                .tool_calls
+                .iter()
+                .any(|call| !results.iter().any(|result| result.tool_call_id == call.id))
+        {
+            return Err(AiError::InvalidToolCall(
+                "tool results do not match the preceding assistant turn".into(),
+            ));
+        }
+        self.messages.push(assistant_message(assistant));
+        self.messages.extend(results.iter().map(|result| {
+            json!({
+                "role": "tool",
+                "tool_call_id": result.tool_call_id,
+                "content": result.content,
+            })
+        }));
+        Ok(())
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ChatCompletionResponse {
     choices: Vec<Choice>,
@@ -231,6 +264,30 @@ impl AiClient {
             "You plan exactly one controlled BroSDK Dashboard action. Use one bound function when an action or MCP operation is needed. Do not invent function names and do not call more than one function. If no action is required, answer normally and no function will be executed. The Manager resolves the final envId, expected state, approval, and idempotency key from current state. Never say accepted means ready.\n\nCurrent Dashboard snapshot:\n{context_text}"
         );
         self.complete_turn(base_messages(&system, prompt, history), tools, 0.0)
+            .await
+    }
+
+    pub fn start_agent_session(
+        &self,
+        prompt: &str,
+        context: &Value,
+        history: &[AiConversationMessage],
+    ) -> AiAgentSession {
+        let context_text = serde_json::to_string(context).unwrap_or_else(|_| "{}".into());
+        let system = format!(
+            "You are the BroSDK Dashboard automatic Agent. Complete the user's whole goal with the supplied native functions. Call exactly one function per turn, wait for its tool result, then reassess the goal before choosing the next function. Multi-step requests such as restart require stop, a confirmed stopped result, start, and a confirmed ready result. Never invent function names, envIds, or successful states. Stop calling tools and answer concisely in the user's language only after the requested end state is confirmed. The Manager validates scope, state, idempotency, and the maximum number of rounds.\n\nInitial Dashboard snapshot:\n{context_text}"
+        );
+        AiAgentSession {
+            messages: base_messages(&system, prompt, history),
+        }
+    }
+
+    pub async fn agent_session_turn(
+        &self,
+        session: &AiAgentSession,
+        tools: &[AiToolDefinition],
+    ) -> Result<AiModelTurn, AiError> {
+        self.complete_turn(session.messages.clone(), tools, 0.0)
             .await
     }
 
@@ -480,6 +537,37 @@ mod tests {
         })
         .expect_err("arguments must be an object");
         assert!(matches!(error, AiError::InvalidToolCall(_)));
+    }
+
+    #[test]
+    fn agent_session_records_matching_native_tool_results() {
+        let client = AiClient::from_config(
+            "secret".into(),
+            "http://127.0.0.1".into(),
+            "test-model".into(),
+        )
+        .expect("client");
+        let mut session = client.start_agent_session("restart env-1", &json!({}), &[]);
+        let turn = AiModelTurn {
+            content: None,
+            tool_calls: vec![AiToolCall {
+                id: "call-stop".into(),
+                name: "manager_environment_stop".into(),
+                arguments: json!({ "envId": "env-1" }),
+            }],
+        };
+        session
+            .record_tool_results(
+                &turn,
+                &[AiToolResult {
+                    tool_call_id: "call-stop".into(),
+                    content: r#"{"status":"stopped"}"#.into(),
+                }],
+            )
+            .expect("matching result");
+        assert_eq!(session.messages.len(), 4);
+        assert_eq!(session.messages[2]["role"], "assistant");
+        assert_eq!(session.messages[3]["role"], "tool");
     }
 
     #[tokio::test]

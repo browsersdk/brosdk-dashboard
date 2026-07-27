@@ -127,38 +127,49 @@ test("environment pickers expose envId instead of relying on names", async ({ pa
   expect(issues).toEqual([]);
 });
 
-test("AI context exposes the selected envId and local CDP with a settings entry", async ({ page }) => {
+test("AI conversations keep an immutable global or environment MCP scope", async ({ page }) => {
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=ai`);
   await expectHealthyDashboard(page, "AI 助手");
 
-  const environment = page.getByLabel("AI 关联环境", { exact: true });
+  const context = page.getByRole("region", { name: "AI 关联环境详情" });
+  const scope = page.getByLabel("AI 会话作用域");
+  await expect(scope).toContainText("全局");
+  await expect(scope).toContainText("全部环境");
+  await expect(page.getByLabel("AI 关联环境", { exact: true })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "新建会话" }).click();
+  const dialog = page.getByRole("dialog", { name: "新建 AI 会话" });
+  await expect(dialog).toContainText("作用域创建后不可修改");
+  await dialog.getByRole("button", { name: "单环境" }).click();
+  const environment = dialog.getByLabel("新会话关联环境");
   await expect(environment.locator("option")).toHaveText([
-    "全部环境",
+    "选择环境",
     "共享工作环境 · env-demo-01",
     "共享工作环境 · env-demo-02",
   ]);
-  await expect(page.getByRole("region", { name: "AI 关联环境详情" })).toContainText("TCP CDP");
-  await expect(page.getByRole("region", { name: "AI 关联环境详情" })).toContainText("ws://127.0.0.1/preview/env-demo-01");
+  await environment.selectOption("env-demo-02");
+  await dialog.getByRole("button", { name: "创建" }).click();
+  await expect(scope).toContainText("单环境");
+  await expect(scope).toContainText("env-demo-02");
+  await expect(context).toContainText("TCP CDP");
+  await expect(context).toContainText("ws://127.0.0.1/preview/env-demo-02");
+  await expect(page.getByLabel("新会话关联环境")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Agent" }).click();
   await expect(page.getByRole("button", { name: "每次批准" })).toHaveClass(/active/);
   await page.getByRole("button", { name: "自动执行" }).click();
   await expect(page.getByRole("button", { name: "自动执行" })).toHaveClass(/active/);
 
-  await environment.selectOption("env-demo-02");
-  const context = page.getByRole("region", { name: "AI 关联环境详情" });
-  await expect(context).toContainText("env-demo-02");
-  await expect(context).toContainText("TCP CDP");
-  await expect(context).toContainText("ws://127.0.0.1/preview/env-demo-02");
-
   await page.getByRole("button", { name: "新建会话" }).click();
-  await expect(page.locator(".ai-conversation-row")).toHaveCount(2);
-  await environment.selectOption("");
-  await expect(context).toContainText("全部环境");
+  await page.getByRole("dialog", { name: "新建 AI 会话" }).getByRole("button", { name: "创建" }).click();
+  await expect(page.locator(".ai-conversation-row")).toHaveCount(3);
+  await expect(scope).toContainText("全局");
+  await expect(scope).toContainText("全部环境");
   await page.reload();
-  await expect(page.getByLabel("AI 关联环境", { exact: true })).toHaveValue("");
-  await expect(page.locator(".ai-conversation-row")).toHaveCount(2);
+  await expect(page.getByLabel("AI 会话作用域")).toContainText("全局");
+  await expect(page.getByLabel("AI 会话作用域")).toContainText("全部环境");
+  await expect(page.locator(".ai-conversation-row")).toHaveCount(3);
   await expect(page.getByRole("button", { name: "自动执行" })).toHaveClass(/active/);
 
   await page.getByRole("button", { name: "AI Provider 设置" }).click();
@@ -175,7 +186,19 @@ test("Agent approval mode and MCP runtime controls fit the viewport", async ({ p
   await page.getByRole("button", { name: "Agent" }).click();
   await page.getByRole("button", { name: "自动执行" }).click();
   await expect(page.getByRole("button", { name: "自动执行" })).toHaveClass(/active/);
-  await page.screenshot({ path: testInfo.outputPath("ai-agent-automatic.png"), fullPage: true });
+  await expect(page.getByLabel("AI 请求")).toBeVisible();
+  await expect(page.getByLabel("当前会话消息")).toBeVisible();
+  const viewport = page.viewportSize();
+  const composerBox = await page.locator(".ai-composer").boundingBox();
+  const messageBox = await page.getByLabel("当前会话消息").boundingBox();
+  expect(viewport).not.toBeNull();
+  expect(composerBox).not.toBeNull();
+  expect(messageBox).not.toBeNull();
+  expect(messageBox!.height).toBeGreaterThan(80);
+  expect(composerBox!.y + composerBox!.height).toBeLessThanOrEqual(
+    viewport!.height - (viewport!.width <= 700 ? 62 : 0) + 1,
+  );
+  await page.screenshot({ path: testInfo.outputPath("ai-agent-automatic.png"), fullPage: false });
 
   await page.goto(`/?${scenario}&page=mcp`);
   await expectHealthyDashboard(page, "MCP");

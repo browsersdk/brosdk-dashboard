@@ -10,12 +10,13 @@ use std::{
 };
 
 use domain::{
-    AiAgentExecuteRequest, AiAgentExecution, AiAgentPlan, AiAgentPlanRequest, AiChatRequest,
-    AiChatResponse, AiConversationMessage, AiProviderConfigInput, AiProviderStatus,
-    ApiKeyInitializationResult, ApiKeyStatus, BrowserCommandExecution, DashboardSnapshot,
-    EnvironmentBatchAction, EnvironmentBatchInput, EnvironmentBatchResult, EnvironmentCreateInput,
-    EnvironmentMetadataUpdateInput, EnvironmentRecord, FingerprintProfile, FingerprintProfileInput,
-    HostCommand, KernelInstallInput, KernelRecord, ManagerEvent, ManagerSettings, McpPanel,
+    AiAgentExecuteRequest, AiAgentExecution, AiAgentPlan, AiAgentPlanRequest, AiAgentRun,
+    AiAgentRunRequest, AiAgentRunStep, AiChatRequest, AiChatResponse, AiConversationMessage,
+    AiProviderConfigInput, AiProviderStatus, ApiKeyInitializationResult, ApiKeyStatus,
+    BrowserCommandExecution, DashboardSnapshot, EnvironmentBatchAction, EnvironmentBatchInput,
+    EnvironmentBatchResult, EnvironmentCreateInput, EnvironmentMetadataUpdateInput,
+    EnvironmentRecord, FingerprintProfile, FingerprintProfileInput, HostCommand,
+    KernelInstallInput, KernelRecord, ManagerEvent, ManagerSettings, McpPanel,
     McpToolCallExecution, McpToolCallRequest, McpToolDiscovery, McpToolDiscoveryRequest,
     McpToolScope, McpToolSummary, OperationExecution, OperationRecord, ProxyParseResult,
     ProxyProfile, ProxyProfileInput, RuntimeHostState, RuntimeHostStatus, SdkPanel, SmokeReport,
@@ -49,6 +50,8 @@ const MAX_MCP_ARGUMENT_BYTES: usize = 64 * 1024;
 const MAX_MCP_ARGUMENT_DEPTH: usize = 16;
 const MAX_MCP_STRING_CHARS: usize = 16 * 1024;
 const MAX_AI_TOOL_RESULT_BYTES: usize = 64 * 1024;
+const MAX_AUTOMATIC_AGENT_TOOL_ROUNDS: usize = 4;
+const AGENT_ENVIRONMENT_WAIT_SECONDS: u64 = 120;
 const GLOBAL_MCP_READ_TOOLS: &[&str] = &[
     "sdk.health",
     "sdk.info",
@@ -236,6 +239,8 @@ pub enum ManagerError {
     AgentStateMismatch { expected: String, actual: String },
     #[error("AI agent execution for this idempotency key is incomplete or uncertain")]
     AgentExecutionUncertain,
+    #[error("AI agent timed out waiting for environment {env_id} to reach {expected}")]
+    AgentEnvironmentTimeout { env_id: String, expected: String },
     #[error("embedded MCP request failed")]
     Mcp(#[from] mcp_client::McpClientError),
     #[error("DLL embedded MCP is not configured; set an embedded MCP port and restart the runtime")]
@@ -759,32 +764,34 @@ impl Manager {
             return Ok(Vec::new());
         }
 
-        let mut tools = ai_bindings_from_discovery(
-            self.discover_embedded_mcp_tools(McpToolDiscoveryRequest {
-                scope: McpToolScope::Global,
-                env_id: None,
-            })
-            .await?,
-            true,
-        );
-
-        if let Some(env_id) = context_env_id {
+        let mut tools = if let Some(env_id) = context_env_id {
             let environment = self
                 .inner
                 .store
                 .environment(env_id)?
                 .ok_or(ManagerError::EnvironmentNotFound)?;
             if environment.status == "ready" {
-                tools.extend(ai_bindings_from_discovery(
+                ai_bindings_from_discovery(
                     self.discover_embedded_mcp_tools(McpToolDiscoveryRequest {
                         scope: McpToolScope::Environment,
                         env_id: Some(env_id.into()),
                     })
                     .await?,
                     include_environment_mutations,
-                ));
+                )
+            } else {
+                Vec::new()
             }
-        }
+        } else {
+            ai_bindings_from_discovery(
+                self.discover_embedded_mcp_tools(McpToolDiscoveryRequest {
+                    scope: McpToolScope::Global,
+                    env_id: None,
+                })
+                .await?,
+                true,
+            )
+        };
 
         let mut names = HashSet::new();
         tools.retain(|tool| names.insert(tool.definition.name.clone()));
@@ -794,6 +801,13 @@ impl Manager {
     pub async fn ai_chat(&self, request: AiChatRequest) -> Result<AiChatResponse, ManagerError> {
         let prompt = require_prompt(&request.prompt)?;
         validate_ai_history(&request.history)?;
+        if chat_requires_agent(prompt) {
+            return Ok(AiChatResponse {
+                answer: chat_agent_mode_message(prompt),
+                model: self.ai_provider_status()?.model,
+                read_only: true,
+            });
+        }
         let context = self.ai_context(request.context_env_id.as_deref()).await?;
         let tools = self
             .ai_mcp_tools(request.context_env_id.as_deref(), false)
@@ -880,7 +894,10 @@ impl Manager {
             resolve_agent_target(prompt, request.context_env_id.as_deref(), &environments)?;
         let context = self.ai_context(target_env_id.as_deref()).await?;
         let mut tools = manager_agent_tools();
-        tools.extend(self.ai_mcp_tools(target_env_id.as_deref(), true).await?);
+        tools.extend(
+            self.ai_mcp_tools(request.context_env_id.as_deref(), true)
+                .await?,
+        );
         let definitions = tools
             .iter()
             .map(|tool| tool.definition.clone())
@@ -903,6 +920,13 @@ impl Manager {
             return Err(ManagerError::AgentApprovalRequired);
         }
         let _execution_guard = self.inner.agent_execution_lock.lock().await;
+        self.ai_execute_agent_locked(request).await
+    }
+
+    async fn ai_execute_agent_locked(
+        &self,
+        request: AiAgentExecuteRequest,
+    ) -> Result<AiAgentExecution, ManagerError> {
         validate_agent_plan(&request.plan)?;
         let plan_hash = agent_plan_hash(&request.plan)?;
         if let Some(previous) = self
@@ -1132,6 +1156,151 @@ impl Manager {
             }),
         )?;
         Ok(execution)
+    }
+
+    pub async fn ai_run_agent(
+        &self,
+        request: AiAgentRunRequest,
+    ) -> Result<AiAgentRun, ManagerError> {
+        if !request.approved {
+            return Err(ManagerError::AgentApprovalRequired);
+        }
+        let prompt = require_prompt(&request.prompt)?;
+        validate_ai_history(&request.history)?;
+        let environments = self.inner.store.list_environments()?;
+        let target_env_id =
+            resolve_agent_target(prompt, request.context_env_id.as_deref(), &environments)?;
+        let mcp_context_env_id = request.context_env_id.clone();
+        let context = self.ai_context(target_env_id.as_deref()).await?;
+        let client = self.ai_client()?;
+        let model = client.model().to_string();
+        let mut session = client.start_agent_session(prompt, &context, &request.history);
+        let mut steps = Vec::new();
+        let _execution_guard = self.inner.agent_execution_lock.lock().await;
+
+        loop {
+            let environments = self.inner.store.list_environments()?;
+            let mut tools = manager_agent_tools();
+            tools.extend(
+                self.ai_mcp_tools(mcp_context_env_id.as_deref(), true)
+                    .await?,
+            );
+            let definitions = tools
+                .iter()
+                .map(|tool| tool.definition.clone())
+                .collect::<Vec<_>>();
+            let turn = client.agent_session_turn(&session, &definitions).await?;
+            if turn.tool_calls.is_empty() {
+                return Ok(AiAgentRun {
+                    answer: turn.content.ok_or(ai_agent::AiError::EmptyResponse)?,
+                    model,
+                    steps,
+                    max_tool_rounds: MAX_AUTOMATIC_AGENT_TOOL_ROUNDS,
+                });
+            }
+            if steps.len() >= MAX_AUTOMATIC_AGENT_TOOL_ROUNDS {
+                return Err(ManagerError::InvalidAgentPlan(format!(
+                    "automatic Agent exceeded {MAX_AUTOMATIC_AGENT_TOOL_ROUNDS} tool rounds"
+                )));
+            }
+
+            let assistant_turn = turn.clone();
+            let tool_call_id = turn
+                .tool_calls
+                .first()
+                .map(|call| call.id.clone())
+                .ok_or_else(|| ManagerError::InvalidAgentPlan("missing tool call".into()))?;
+            let mut plan = agent_plan_from_turn(turn, &tools)?;
+            prepare_agent_plan(&mut plan, target_env_id.as_deref(), &environments)?;
+            validate_agent_plan(&plan)?;
+            let execution = self
+                .ai_execute_agent_locked(AiAgentExecuteRequest {
+                    plan: plan.clone(),
+                    approved: true,
+                    automatic: true,
+                })
+                .await?;
+            let execution = self.await_agent_execution(execution, &plan).await?;
+            let environment = plan
+                .env_id
+                .as_deref()
+                .map(|env_id| self.inner.store.environment(env_id))
+                .transpose()?
+                .flatten();
+            let tool_result = automatic_agent_tool_result(&plan, &execution, environment.as_ref());
+            session.record_tool_results(
+                &assistant_turn,
+                &[ai_agent::AiToolResult {
+                    tool_call_id,
+                    content: bounded_ai_tool_result(&tool_result),
+                }],
+            )?;
+            steps.push(AiAgentRunStep { plan, execution });
+        }
+    }
+
+    async fn await_agent_execution(
+        &self,
+        mut execution: AiAgentExecution,
+        plan: &AiAgentPlan,
+    ) -> Result<AiAgentExecution, ManagerError> {
+        let expected = match plan.action.as_str() {
+            "environment.start" => "ready",
+            "environment.stop" => "stopped",
+            _ => return Ok(execution),
+        };
+        if execution
+            .operation
+            .as_ref()
+            .is_some_and(|operation| operation.status == "failed")
+        {
+            return Ok(execution);
+        }
+        let env_id = required_env_id(plan)?;
+        let deadline = tokio::time::Instant::now()
+            + std::time::Duration::from_secs(AGENT_ENVIRONMENT_WAIT_SECONDS);
+        loop {
+            let environment = self
+                .inner
+                .store
+                .environment(env_id)?
+                .ok_or(ManagerError::EnvironmentNotFound)?;
+            if environment.status == expected
+                || matches!(environment.status.as_str(), "failed" | "unknown")
+            {
+                if let Some(operation_id) = execution
+                    .operation
+                    .as_ref()
+                    .map(|operation| operation.id.as_str())
+                    && let Some(operation) = self.inner.store.operation(operation_id)?
+                {
+                    execution.operation = Some(operation);
+                }
+                execution.response = Some(json!({
+                    "environment": {
+                        "envId": environment.env_id,
+                        "status": environment.status,
+                        "lastEvent": environment.last_event,
+                    }
+                }));
+                execution.status_semantics = if environment.status == expected {
+                    format!("The environment reached the confirmed {expected} state.")
+                } else {
+                    format!(
+                        "The environment reached terminal state {} instead of {expected}.",
+                        environment.status
+                    )
+                };
+                return Ok(execution);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(ManagerError::AgentEnvironmentTimeout {
+                    env_id: env_id.into(),
+                    expected: expected.into(),
+                });
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
     }
 
     async fn ai_context(
@@ -3743,6 +3912,10 @@ fn ai_bindings_from_discovery(
         .advertised_tools
         .into_iter()
         .filter(|tool| allowed.contains(&tool.name))
+        .filter(|tool| {
+            discovery.scope != McpToolScope::Environment
+                || !GLOBAL_ENVIRONMENT_MANAGEMENT_TOOLS.contains(&tool.name.as_str())
+        })
         .filter_map(|tool| {
             let read_only = match discovery.scope {
                 McpToolScope::Global => true,
@@ -3996,6 +4169,78 @@ fn bounded_ai_tool_result(value: &serde_json::Value) -> String {
     }
 }
 
+fn automatic_agent_tool_result(
+    plan: &AiAgentPlan,
+    execution: &AiAgentExecution,
+    environment: Option<&EnvironmentRecord>,
+) -> serde_json::Value {
+    let operation = execution.operation.as_ref().map(|operation| {
+        json!({
+            "id": operation.id,
+            "kind": operation.kind,
+            "status": operation.status,
+            "message": operation.message,
+        })
+    });
+    let environment = environment.map(|environment| {
+        json!({
+            "envId": environment.env_id,
+            "status": environment.status,
+            "lastEvent": environment.last_event,
+        })
+    });
+    let expected_state_confirmed = match plan.action.as_str() {
+        "environment.start" => environment
+            .as_ref()
+            .is_some_and(|environment| environment["status"] == "ready"),
+        "environment.stop" => environment
+            .as_ref()
+            .is_some_and(|environment| environment["status"] == "stopped"),
+        _ => execution
+            .operation
+            .as_ref()
+            .is_none_or(|operation| operation.status != "failed"),
+    };
+    json!({
+        "ok": expected_state_confirmed,
+        "action": plan.action,
+        "operation": operation,
+        "environment": environment,
+        "response": execution.response,
+        "statusSemantics": execution.status_semantics,
+    })
+}
+
+fn chat_requires_agent(prompt: &str) -> bool {
+    let normalized = prompt.to_ascii_lowercase();
+    [
+        "启动环境",
+        "停止环境",
+        "重启环境",
+        "创建环境",
+        "删除环境",
+        "更新环境",
+        "start environment",
+        "stop environment",
+        "restart environment",
+        "create environment",
+        "delete environment",
+        "update environment",
+    ]
+    .iter()
+    .any(|phrase| normalized.contains(phrase))
+}
+
+fn chat_agent_mode_message(prompt: &str) -> String {
+    if prompt.is_ascii() {
+        "Chat mode is read-only and cannot start, stop, restart, create, update, or delete environments. Switch this conversation to Agent mode and choose per-step approval or automatic execution."
+            .into()
+    } else {
+        "Chat 模式为只读，不能启动、停止、重启、创建、更新或删除环境。请将当前会话切换到 Agent，并选择每次批准或自动执行。"
+            .into()
+    }
+}
+
 fn sdk_self_check_blocking_count(environments: &[EnvironmentRecord]) -> usize {
     environments
         .iter()
@@ -4005,7 +4250,7 @@ fn sdk_self_check_blocking_count(environments: &[EnvironmentRecord]) -> usize {
 
 fn resolve_agent_target(
     prompt: &str,
-    selected_env_id: Option<&str>,
+    bound_env_id: Option<&str>,
     environments: &[EnvironmentRecord],
 ) -> Result<Option<String>, ManagerError> {
     let mentioned = environments
@@ -4018,20 +4263,26 @@ fn resolve_agent_target(
             "one Agent plan can target only one environment".into(),
         ));
     }
-    if let Some(env_id) = mentioned.into_iter().next() {
-        return Ok(Some(env_id));
-    }
-    let Some(env_id) = selected_env_id
+    let mentioned_env_id = mentioned.into_iter().next();
+    let Some(env_id) = bound_env_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return Ok(None);
+        return Ok(mentioned_env_id);
     };
     if !environments
         .iter()
         .any(|environment| environment.env_id == env_id)
     {
         return Err(ManagerError::EnvironmentNotFound);
+    }
+    if mentioned_env_id
+        .as_deref()
+        .is_some_and(|mentioned| mentioned != env_id)
+    {
+        return Err(ManagerError::InvalidAgentPlan(format!(
+            "single-environment conversation is bound to {env_id} and cannot target another environment"
+        )));
     }
     Ok(Some(env_id.into()))
 }
@@ -4708,6 +4959,7 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::InvalidAgentPlan(_) => "INVALID_AGENT_PLAN",
         ManagerError::AgentStateMismatch { .. } => "AGENT_STATE_MISMATCH",
         ManagerError::AgentExecutionUncertain => "AGENT_EXECUTION_UNCERTAIN",
+        ManagerError::AgentEnvironmentTimeout { .. } => "AGENT_ENVIRONMENT_TIMEOUT",
         ManagerError::Mcp(_) => "MCP_TOOL_ERROR",
         ManagerError::McpNotConfigured => "MCP_NOT_CONFIGURED",
         ManagerError::McpToolNotAllowed(_) => "MCP_TOOL_NOT_ALLOWED",
@@ -5283,14 +5535,14 @@ mod tests {
     }
 
     #[test]
-    fn agent_plan_prefers_explicit_known_env_id_and_uses_current_state() {
+    fn global_agent_plan_uses_explicit_env_id_and_current_state() {
         let environments = vec![
             environment_record("env-selected", "ready"),
             environment_record("2044366881367789568", "stopped"),
         ];
         let target = resolve_agent_target(
             "启动环境 2044366881367789568，完成后告诉我状态",
-            Some("env-selected"),
+            None,
             &environments,
         )
         .expect("target");
@@ -5310,6 +5562,29 @@ mod tests {
         assert_eq!(plan.expected_state.as_deref(), Some("stopped"));
         assert_ne!(plan.idempotency_key, "model-generated");
         assert!(uuid::Uuid::parse_str(&plan.idempotency_key).is_ok());
+    }
+
+    #[test]
+    fn single_environment_agent_cannot_target_another_environment() {
+        let environments = vec![
+            environment_record("env-bound", "ready"),
+            environment_record("env-other", "stopped"),
+        ];
+        assert_eq!(
+            resolve_agent_target("停止当前环境", Some("env-bound"), &environments)
+                .expect("bound target")
+                .as_deref(),
+            Some("env-bound")
+        );
+        assert!(matches!(
+            resolve_agent_target(
+                "启动环境 env-other",
+                Some("env-bound"),
+                &environments
+            ),
+            Err(ManagerError::InvalidAgentPlan(message))
+                if message.contains("single-environment conversation")
+        ));
     }
 
     #[test]
@@ -5722,6 +5997,60 @@ mod tests {
         assert_eq!(plan.action, "environment.start");
         assert_eq!(plan.env_id.as_deref(), Some("2044366881367789568"));
         assert_eq!(plan.arguments, json!({}));
+    }
+
+    #[test]
+    fn chat_routes_environment_mutations_to_agent_mode() {
+        assert!(chat_requires_agent("启动环境 2044366881367789568"));
+        assert!(chat_requires_agent("restart environment env-1"));
+        assert!(!chat_requires_agent("环境启动状态是什么"));
+        assert!(!chat_requires_agent("show environment env-1 status"));
+        assert!(chat_agent_mode_message("启动环境").contains("Agent"));
+    }
+
+    #[test]
+    fn environment_ai_bindings_never_include_global_management_tools() {
+        let bindings = ai_bindings_from_discovery(
+            McpToolDiscovery {
+                operation: OperationRecord {
+                    id: "op-discovery".into(),
+                    kind: "mcp.tools-discover".into(),
+                    env_id: Some("env-1".into()),
+                    label: "discover".into(),
+                    status: "succeeded".into(),
+                    message: "done".into(),
+                    request_id: None,
+                    generation: 1,
+                    error_code: None,
+                    request: None,
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                },
+                scope: McpToolScope::Environment,
+                env_id: Some("env-1".into()),
+                protocol_version: "2025-11-25".into(),
+                advertised_tools: vec![
+                    McpToolSummary {
+                        name: "env.get".into(),
+                        description: None,
+                        input_schema: json!({ "type": "object" }),
+                        read_only_hint: Some(true),
+                        destructive_hint: Some(false),
+                    },
+                    McpToolSummary {
+                        name: "env.tabs".into(),
+                        description: None,
+                        input_schema: json!({ "type": "object" }),
+                        read_only_hint: Some(true),
+                        destructive_hint: Some(false),
+                    },
+                ],
+                allowed_tools: vec!["env.get".into(), "env.tabs".into()],
+            },
+            true,
+        );
+        assert_eq!(bindings.len(), 1);
+        assert_eq!(bindings[0].definition.name, "mcp_env_tabs");
     }
 
     #[test]

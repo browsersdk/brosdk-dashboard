@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-27，阶段 0-26 已完成：
+截至 2026-07-27，阶段 0-28 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-27 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/会话与关联环境、原生 tools 驱动的 Chat/Agent、DLL 全局多环境 MCP、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复和桌面单实例已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
+[roadmap.md](roadmap.md) 中阶段 0-28 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、不可变作用域 AI 会话、原生 tools 驱动的 Chat/Agent、DLL 全局多环境 MCP、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复和桌面单实例已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -93,7 +93,7 @@ brosdk-dashboard/
 
 阶段 18 Windows 安装交付已完成：`npm run release:windows` 默认生成 NSIS 和便携 ZIP，`npm run release:windows:msi` 提供 `zh-CN/en-US` 双语可选 MSI；官方 Tauri NSIS/WiX 工具由脚本按固定哈希准备到用户级缓存。`npm run release:verify` 校验统一清单、ZIP 内容、版本、大小、SHA-256 和签名状态，两个 MSI 还通过 administrative extraction 与资源检查。真实 NSIS 测试完成临时静默安装、首次 API Key 页面、使用安全输入凭据的完整 Dashboard 环境启停/AI/操作中心流程，以及无阻塞静默卸载；当前内部产物未签名，只用于测试，正式交付必须注入代码签名证书并启用签名强制校验。
 
-阶段 19 AI 会话与批准执行修复已完成：AI 工作台提供本地会话历史、新建、切换、清空和删除，“关联环境”不再与会话混为一谈。Chat/Agent 请求携带有界历史；用户文本中明确出现的已同步 envId 优先于旧选择，Manager 根据最新镜像写入计划的真实 `expectedState` 和幂等键。批准时仍做二次状态校验，Tauri 字符串错误会显示具体原因。真实 Tauri 已用目标 `2044366881367789568` 完成 Agent 计划、批准、operation、ready 和恢复 stopped 验收；Dashboard 46 项、Rust 92 项、Playwright 12 项及 production build 通过。服务端、DLL C API 与 MCP 的覆盖矩阵见 [interface-coverage.md](interface-coverage.md)，项目不再把未接 Cookie callback、token update 等能力误报为已完成。
+阶段 19 AI 会话与批准执行修复已完成：AI 工作台提供本地会话历史、新建、切换、清空和删除，Chat/Agent 请求携带有界历史。全局会话中文本明确出现的已同步 envId 可定位目标；阶段 28 已进一步收紧单环境会话，使文本不能覆盖创建时绑定的环境。Manager 根据最新镜像写入计划的真实 `expectedState` 和幂等键，批准时仍做二次状态校验，Tauri 字符串错误会显示具体原因。服务端、DLL C API 与 MCP 的覆盖矩阵见 [interface-coverage.md](interface-coverage.md)。
 
 阶段 20 多环境 Agent 与完整单环境 MCP 已完成；其查询参数路由已在阶段 25 升级为全局 `env.* + arguments.envId`。全局仍只开放 9 个管理读取，ready 单环境以 DLL 运行时 `tools/list` 为准开放浏览器工具，不写死数量。MCP 页面为常用读取保留结构化表单，其余工具提供 64 KiB 上限的 JSON 参数入口；Agent 支持 `mcp.call`，并允许每个会话选择默认“每次批准”或显式“自动执行”。
 
@@ -110,6 +110,8 @@ brosdk-dashboard/
 阶段 26 GitHub 与发布入口已完成：仓库根目录新增面向使用者的 README，覆盖首次启动、核心能力、架构、安全边界、开发、测试和 Windows 打包命令；`target/`、`apps/dashboard/dist/` 和 `dist/release/` 的中间产物/交付职责已经明确。更新后的 `brosdk.dll` 与 `brosdk.h` 纳入版本管理，根目录 `doc.json`/`docs.json` 显式忽略；默认 Windows 发布重新构建并通过清单、静默安装/卸载以及便携版单实例/托盘 E2E。
 
 阶段 27 AI 原生工具与安全自检已完成：`mcp-client` 保留 DLL `inputSchema`，Chat 只向模型绑定全局/单环境读取工具并完成一轮受限回填，Agent 绑定 Manager 动作和所选 ready 环境的动态 MCP 目录；模型不再通过提示词 JSON 假装调用工具。Manager 继续覆盖 envId、校验状态和持久化幂等。Overview 的 SDK Smoke 已移到设置页“安全与诊断”，仅在全部环境 stopped 时可运行，并使用受保护 API Key 停止、一次性自检、重启 Runtime Host。根 README 收录三张可复现的 1440x900 产品截图。最终 51 项 Dashboard、110 项 Rust、18 项 Playwright、真实 DeepSeek tool round、真实 Tauri 自检/Agent、全局 MCP 18/18 生命周期和 Windows NSIS/便携发布校验通过，环境恢复 stopped。
+
+阶段 28 AI 会话作用域与自动 Agent 闭环已完成：新建会话必须选择全局或单环境，作用域和关联 envId 创建后只读。虽然 DLL 只提供一个 `/sdk/v1/mcp` endpoint，Manager 给模型的工具目录互斥：全局会话只绑定全局工具，单环境会话只绑定该 ready 环境的浏览器工具；单环境 Agent 提及其它 envId 会 fail closed。自动 Agent 使用最多 4 轮原生 tool loop，真实“重启环境”会等待 stop 到 stopped 后再 start 到 ready。输入区改为居中多行编辑器、右下图标发送键，Enter 发送、Shift+Enter 换行。真实 DeepSeek E2E 的全局 Chat、单环境 Chat、Chat 写操作提示和 2 轮自动重启均通过；真实 Tauri 完成新建单环境会话、CDP/内部通道、全局 Chat Enter 发送和环境状态恢复。最终 Dashboard 52 项、Rust workspace 114 项、Playwright 18 项、check/Clippy、production build、README 截图及 Windows NSIS/便携发布验证通过。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

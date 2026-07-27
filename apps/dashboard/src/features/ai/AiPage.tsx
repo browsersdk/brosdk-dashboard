@@ -5,17 +5,21 @@ import {
   CheckCircle2,
   Copy,
   Eraser,
+  Globe2,
   LoaderCircle,
   MessageSquarePlus,
-  Play,
+  Monitor,
+  SendHorizontal,
   Settings,
   Trash2,
   UserRound,
+  X,
 } from "lucide-react";
-import { aiChat, aiExecuteAgent, aiPlanAgent, isDesktopRuntime } from "../../api";
+import { aiChat, aiExecuteAgent, aiPlanAgent, aiRunAgent, isDesktopRuntime } from "../../api";
 import type {
   AiAgentExecution,
   AiAgentPlan,
+  AiAgentRun,
   DashboardSnapshot,
 } from "../../types";
 import {
@@ -57,8 +61,11 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
 }) {
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState("");
+  const [newConversationOpen, setNewConversationOpen] = useState(false);
+  const [newConversationScope, setNewConversationScope] = useState<"global" | "environment">("global");
+  const [newConversationEnvId, setNewConversationEnvId] = useState<string | null>(null);
   const [conversationState, setConversationState] = useState(() => (
-    loadConversationState(preferredEnvironmentId(snapshot))
+    loadConversationState(null)
   ));
   const activeConversation = conversationState.conversations.find(
     (conversation) => conversation.id === conversationState.activeConversationId,
@@ -70,16 +77,6 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
   useEffect(() => {
     saveConversationState(conversationState);
   }, [conversationState]);
-
-  useEffect(() => {
-    if (!selectedEnvId) return;
-    const environments = snapshot?.environments ?? [];
-    if (environments.some((item) => item.envId === selectedEnvId)) return;
-    updateConversation(activeConversation.id, (conversation) => ({
-      ...conversation,
-      contextEnvId: preferredEnvironmentId(snapshot),
-    }));
-  }, [activeConversation.id, selectedEnvId, snapshot]);
 
   function updateConversation(
     conversationId: string,
@@ -105,8 +102,16 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
   }
 
   function createNewConversation() {
+    setNewConversationScope("global");
+    setNewConversationEnvId(preferredEnvironmentId(snapshot));
+    setNewConversationOpen(true);
+  }
+
+  function confirmNewConversation() {
+    const contextEnvId = newConversationScope === "environment" ? newConversationEnvId : null;
+    if (newConversationScope === "environment" && !contextEnvId) return;
     const conversation = createConversation(
-      selectedEnvId,
+      contextEnvId,
       mode,
       activeConversation.executionMode,
     );
@@ -114,6 +119,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
       activeConversationId: conversation.id,
       conversations: [conversation, ...current.conversations].slice(0, 20),
     }));
+    setNewConversationOpen(false);
     setPrompt("");
     onError("");
   }
@@ -134,7 +140,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
       const remaining = current.conversations.filter((conversation) => conversation.id !== conversationId);
       if (remaining.length === 0) {
         const replacement = createConversation(
-          selectedEnvId,
+          null,
           mode,
           activeConversation.executionMode,
         );
@@ -185,16 +191,23 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
           content: response.answer,
         }));
       } else {
-        const plan = await aiPlanAgent(requestPrompt, contextEnvId, history);
-        const planMessage = createConversationMessage({
-          role: "assistant",
-          mode: requestMode,
-          content: plan.summary,
-          plan,
-        });
-        appendMessage(conversationId, planMessage);
         if (executionMode === "automatic") {
-          await executePlanFor(conversationId, planMessage, true);
+          const run = await aiRunAgent(requestPrompt, contextEnvId, history);
+          appendMessage(conversationId, createConversationMessage({
+            role: "assistant",
+            mode: requestMode,
+            content: run.answer,
+            run,
+          }));
+          await onRefresh();
+        } else {
+          const plan = await aiPlanAgent(requestPrompt, contextEnvId, history);
+          appendMessage(conversationId, createConversationMessage({
+            role: "assistant",
+            mode: requestMode,
+            content: plan.summary,
+            plan,
+          }));
         }
       }
     } catch (requestError) {
@@ -213,13 +226,12 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
 
   async function executePlan(message: AiConversationMessage) {
     if (!message.plan) return;
-    await executePlanFor(activeConversation.id, message, false);
+    await executePlanFor(activeConversation.id, message);
   }
 
   async function executePlanFor(
     conversationId: string,
     message: AiConversationMessage,
-    automatic: boolean,
   ) {
     if (!message.plan) return;
     updateConversation(conversationId, (conversation) => ({
@@ -232,7 +244,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
     setBusy(`execute:${message.id}`);
     onError("");
     try {
-      const execution = await aiExecuteAgent(message.plan, automatic);
+      const execution = await aiExecuteAgent(message.plan, false);
       updateConversation(conversationId, (conversation) => ({
         ...conversation,
         updatedAt: new Date().toISOString(),
@@ -298,7 +310,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
               <div className={`ai-conversation-row ${conversation.id === activeConversation.id ? "active" : ""}`} key={conversation.id}>
                 <button className="ai-conversation-select" type="button" onClick={() => setConversationState((current) => ({ ...current, activeConversationId: conversation.id }))}>
                   <strong>{conversation.title}</strong>
-                  <small>{conversation.mode === "agent" ? "Agent" : "Chat"} · {formatDate(conversation.updatedAt)}</small>
+                  <small>{conversation.mode === "agent" ? "Agent" : "Chat"} · {conversation.contextEnvId ? "单环境" : "全局"} · {formatDate(conversation.updatedAt)}</small>
                 </button>
                 <button className="icon-button" type="button" title="删除会话" aria-label={`删除会话 ${conversation.title}`} disabled={Boolean(busy)} onClick={() => deleteConversation(conversation.id)}>
                   <Trash2 size={13} />
@@ -311,21 +323,14 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
         <div className="ai-conversation-main">
           <section className="ai-environment-context" aria-label="AI 关联环境详情">
             <div className="ai-context-selector">
-              <label htmlFor="ai-context-environment">关联环境</label>
-              <select
-                id="ai-context-environment"
-                aria-label="AI 关联环境"
-                value={selectedEnvId ?? ""}
-                onChange={(event) => updateConversation(activeConversation.id, (conversation) => ({
-                  ...conversation,
-                  contextEnvId: event.target.value || null,
-                }))}
-              >
-                <option value="">全部环境</option>
-                {(snapshot?.environments ?? []).map((item) => (
-                  <option key={item.envId} value={item.envId}>{item.name} · {item.envId}</option>
-                ))}
-              </select>
+              <span>会话作用域</span>
+              <div className="ai-context-scope" aria-label="AI 会话作用域">
+                {selectedEnvId ? <Monitor size={15} /> : <Globe2 size={15} />}
+                <div>
+                  <strong>{selectedEnvId ? "单环境" : "全局"}</strong>
+                  <small>{environment ? `${environment.name} · ${environment.envId}` : selectedEnvId ?? "全部环境"}</small>
+                </div>
+              </div>
             </div>
             {environment ? (
               <dl className="ai-context-details">
@@ -346,14 +351,18 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
                   </dd>
                 </div>
               </dl>
-            ) : (
-              <div className="ai-context-all"><BrainCircuit size={16} /><span>全部环境</span></div>
-            )}
+            ) : selectedEnvId ? (
+              <div className="ai-context-all"><BrainCircuit size={16} /><span>关联环境不可用</span></div>
+            ) : null}
           </section>
 
           <div className="ai-message-list" aria-label="当前会话消息">
             {activeConversation.messages.map((message) => (
-              <article className={`ai-message ${message.role} ${message.error ? "error" : ""}`} key={message.id}>
+              <article
+                className={`ai-message ${message.role} ${message.error ? "error" : ""}`}
+                aria-label={message.role === "user" ? "用户消息" : message.error ? "AI 错误" : "AI 回复"}
+                key={message.id}
+              >
                 <header>
                   {message.role === "user" ? <UserRound size={15} /> : <Bot size={15} />}
                   <strong>{message.role === "user" ? "你" : "AI"}</strong>
@@ -370,6 +379,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
                     onExecute={() => void executePlan(message)}
                   />
                 )}
+                {message.run && <AgentRunCard run={message.run} />}
               </article>
             ))}
             {activeConversation.messages.length === 0 && (
@@ -378,26 +388,92 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
           </div>
 
           <div className="ai-composer">
-            <textarea
-              aria-label="AI 请求"
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              onKeyDown={(event) => {
-                if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-                  event.preventDefault();
-                  void submit();
-                }
-              }}
-              placeholder={mode === "chat" ? "询问环境、操作、能力或诊断状态" : "描述环境启动、停止、同步或诊断目标"}
-            />
-            <button className="button primary" type="button" disabled={!isDesktopRuntime() || !prompt.trim() || Boolean(busy) || !snapshot?.ai.apiKeyPresent} onClick={() => void submit()}>
-              {busy === "submit" ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
-              {mode === "chat" ? "发送" : activeConversation.executionMode === "automatic" ? "运行 Agent" : "生成计划"}
-            </button>
+            <div className="ai-composer-shell">
+              <textarea
+                aria-label="AI 请求"
+                value={prompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    void submit();
+                  }
+                }}
+                placeholder={mode === "chat" ? "询问环境、操作、能力或诊断状态" : "描述环境启动、停止、同步或诊断目标"}
+              />
+              <button
+                className="ai-send-button"
+                type="button"
+                title={mode === "chat" ? "发送" : activeConversation.executionMode === "automatic" ? "运行 Agent" : "生成计划"}
+                aria-label={mode === "chat" ? "发送" : activeConversation.executionMode === "automatic" ? "运行 Agent" : "生成计划"}
+                disabled={!isDesktopRuntime() || !prompt.trim() || Boolean(busy) || !snapshot?.ai.apiKeyPresent}
+                onClick={() => void submit()}
+              >
+                {busy === "submit" ? <LoaderCircle className="spin" size={17} /> : <SendHorizontal size={17} />}
+              </button>
+            </div>
           </div>
         </div>
       </div>
+
+      {newConversationOpen && (
+        <div className="ai-dialog-backdrop">
+          <section className="ai-new-conversation-dialog" role="dialog" aria-modal="true" aria-label="新建 AI 会话">
+            <header>
+              <div>
+                <strong>新建会话</strong>
+                <small>作用域创建后不可修改</small>
+              </div>
+              <button className="icon-button" type="button" title="关闭" aria-label="关闭新建会话" onClick={() => setNewConversationOpen(false)}>
+                <X size={15} />
+              </button>
+            </header>
+            <div className="segmented-control ai-scope-control" aria-label="新会话作用域">
+              <button type="button" className={newConversationScope === "global" ? "active" : ""} onClick={() => setNewConversationScope("global")}><Globe2 size={14} />全局</button>
+              <button type="button" className={newConversationScope === "environment" ? "active" : ""} onClick={() => setNewConversationScope("environment")}><Monitor size={14} />单环境</button>
+            </div>
+            {newConversationScope === "environment" && (
+              <label className="ai-new-conversation-environment">
+                <span>关联环境</span>
+                <select aria-label="新会话关联环境" value={newConversationEnvId ?? ""} onChange={(event) => setNewConversationEnvId(event.target.value || null)}>
+                  <option value="">选择环境</option>
+                  {(snapshot?.environments ?? []).map((item) => (
+                    <option key={item.envId} value={item.envId}>{item.name} · {item.envId}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <footer>
+              <button className="button secondary" type="button" onClick={() => setNewConversationOpen(false)}>取消</button>
+              <button className="button primary" type="button" disabled={newConversationScope === "environment" && !newConversationEnvId} onClick={confirmNewConversation}>创建</button>
+            </footer>
+          </section>
+        </div>
+      )}
     </section>
+  );
+}
+
+function AgentRunCard({ run }: { run: AiAgentRun }) {
+  return (
+    <div className="agent-run" aria-label="Agent 自动执行步骤">
+      <div className="agent-run-heading">
+        <strong>{run.steps.length > 0 ? `${run.steps.length} 个步骤已执行` : "无需执行工具"}</strong>
+        <small>{run.model}</small>
+      </div>
+      {run.steps.map((step, index) => (
+        <div className="agent-run-step" key={step.plan.idempotencyKey}>
+          <span>{index + 1}</span>
+          <div>
+            <strong>{step.plan.action}</strong>
+            <small>{step.plan.envId ?? "全局"}</small>
+          </div>
+          <span className={`status-badge ${step.execution.operation?.status ?? "succeeded"}`}>
+            {statusLabel[step.execution.operation?.status ?? "succeeded"] ?? step.execution.operation?.status}
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 

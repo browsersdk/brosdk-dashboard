@@ -546,6 +546,17 @@ async fn manager_ai_execute_agent(
 }
 
 #[tauri::command]
+async fn manager_ai_run_agent(
+    manager: tauri::State<'_, manager::Manager>,
+    request: domain::AiAgentRunRequest,
+) -> Result<domain::AiAgentRun, String> {
+    manager
+        .ai_run_agent(request)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 async fn manager_call_embedded_mcp(
     manager: tauri::State<'_, manager::Manager>,
     request: domain::McpToolCallRequest,
@@ -647,6 +658,7 @@ pub fn run() {
             manager_ai_chat,
             manager_ai_plan_agent,
             manager_ai_execute_agent,
+            manager_ai_run_agent,
             manager_call_embedded_mcp,
             manager_discover_embedded_mcp_tools,
             sdk_host_path

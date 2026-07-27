@@ -177,6 +177,18 @@ export interface AiAgentExecution {
   replayed: boolean;
 }
 
+export interface AiAgentRunStep {
+  plan: AiAgentPlan;
+  execution: AiAgentExecution;
+}
+
+export interface AiAgentRun {
+  answer: string;
+  model: string;
+  steps: AiAgentRunStep[];
+  maxToolRounds: number;
+}
+
 export type McpToolScope = "global" | "environment";
 
 export interface McpToolCallExecution {

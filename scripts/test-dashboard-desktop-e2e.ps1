@@ -13,6 +13,7 @@ if (-not $IsWindows -and $env:OS -ne "Windows_NT") {
 }
 
 Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName System.Windows.Forms
 
 $initializeLabel = -join ([char[]](0x521D, 0x59CB, 0x5316))
 $environmentLabel = -join ([char[]](0x73AF, 0x5883))
@@ -24,9 +25,13 @@ $reconcileLabel = -join ([char[]](0x5BF9, 0x8D26))
 $aiLabel = "AI " + (-join ([char[]](0x52A9, 0x624B)))
 $aiProviderSettingsLabel = "AI Provider " + (-join ([char[]](0x8BBE, 0x7F6E)))
 $aiRequestLabel = "AI " + (-join ([char[]](0x8BF7, 0x6C42)))
+$aiReplyLabel = "AI " + (-join ([char[]](0x56DE, 0x590D)))
 $generatePlanLabel = -join ([char[]](0x751F, 0x6210, 0x8BA1, 0x5212))
 $approvePlanLabel = -join ([char[]](0x6279, 0x51C6, 0x5E76, 0x6267, 0x884C))
 $newConversationLabel = -join ([char[]](0x65B0, 0x5EFA, 0x4F1A, 0x8BDD))
+$singleEnvironmentLabel = -join ([char[]](0x5355, 0x73AF, 0x5883))
+$newConversationEnvironmentLabel = -join ([char[]](0x65B0, 0x4F1A, 0x8BDD, 0x5173, 0x8054, 0x73AF, 0x5883))
+$createLabel = -join ([char[]](0x521B, 0x5EFA))
 $runningLabel = -join ([char[]](0x8FD0, 0x884C, 0x4E2D))
 $cdpUnavailableLabel = (-join ([char[]](0x672A, 0x66B4, 0x9732))) + " TCP " + (-join ([char[]](0x5730, 0x5740)))
 $internalCdpLabel = "DLL " + (-join ([char[]](0x5185, 0x90E8))) + " CDP / MCP"
@@ -63,7 +68,9 @@ $sdkSelfCheckObserved = $false
 $agentPlanObserved = $false
 $agentApprovalInvoked = $false
 $agentOperationObserved = $false
+$chatEnterReplyObserved = $false
 $targetEnvId = $null
+$environmentConversationCreated = $false
 
 function Get-DashboardWindow([int]$AppProcessId) {
     $root = [System.Windows.Automation.AutomationElement]::RootElement
@@ -140,6 +147,70 @@ function Find-ReadyEnvironmentStopButton($DashboardWindow, [string]$NamePattern)
 
 function Invoke-DashboardButton($Button) {
     $Button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+}
+
+function Select-DashboardComboBoxOption($DashboardWindow, [string]$ComboName, [string]$OptionPattern) {
+    $combo = Wait-ForDashboardValue {
+        @(Get-DashboardElements $DashboardWindow) | Where-Object {
+            $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::ComboBox -and
+                $_.Current.Name -eq $ComboName -and
+                $_.Current.IsEnabled
+        } | Select-Object -First 1
+    } "combo box $ComboName"
+    try {
+        $selection = $combo.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
+        if (@($selection) | Where-Object { $_.Current.Name -like $OptionPattern } | Select-Object -First 1) {
+            return
+        }
+    }
+    catch {
+    }
+    $expand = $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern)
+    $expand.Expand()
+    try {
+        $option = Wait-ForDashboardValue {
+            $root = [System.Windows.Automation.AutomationElement]::RootElement
+            $matches = @($root.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition
+            )) | Where-Object {
+                $_.Current.Name -like $OptionPattern
+            }
+            foreach ($match in $matches) {
+                try {
+                    [void]$match.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern)
+                    return $match
+                }
+                catch {
+                }
+            }
+            return $null
+        } "combo box option $OptionPattern" 15
+        $option.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    }
+    finally {
+        if ($expand.Current.ExpandCollapseState -eq [System.Windows.Automation.ExpandCollapseState]::Expanded) {
+            $expand.Collapse()
+        }
+    }
+}
+
+function New-DashboardConversation($DashboardWindow, [string]$EnvironmentId = "") {
+    $newConversationButton = Wait-ForDashboardValue {
+        Find-DashboardButton $DashboardWindow $newConversationLabel -Enabled
+    } "new AI conversation"
+    Invoke-DashboardButton $newConversationButton
+    if (-not [string]::IsNullOrWhiteSpace($EnvironmentId)) {
+        $singleEnvironmentButton = Wait-ForDashboardValue {
+            Find-DashboardButton $DashboardWindow $singleEnvironmentLabel -Enabled
+        } "single-environment conversation scope"
+        Invoke-DashboardButton $singleEnvironmentButton
+        Select-DashboardComboBoxOption $DashboardWindow $newConversationEnvironmentLabel "*$EnvironmentId*"
+    }
+    $createButton = Wait-ForDashboardValue {
+        Find-DashboardButton $DashboardWindow $createLabel -Enabled
+    } "create AI conversation"
+    Invoke-DashboardButton $createButton
 }
 
 try {
@@ -327,10 +398,8 @@ try {
         } "AI navigation for Agent lifecycle"
         Invoke-DashboardButton $aiButton
 
-        $newConversationButton = Wait-ForDashboardValue {
-            Find-DashboardButton $window $newConversationLabel -Enabled
-        } "new AI conversation"
-        Invoke-DashboardButton $newConversationButton
+        New-DashboardConversation $window $targetEnvId
+        $environmentConversationCreated = $true
         $agentModeButton = Wait-ForDashboardValue {
             Find-DashboardButton $window "Agent" -Enabled
         } "Agent mode"
@@ -394,6 +463,10 @@ try {
         Find-DashboardButton $window $aiLabel -Enabled
     } "AI navigation"
     Invoke-DashboardButton $aiButton
+    if (-not $environmentConversationCreated) {
+        New-DashboardConversation $window $targetEnvId
+        $environmentConversationCreated = $true
+    }
     $cdpContext = Wait-ForDashboardValue {
         $elements = Get-DashboardElements $window
         $identity = @($elements) | Where-Object {
@@ -415,6 +488,31 @@ try {
     } "AI environment identity and CDP"
     $aiEnvironmentContextObserved = $true
     $cdpEndpointObserved = $cdpContext.Concrete
+
+    New-DashboardConversation $window
+    $chatModeButton = Wait-ForDashboardValue {
+        Find-DashboardButton $window "Chat" -Enabled
+    } "Chat mode"
+    Invoke-DashboardButton $chatModeButton
+    $chatRequest = Wait-ForDashboardValue {
+        Find-DashboardEdit $window $aiRequestLabel -Enabled
+    } "Chat request input"
+    $chatMutationPrompt = (-join ([char[]](0x542F, 0x52A8, 0x73AF, 0x5883))) + " " + $targetEnvId
+    $chatRequest.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($chatMutationPrompt)
+    $chatRequest.SetFocus()
+    [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
+    Wait-ForDashboardValue {
+        $elements = Get-DashboardElements $window
+        $reply = @($elements) | Where-Object {
+            $_.Current.Name -eq $aiReplyLabel
+        } | Select-Object -First 1
+        $agentGuidance = @($elements) | Where-Object {
+            $_.Current.Name -like "*Agent*" -and $_.Current.Name -like "*Chat*"
+        } | Select-Object -First 1
+        if ($reply -and $agentGuidance) { return $true }
+        return $false
+    } "Chat Enter submission and visible read-only reply" | Out-Null
+    $chatEnterReplyObserved = $true
 
     $aiSettingsButton = Wait-ForDashboardValue {
         Find-DashboardButton $window $aiProviderSettingsLabel -Enabled
@@ -472,6 +570,7 @@ try {
         agentPlanObserved = $agentPlanObserved
         agentApprovalInvoked = $agentApprovalInvoked
         agentOperationObserved = $agentOperationObserved
+        chatEnterReplyObserved = $chatEnterReplyObserved
     } | ConvertTo-Json
 }
 finally {

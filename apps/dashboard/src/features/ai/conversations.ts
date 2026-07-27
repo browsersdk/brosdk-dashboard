@@ -1,6 +1,7 @@
 import type {
   AiAgentExecution,
   AiAgentPlan,
+  AiAgentRun,
   AiConversationTurn,
 } from "../../types";
 
@@ -16,6 +17,7 @@ export interface AiConversationMessage {
   error?: boolean;
   plan?: AiAgentPlan;
   execution?: AiAgentExecution;
+  run?: AiAgentRun;
   executionAttempted?: boolean;
 }
 
@@ -156,6 +158,7 @@ function parseMessage(value: unknown): AiConversationMessage | null {
   if (value.error === true) message.error = true;
   if (isAgentPlan(value.plan)) message.plan = value.plan;
   if (isAgentExecution(value.execution)) message.execution = value.execution;
+  if (isAgentRun(value.run)) message.run = value.run;
   if (value.executionAttempted === true) message.executionAttempted = true;
   return message;
 }
@@ -172,6 +175,16 @@ function isAgentExecution(value: unknown): value is AiAgentExecution {
     && typeof value.action === "string"
     && typeof value.statusSemantics === "string"
     && typeof value.replayed === "boolean";
+}
+
+function isAgentRun(value: unknown): value is AiAgentRun {
+  return isRecord(value)
+    && typeof value.answer === "string"
+    && typeof value.model === "string"
+    && Array.isArray(value.steps)
+    && value.steps.every((step) => (
+      isRecord(step) && isAgentPlan(step.plan) && isAgentExecution(step.execution)
+    ));
 }
 
 function isConversation(value: AiConversation | null): value is AiConversation {

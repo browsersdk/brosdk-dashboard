@@ -259,7 +259,7 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="main-content">
+      <main className={`main-content page-${page}`}>
         <header className="page-header">
           <div>
             <div className="breadcrumb"><span>本地客户端</span><strong>{navItems.find((item) => item.key === page)?.label}</strong></div>

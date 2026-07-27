@@ -105,11 +105,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         failed_stage = "agent-start";
         let mut start_operation_ids = HashSet::new();
         for (index, env_id) in owned_env_ids.iter().enumerate() {
-            let other_env_id = &owned_env_ids[(index + 1) % owned_env_ids.len()];
             let plan = manager
                 .ai_plan_agent(AiAgentPlanRequest {
                     prompt: format!("Start environment {env_id}"),
-                    context_env_id: Some(other_env_id.clone()),
+                    context_env_id: None,
                     history: Vec::new(),
                 })
                 .await?;
@@ -170,7 +169,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     prompt: format!(
                         "Use mcp.call with env.tabs action list for environment {env_id}"
                     ),
-                    context_env_id: None,
+                    context_env_id: Some(env_id.clone()),
                     history: Vec::new(),
                 })
                 .await?;
@@ -208,11 +207,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         failed_stage = "agent-stop";
         let mut stop_operation_ids = HashSet::new();
         for (index, env_id) in owned_env_ids.iter().enumerate() {
-            let other_env_id = &owned_env_ids[(index + 1) % owned_env_ids.len()];
             let plan = manager
                 .ai_plan_agent(AiAgentPlanRequest {
                     prompt: format!("Stop environment {env_id}"),
-                    context_env_id: Some(other_env_id.clone()),
+                    context_env_id: None,
                     history: Vec::new(),
                 })
                 .await?;

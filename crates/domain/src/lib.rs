@@ -663,6 +663,32 @@ pub struct AiAgentExecution {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AiAgentRunRequest {
+    pub prompt: String,
+    pub context_env_id: Option<String>,
+    #[serde(default)]
+    pub history: Vec<AiConversationMessage>,
+    pub approved: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAgentRunStep {
+    pub plan: AiAgentPlan,
+    pub execution: AiAgentExecution,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiAgentRun {
+    pub answer: String,
+    pub model: String,
+    pub steps: Vec<AiAgentRunStep>,
+    pub max_tool_rounds: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DashboardSnapshot {
     pub sdk: SdkPanel,
     pub capabilities: SdkCapabilities,
