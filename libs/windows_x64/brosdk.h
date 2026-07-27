@@ -55,10 +55,15 @@ typedef void(SDK_CALL *sdk_result_cb_t)(int32_t code, void *user_data,
                                         const char *data, size_t len);
 
 /* Cookie persistence interception callback.
- * data/len           : JSON cookie array extracted by the SDK.
- * new_data/new_len   : optional replacement payload. Leave NULL/0 to
- * passthrough. user_data          : caller-provided pointer passed back
- * unchanged.
+ * data/len         : UTF-8 JSON event object. The complete Cookie array is in
+ *                    the data.cookies member.
+ * new_data/new_len : optional replacement containing a complete JSON Cookie
+ *                    array with at least one injectable Cookie, not an event
+ *                    object or an incremental patch. Leave NULL/0 to keep the
+ *                    original array. An empty, invalid, or fully rejected
+ *                    replacement also keeps the original array; this callback
+ *                    is not a clear-Cookie operation.
+ * user_data        : caller-provided pointer passed back unchanged.
  *
  * If you replace the payload, allocate *new_data with sdk_malloc().
  * The SDK will release it with sdk_free(). */
@@ -75,8 +80,7 @@ typedef void(SDK_CALL *sdk_cookies_storage_cb_t)(const char *data, size_t len,
  *
  * If you return a redirect URL, allocate *redirect with sdk_malloc().
  * The SDK will release it with sdk_free(). */
-typedef void(SDK_CALL *sdk_security_decision_cb_t)(const char *data,
-                                                   size_t len,
+typedef void(SDK_CALL *sdk_security_decision_cb_t)(const char *data, size_t len,
                                                    char **redirect,
                                                    size_t *redirect_len,
                                                    void *user_data);
@@ -106,9 +110,8 @@ sdk_register_cookies_storage_cb(sdk_cookies_storage_cb_t cb, void *user_data);
  * return a redirect URL. Without a redirect URL, the bridge returns its default
  * block response.
  * Pass NULL to disable security strategy interception. */
-SDK_API int32_t SDK_CALL
-sdk_register_security_decision_cb(sdk_security_decision_cb_t cb,
-                                  void *user_data);
+SDK_API int32_t SDK_CALL sdk_register_security_decision_cb(
+    sdk_security_decision_cb_t cb, void *user_data);
 
 /* Return the current SDK instance handle without performing init.
  * Mainly useful for C++ callers that need an ISDK* for an already-created
@@ -149,10 +152,263 @@ SDK_API int32_t SDK_CALL sdk_info(char **out_data, size_t *out_len);
  * data/len         : UTF-8 JSON body. Common fields:
  *                    apiKey(required), customerId(optional),
  *                    duration(optional).
- * out_data/out_len : raw backend getUserSig JSON; caller must sdk_free(*out_data).
+ * out_data/out_len : raw backend getUserSig JSON; caller must
+ * sdk_free(*out_data).
  */
 SDK_API int32_t SDK_CALL sdk_get_user_sig(const char *data, size_t len,
                                           char **out_data, size_t *out_len);
+/**
+ * @brief Queries the Cookie snapshot history for one environment.
+ *
+ * This is a synchronous request to the backend `getCookieHistory` API.
+ * The environment does not need to have a running browser process.
+ *
+ * Request body:
+ * @code{.json}
+ * {"envId":"2062428528552448000"}
+ * @endcode
+ *
+ * @param data UTF-8 JSON request body. `envId` must be a decimal string.
+ * @param len Exact request size in bytes, excluding any trailing null byte.
+ * @param out_data Receives an SDK-allocated buffer containing the raw backend
+ *        response JSON.
+ * @param out_len Receives the response size in bytes. The response is not
+ *        guaranteed to be null-terminated.
+ * @return `CL_OK` on success; otherwise, a BroSDK error code.
+ *
+ * @note The SDK must be initialized and have valid backend credentials.
+ * @note Read `out_data` only when the function succeeds. Release every
+ *       non-null output buffer with sdk_free().
+ */
+SDK_API int32_t SDK_CALL sdk_get_cookies_history(const char *data, size_t len,
+                                                 char **out_data,
+                                                 size_t *out_len);
+
+/**
+ * @brief Reads the latest Cookie snapshot persisted in the local SQLite cache.
+ *
+ * The SDK decrypts the cached Cookie packet and returns a JSON array. This
+ * operation does not require a running browser process. If the environment is
+ * currently running, the returned value is still the latest SQLite snapshot,
+ * not the browser's live Cookie state.
+ *
+ * Request body:
+ * @code{.json}
+ * {"envId":"2062428528552448000"}
+ * @endcode
+ *
+ * Successful response:
+ * @code{.json}
+ * [{"name":"sessionid","value":"...","domain":".example.com"}]
+ * @endcode
+ *
+ * @param data UTF-8 JSON request body. `envId` must be a decimal string.
+ * @param len Exact request size in bytes, excluding any trailing null byte.
+ * @param out_data Receives an SDK-allocated buffer containing a Cookie JSON
+ *        array.
+ * @param out_len Receives the response size in bytes. The response is not
+ *        guaranteed to be null-terminated.
+ * @return `CL_OK` on success, `CL_ENOTFOUND` when no local snapshot exists,
+ *         or another BroSDK error code.
+ *
+ * @note The SDK must be initialized because the current environment key is
+ *       required to decrypt the cached packet.
+ * @note Read `out_data` only when the function succeeds. Release every
+ *       non-null output buffer with sdk_free().
+ */
+SDK_API int32_t SDK_CALL sdk_get_cookies_local(const char *data, size_t len,
+                                               char **out_data,
+                                               size_t *out_len);
+
+/**
+ * @brief Replaces the Cookie snapshot in the local SQLite cache.
+ *
+ * The SDK validates and normalizes the input array, encrypts it with the
+ * current environment key, and writes a new local Cookie revision. This
+ * operation updates SQLite only; it does not modify a running browser process
+ * and does not upload the snapshot to OSS.
+ *
+ * Request body:
+ * @code{.json}
+ * {"envId":"2062428528552448000","cookies":[]}
+ * @endcode
+ *
+ * Successful response:
+ * @code{.json}
+ * {
+ *   "envId":"2062428528552448000",
+ *   "source":"sqlite",
+ *   "cookieCount":0,
+ *   "packetBytes":128,
+ *   "revision":42,
+ *   "syncState":"dirty",
+ *   "changed":true,
+ *   "disposition":"committed"
+ * }
+ * @endcode
+ *
+ * @param data UTF-8 JSON request body. `envId` must be a decimal string and
+ *        `cookies` must be a JSON array.
+ * @param len Exact request size in bytes, excluding any trailing null byte.
+ * @param out_data Receives an SDK-allocated JSON write summary.
+ * @param out_len Receives the response size in bytes. The response is not
+ *        guaranteed to be null-terminated.
+ * @return `CL_OK` on success; otherwise, a BroSDK error code.
+ *
+ * @warning A running browser may persist a newer live snapshot later and
+ *          replace this local value when that browser closes.
+ * @note The SDK must be initialized because the current environment key is
+ *       required to encrypt the new packet.
+ * @note Read `out_data` only when the function succeeds. Release every
+ *       non-null output buffer with sdk_free().
+ */
+SDK_API int32_t SDK_CALL sdk_set_cookies_local(const char *data, size_t len,
+                                               char **out_data,
+                                               size_t *out_len);
+
+/**
+ * @brief Downloads and decrypts a Cookie snapshot from OSS.
+ *
+ * `fileUrl` is an OSS object key obtained from a Cookie history item. The SDK
+ * verifies that the key belongs to the requested environment, downloads the
+ * encrypted packet, optionally verifies its MD5 digest, and returns the
+ * decoded Cookie JSON array. The operation does not update the local SQLite
+ * cache or a running browser process.
+ *
+ * Request body:
+ * @code{.json}
+ * {
+ *   "envId":"2078235798880129024",
+ *   "fileUrl":"brosdk/apps/2059060776739540992/cookie/1784543535/2078235798880129024-v1.br",
+ *   "md5":"0123456789abcdef0123456789abcdef"
+ * }
+ * @endcode
+ *
+ * Successful response:
+ * @code{.json}
+ * [{"name":"sessionid","value":"...","domain":".example.com"}]
+ * @endcode
+ *
+ * @param data UTF-8 JSON request body. `envId` and `fileUrl` are required;
+ *        `md5` is optional and, when present, must contain 32 hexadecimal
+ *        characters.
+ * @param len Exact request size in bytes, excluding any trailing null byte.
+ * @param out_data Receives an SDK-allocated buffer containing a Cookie JSON
+ *        array.
+ * @param out_len Receives the response size in bytes. The response is not
+ *        guaranteed to be null-terminated.
+ * @return `CL_OK` on success; otherwise, a BroSDK error code.
+ *
+ * @note The SDK must be initialized and have valid backend and OSS
+ *       credentials.
+ * @note Read `out_data` only when the function succeeds. Release every
+ *       non-null output buffer with sdk_free().
+ */
+SDK_API int32_t SDK_CALL sdk_get_cookies_remote(const char *data, size_t len,
+                                                char **out_data,
+                                                size_t *out_len);
+
+/**
+ * @brief Encrypts and uploads a Cookie snapshot without opening the browser.
+ *
+ * The SDK obtains the current environment metadata, validates and normalizes
+ * the input array, encrypts the Cookie packet, uploads it to the environment's
+ * OSS Cookie object, and updates backend metadata through `upCookie`. After a
+ * successful remote update, the SDK also attempts to refresh its local SQLite
+ * snapshot.
+ *
+ * Request body:
+ * @code{.json}
+ * {"envId":"2062428528552448000","cookies":[]}
+ * @endcode
+ *
+ * @param data UTF-8 JSON request body. `envId` must be a decimal string and
+ *        `cookies` must be a JSON array.
+ * @param len Exact request size in bytes, excluding any trailing null byte.
+ * @param out_data Receives an SDK-allocated buffer containing the raw backend
+ *        `upCookie` response JSON, or an SDK success summary when the backend
+ *        response body is empty.
+ * @param out_len Receives the response size in bytes. The response is not
+ *        guaranteed to be null-terminated.
+ * @return `CL_OK` only after both the OSS upload and backend metadata update
+ *         succeed; otherwise, a BroSDK error code.
+ *
+ * @warning This operation does not modify a running browser process. A later
+ *          browser close may upload that browser's live Cookie state and
+ *          replace this remote snapshot.
+ * @note The SDK must be initialized and have valid backend and OSS
+ *       credentials.
+ * @note A local SQLite refresh failure does not roll back an otherwise
+ *       successful remote update.
+ * @note Read `out_data` only when the function succeeds. Release every
+ *       non-null output buffer with sdk_free().
+ */
+SDK_API int32_t SDK_CALL sdk_set_cookies_remote(const char *data, size_t len,
+                                                char **out_data,
+                                                size_t *out_len);
+
+/**
+ * @brief Performs an offline health analysis of a Cookie JSON array.
+ *
+ * The analysis groups Cookies by normalized exact domain and reports
+ * structural issues, session/persistent counts, expiration state, duplicate
+ * identities, security attribute warnings, and authentication-token hints.
+ * JWT-like values are inspected only for their `exp`, `nbf`, and `iat` time
+ * claims. Signatures are not verified, and Cookie values are never included
+ * in the response.
+ *
+ * Request body:
+ * @code{.json}
+ * {"cookies":[]}
+ * @endcode
+ *
+ * Successful response shape:
+ * @code{.json}
+ * {
+ *   "checkedAt":1753099200,
+ *   "expiresSoonThresholdSeconds":86400,
+ *   "summary":{"status":"warning","cookieCount":1,"domainCount":1},
+ *   "domains":[{
+ *     "domain":"example.com",
+ *     "nextExpirationRemainingSeconds":3600,
+ *     "cookies":[{
+ *       "cookieName":"sid",
+ *       "path":"/",
+ *       "persistence":"persistent",
+ *       "expiration":1753102800,
+ *       "remainingSeconds":3600,
+ *       "status":"expiring_soon",
+ *       "authCandidate":true
+ *     }]
+ *   }],
+ *   "globalIssues":[]
+ * }
+ * @endcode
+ *
+ * @param data UTF-8 JSON request body containing a required `cookies` array.
+ * @param len Exact request size in bytes, excluding any trailing null byte.
+ * @param out_data Receives an SDK-allocated health report JSON object.
+ * @param out_len Receives the response size in bytes. The response is not
+ *        guaranteed to be null-terminated.
+ * @return `CL_OK` on success or `CL_EINVALID` when the request or Cookie array
+ *         is invalid; otherwise, a BroSDK error code.
+ *
+ * @note This function is synchronous, performs no network or browser I/O, and
+ *       does not require SDK initialization.
+ * @note `expiresSoonThresholdSeconds` is only the warning window. A Cookie's
+ *       signed lifetime is reported as `domains[].cookies[].remainingSeconds`;
+ *       negative values are already expired, while session Cookies and missing
+ *       expirations use JSON null. Domain-level earliest, latest, and next
+ *       expiration fields have matching remaining-seconds fields.
+ * @note A `time_valid` token status means only that the decoded JWT time window
+ *       currently permits use. It does not prove signature validity or an
+ *       active server-side login session.
+ * @note Read `out_data` only when the function succeeds. Release every
+ *       non-null output buffer with sdk_free().
+ */
+SDK_API int32_t SDK_CALL sdk_cookies_health_check(const char *data, size_t len,
+                                                  char **out_data,
+                                                  size_t *out_len);
 /* Perform network diagnostics synchronously.
  * Request body is UTF-8 JSON:
  *   {"proxy":"","bridgeProxy":"","url":"https://baidu.com"}
@@ -177,7 +433,11 @@ SDK_API int32_t SDK_CALL sdk_browser_info(char **out_data, size_t *out_len);
  * Request body is UTF-8 JSON. Recommended shape:
  *   {"envs":[{"envId":"...","urls":["https://..."],"args":["--flag"]}]}
  * Returns a reqId when accepted.
- * Final success is browser-open-success, which implies CDP is ready. */
+ * Final success is browser-open-success, which implies CDP is ready.
+ * If an environment is already running, the SDK activates its existing
+ * browser window without relaunching it and reports browser-open-success with
+ * the CL_WBRWALREADYRUNNING warning. The response data includes
+ * `alreadyRunning: true` for this idempotent reuse. */
 SDK_API int32_t SDK_CALL sdk_browser_open(const char *data, size_t len);
 
 /* Close one or more browser environments asynchronously.
@@ -227,8 +487,7 @@ SDK_API int32_t SDK_CALL sdk_browser_env_check(const char *data, size_t len,
  * as new browser.snapshot.* callback/WebSocket events; existing browser
  * lifecycle events are not changed. */
 SDK_API int32_t SDK_CALL sdk_browser_snapshot(const char *data, size_t len,
-                                              char **out_data,
-                                              size_t *out_len);
+                                              char **out_data, size_t *out_len);
 /* Create an environment synchronously.
  * The request body is forwarded to the backend env/create API.
  * The response body is the raw backend JSON and must be freed with sdk_free().
@@ -365,8 +624,7 @@ public:
 
   /* Read current system proxy settings and bridge-compatible upstream route.
    * Equivalent to sdk_system_proxy_diagnostics(...). */
-  virtual int32_t SystemProxyDiagnostics(char **out,
-                                         size_t *out_len) const = 0;
+  virtual int32_t SystemProxyDiagnostics(char **out, size_t *out_len) const = 0;
 
   /* Read the current running browser list synchronously.
    * Equivalent to sdk_browser_info().
@@ -391,6 +649,8 @@ public:
    *
    * Returns a reqId when accepted.
    * The true ready signal is browser-open-success, which implies CDP is ready.
+   * An already-running environment is activated and also completes with
+   * browser-open-success plus CL_WBRWALREADYRUNNING; it is not relaunched.
    */
   virtual int32_t BrowserOpen(const char *data, size_t len) const = 0;
 
@@ -491,6 +751,54 @@ public:
    * sdk_register_security_decision_cb(...). Pass nullptr to disable. */
   virtual int32_t RegisterSecurityDecisionCb(sdk_security_decision_cb_t cb,
                                              void *user_data) = 0;
+
+  /**
+   * @brief C++ equivalent of sdk_get_cookies_history().
+   * @see sdk_get_cookies_history()
+   */
+  virtual int32_t GetCookieHistory(const char *data, size_t len, char **out,
+                                   size_t *out_len) const = 0;
+
+  /**
+   * @brief C++ equivalent of sdk_get_cookies_local().
+   * @see sdk_get_cookies_local()
+   */
+  virtual int32_t GetCookiesLocal(const char *data, size_t len, char **out,
+                                  size_t *out_len) const = 0;
+
+  /**
+   * @brief C++ equivalent of sdk_set_cookies_local().
+   * @see sdk_set_cookies_local()
+   */
+  virtual int32_t SetCookiesLocal(const char *data, size_t len, char **out,
+                                  size_t *out_len) const = 0;
+
+  /**
+   * @brief C++ equivalent of sdk_get_cookies_remote().
+   * @see sdk_get_cookies_remote()
+   */
+  virtual int32_t GetCookiesRemote(const char *data, size_t len, char **out,
+                                   size_t *out_len) const = 0;
+
+  /**
+   * @brief C++ equivalent of sdk_set_cookies_remote().
+   * @see sdk_set_cookies_remote()
+   *
+   * @note These virtual methods are appended to preserve existing ISDK vtable
+   *       slots.
+   */
+  virtual int32_t SetCookiesRemote(const char *data, size_t len, char **out,
+                                   size_t *out_len) const = 0;
+
+  /**
+   * @brief C++ equivalent of sdk_cookies_health_check().
+   * @see sdk_cookies_health_check()
+   *
+   * @note This virtual method is appended to preserve existing ISDK vtable
+   *       slots.
+   */
+  virtual int32_t CheckCookiesHealth(const char *data, size_t len, char **out,
+                                     size_t *out_len) const = 0;
 };
 #endif
 

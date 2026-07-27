@@ -9,6 +9,16 @@ libs/windows_x64/brosdk.dll
 libs/windows_x64/brosdk.h
 ```
 
+当前入库版本（2026-07-27）：
+
+| 文件 | 大小 | SHA-256 |
+| --- | ---: | --- |
+| `brosdk.dll` | 20,505,600 bytes | `922808C200D0B00008DCB5FF69A17901BB31CD2477523D08C454B2074A26DC9F` |
+| `brosdk.h` | 36,932 bytes | `C60BDDCF6C7BFA90B624B1A4CFFAB3DB2BAE3366B792C9FA5151CDE3D2DA2DC1` |
+
+二进制与头文件是同一个交付单元，升级时必须一起替换并提交。`doc.json`/`docs.json`
+只作为本机服务端接口参考，不进入版本库。
+
 头文件暴露的是 C ABI 和 C++ `ISDK`。新客户端只绑定 C ABI，不依赖 C++ vtable，避免编译器 ABI 差异。
 
 关键 C API：
