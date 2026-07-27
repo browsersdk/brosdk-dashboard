@@ -34,8 +34,6 @@ pub enum McpClientError {
     ToolUnavailable(String),
     #[error("embedded MCP JSON-RPC error: {0}")]
     Rpc(String),
-    #[error("embedded MCP tool returned isError=true")]
-    ToolFailed,
     #[error("embedded MCP environment tool name is invalid: {0}")]
     InvalidEnvironmentTool(String),
     #[error("embedded MCP environment arguments must be a JSON object")]
@@ -62,6 +60,7 @@ pub struct McpToolResult {
     pub protocol_version: String,
     pub advertised_tools: Vec<McpToolDefinition>,
     pub result: Value,
+    pub is_error: bool,
 }
 
 pub async fn call_global_tool(
@@ -289,13 +288,12 @@ async fn call_in_session(
     .await?;
     let call = response_json(call).await?;
     let result = rpc_result(&call)?.clone();
-    if result.get("isError").and_then(Value::as_bool) == Some(true) {
-        return Err(McpClientError::ToolFailed);
-    }
+    let is_error = result.get("isError").and_then(Value::as_bool) == Some(true);
     Ok(McpToolResult {
         protocol_version: protocol_version.into(),
         advertised_tools,
         result,
+        is_error,
     })
 }
 
@@ -558,6 +556,48 @@ mod tests {
         assert_eq!(methods.len(), 5);
         assert!(methods[0].starts_with("POST /sdk/v1/mcp "));
         assert!(methods[4].starts_with("DELETE "));
+    }
+
+    #[tokio::test]
+    async fn returns_structured_tool_errors_without_turning_them_into_transport_errors() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        let server = tokio::spawn(async move {
+            for step in 0..5 {
+                let (mut stream, _) = listener.accept().await.expect("accept");
+                let request = read_request(&mut stream).await;
+                let response = match step {
+                    0 => http_response(
+                        "200 OK",
+                        &[("Mcp-Session-Id", "error-session")],
+                        r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-11-25"}}"#,
+                    ),
+                    1 => http_response("202 Accepted", &[], ""),
+                    2 => http_response(
+                        "200 OK",
+                        &[],
+                        r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"env.get"}]}}"#,
+                    ),
+                    3 => {
+                        assert!(request.contains(r#""name":"env.get""#));
+                        http_response(
+                            "200 OK",
+                            &[],
+                            r#"{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"browser environment is not active"}],"structuredContent":{"code":"ENV_NOT_FOUND","message":"browser environment is not active"},"isError":true}}"#,
+                        )
+                    }
+                    _ => http_response("200 OK", &[], "{}"),
+                };
+                stream.write_all(response.as_bytes()).await.expect("write");
+            }
+        });
+
+        let result = call_global_tool(port, "env.get", json!({ "envId": "123" }))
+            .await
+            .expect("tool-level errors remain valid MCP results");
+        assert!(result.is_error);
+        assert_eq!(result.result["structuredContent"]["code"], "ENV_NOT_FOUND");
+        server.await.expect("server");
     }
 
     #[tokio::test]

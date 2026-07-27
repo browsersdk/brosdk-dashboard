@@ -15,12 +15,13 @@ import {
   UserRound,
   X,
 } from "lucide-react";
-import { aiChat, aiExecuteAgent, aiPlanAgent, aiRunAgent, isDesktopRuntime } from "../../api";
+import { aiChat, aiExecuteAgent, aiPlanAgent, aiRunAgent, isDesktopRuntime, onManagerEvent } from "../../api";
 import type {
   AiAgentExecution,
   AiAgentPlan,
   AiAgentRun,
   DashboardSnapshot,
+  ManagerEvent,
 } from "../../types";
 import {
   environmentCdpAddress,
@@ -52,6 +53,27 @@ const statusLabel: Record<string, string> = {
   cancelled: "已取消",
   succeeded: "已完成",
 };
+
+const agentActionLabel: Record<string, string> = {
+  "environment.start": "启动环境",
+  "environment.stop": "停止环境",
+  "environment.diagnose": "诊断环境",
+  "environment.sync": "同步环境",
+  "runtime.reconcile": "对账运行态",
+  "proxy.diagnose": "诊断代理",
+  "mcp.read": "读取 MCP 工具",
+  "mcp.call": "调用 MCP 工具",
+  "none": "思考中",
+};
+
+function agentStepText(event: ManagerEvent): string | null {
+  if (event.eventType !== "ai.agent-step") return null;
+  const payload = event.payload as { action?: string; stepIndex?: number };
+  const action = typeof payload?.action === "string" ? payload.action : "";
+  const label = agentActionLabel[action] ?? action ?? "执行中";
+  const index = typeof payload?.stepIndex === "number" ? payload.stepIndex + 1 : 1;
+  return `正在执行第 ${index} 步：${label}…`;
+}
 
 export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
   snapshot: DashboardSnapshot | null;
@@ -112,6 +134,33 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
         : conversationTitle(message.content),
       updatedAt: message.createdAt,
       messages: [...conversation.messages, message].slice(-80),
+    }));
+  }
+
+  function updateMessage(
+    conversationId: string,
+    messageId: string,
+    update: (message: AiConversationMessage) => AiConversationMessage,
+  ) {
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      messages: conversation.messages.map((message) => (
+        message.id === messageId ? update(message) : message
+      )),
+    }));
+  }
+
+  function replaceMessage(
+    conversationId: string,
+    messageId: string,
+    message: AiConversationMessage,
+  ) {
+    updateConversation(conversationId, (conversation) => ({
+      ...conversation,
+      updatedAt: message.createdAt,
+      messages: conversation.messages.map((item) => (
+        item.id === messageId ? message : item
+      )),
     }));
   }
 
@@ -196,18 +245,36 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
     setPrompt("");
     setBusy("submit");
     onError("");
+    const placeholder = createConversationMessage({
+      role: "assistant",
+      mode: requestMode,
+      content: "AI 正在思考…",
+      pending: true,
+    });
+    appendMessage(conversationId, placeholder);
+    let unlisten: (() => void) | null = null;
     try {
       if (requestMode === "chat") {
         const response = await aiChat(requestPrompt, contextEnvId, history);
-        appendMessage(conversationId, createConversationMessage({
+        replaceMessage(conversationId, placeholder.id, createConversationMessage({
           role: "assistant",
           mode: requestMode,
           content: response.answer,
         }));
       } else {
         if (executionMode === "automatic") {
+          // Show live step progress while the agent runs its tool loop.
+          unlisten = await onManagerEvent((event) => {
+            const text = agentStepText(event);
+            if (text) {
+              updateMessage(conversationId, placeholder.id, (message) => ({
+                ...message,
+                content: text,
+              }));
+            }
+          });
           const run = await aiRunAgent(requestPrompt, contextEnvId, history);
-          appendMessage(conversationId, createConversationMessage({
+          replaceMessage(conversationId, placeholder.id, createConversationMessage({
             role: "assistant",
             mode: requestMode,
             content: run.answer,
@@ -216,7 +283,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
           await onRefresh();
         } else {
           const plan = await aiPlanAgent(requestPrompt, contextEnvId, history);
-          appendMessage(conversationId, createConversationMessage({
+          replaceMessage(conversationId, placeholder.id, createConversationMessage({
             role: "assistant",
             mode: requestMode,
             content: plan.summary,
@@ -226,7 +293,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
       }
     } catch (requestError) {
       const message = errorMessage(requestError, "AI 请求失败");
-      appendMessage(conversationId, createConversationMessage({
+      replaceMessage(conversationId, placeholder.id, createConversationMessage({
         role: "assistant",
         mode: requestMode,
         content: message,
@@ -234,6 +301,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
       }));
       onError(message);
     } finally {
+      if (unlisten) unlisten();
       setBusy("");
     }
   }
@@ -382,7 +450,10 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
                   <strong>{message.role === "user" ? "你" : "AI"}</strong>
                   <small>{message.mode === "agent" ? "Agent" : "Chat"} · {formatDate(message.createdAt)}</small>
                 </header>
-                <p>{message.content}</p>
+                <p>
+                  {message.pending && <LoaderCircle className="spin" size={14} />}
+                  {message.content}
+                </p>
                 {message.plan && (
                   <AgentPlanCard
                     plan={message.plan}
@@ -477,14 +548,17 @@ function AgentRunCard({ run }: { run: AiAgentRun }) {
       </div>
       {run.steps.map((step, index) => (
         <div className="agent-run-step" key={step.plan.idempotencyKey}>
-          <span>{index + 1}</span>
-          <div>
-            <strong>{step.plan.action}</strong>
-            <small>{step.plan.envId ?? "全局"}</small>
+          <span className="agent-step-index">{index + 1}</span>
+          <div className="agent-run-step-main">
+            <div className="agent-run-step-line">
+              <strong>{agentStepTitle(step.plan)}</strong>
+              <span className={`status-badge ${step.execution.operation?.status ?? "succeeded"}`}>
+                {statusLabel[step.execution.operation?.status ?? "succeeded"] ?? step.execution.operation?.status}
+              </span>
+            </div>
+            <small>{agentStepMeta(step.plan, step.execution)}</small>
+            <JsonPreview label="工具参数" value={agentStepArguments(step.plan)} />
           </div>
-          <span className={`status-badge ${step.execution.operation?.status ?? "succeeded"}`}>
-            {statusLabel[step.execution.operation?.status ?? "succeeded"] ?? step.execution.operation?.status}
-          </span>
         </div>
       ))}
     </div>
@@ -559,8 +633,43 @@ function ContextRow({ label, value, mono = false }: { label: string; value: stri
   return <div><dt>{label}</dt><dd className={mono ? "mono" : ""} title={value}>{value}</dd></div>;
 }
 
+function agentStepTitle(plan: AiAgentPlan) {
+  const tool = agentToolName(plan);
+  return tool ? `${plan.action} · ${tool}` : plan.action;
+}
+
+function agentStepMeta(plan: AiAgentPlan, execution: AiAgentExecution) {
+  const target = plan.envId ?? "全局";
+  const operationId = execution.operation?.id;
+  return operationId ? `${target} · Operation ${operationId}` : target;
+}
+
+function agentToolName(plan: AiAgentPlan) {
+  const argumentsRecord = recordValue(plan.arguments);
+  return stringField(argumentsRecord, "tool");
+}
+
+function agentStepArguments(plan: AiAgentPlan) {
+  const argumentsRecord = recordValue(plan.arguments);
+  if (!argumentsRecord) return plan.arguments ?? {};
+  if ("arguments" in argumentsRecord) return argumentsRecord.arguments ?? {};
+  const { tool: _tool, ...rest } = argumentsRecord;
+  return rest;
+}
+
 function JsonPreview({ label, value }: { label: string; value: unknown }) {
   return <div className="json-preview"><div><strong>{label}</strong><button className="icon-button" type="button" title="复制 JSON" aria-label={`复制${label}`} onClick={() => void navigator.clipboard?.writeText(JSON.stringify(value, null, 2))}><Copy size={14} /></button></div><pre>{JSON.stringify(value ?? null, null, 2)}</pre></div>;
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringField(record: Record<string, unknown> | null, key: string) {
+  const value = record?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
 }
 
 function errorMessage(error: unknown, fallback: string) {

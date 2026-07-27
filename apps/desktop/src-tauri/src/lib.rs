@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tauri::{
-    AppHandle, Manager, Runtime, WindowEvent,
+    AppHandle, Emitter, Manager, Runtime, WindowEvent,
     menu::{Menu, MenuItem},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
 };
@@ -605,6 +605,17 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 if startup_manager.start_runtime().await.is_ok() {
                     let _ = startup_manager.apply_startup_policy().await;
+                }
+            });
+            // Forward live manager events (agent progress, etc.) to the
+            // frontend so the AI page can show real-time status instead of
+            // relying solely on the 1500ms eventsSince poll.
+            let event_app = app.handle().clone();
+            let event_manager = manager.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut receiver = event_manager.subscribe_events();
+                while let Ok(event) = receiver.recv().await {
+                    let _ = event_app.emit("manager-event", event);
                 }
             });
             Ok(())

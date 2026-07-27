@@ -170,8 +170,11 @@ Remove-Item Env:BROSDK_API_KEY
 $env:BROSDK_AI_API_KEY = Read-Host "AI API Key"
 $env:BROSDK_E2E_ENV_ID = "<existing-env-id>"
 npm run e2e:ai-assistant
+npm run e2e:ai-assistant:desktop
 Remove-Item Env:BROSDK_AI_API_KEY, Env:BROSDK_E2E_ENV_ID
 ```
+
+第二条命令会启动真实 Tauri 窗口，在隔离数据目录中复用 DPAPI 加密凭据，自动创建全局 Agent 会话并验证停止环境的实时状态查询；测试不会把密钥明文写入仓库或报告。
 
 ## MCP 与 AI Agent
 
@@ -181,11 +184,11 @@ Remove-Item Env:BROSDK_AI_API_KEY, Env:BROSDK_E2E_ENV_ID
 http://127.0.0.1:<embedded-port>/sdk/v1/mcp
 ```
 
-Manager 从运行时 `tools/list` 动态发现工具及 `inputSchema`。所有调用都连接同一个 DLL 全局 endpoint，但会话的模型工具目录按作用域生成：全局会话获得全局读取和带显式 envId 的 `browser.open/browser.close`，单环境会话获得绑定环境的页面工具与隐藏 envId 的生命周期工具。单环境调用由 Manager 覆盖写入绑定的 `arguments.envId`；`env.list/resolve/get/create/update/destroy` 不会混入单环境页面工具白名单。
+Manager 从运行时 `tools/list` 动态发现工具及 `inputSchema`。所有调用都连接同一个 DLL 全局 endpoint，但会话的模型工具目录按作用域生成：全局会话获得全局读取、带显式 envId 的 `browser.open/browser.close`，以及 DLL 广告的 `env.navigate/env.tabs/...` 多环境浏览器工具；单环境会话获得同一批页面工具但隐藏 envId。单环境调用由 Manager 覆盖写入绑定的 `arguments.envId`；`env.list/resolve/get/create/update/destroy` 不会混入页面工具白名单。
 
 端口设置留空时，Manager 会在 SDK 初始化前自动选择一个可用的 `127.0.0.1` 端口并传给 DLL。设置具体端口只用于需要固定 endpoint 的集成场景，修改后需重启 Runtime Host。
 
-Chat 与 Agent 都通过 OpenAI-compatible 原生 `tools/tool_calls` 接入。Chat 只允许当前会话目录中的读取工具；Agent 从 DLL 目录额外绑定 `browser.open/browser.close` 和当前环境的页面工具，并把函数调用转换为可批准计划或最多 4 轮的自动工具循环。全局 Agent 可在请求中明确指定任一 envId；单环境 Agent 只能操作创建时绑定的 envId，提示词中的其它环境会被拒绝。执行前的 `browser.status`、生命周期调用和 DLL callback 都由 Manager 关联到同一 operation；AI 不直接持有 API Key、userSig、完整 CDP URL 或代理凭据。
+Chat 与 Agent 都通过 OpenAI-compatible 原生 `tools/tool_calls` 接入。Chat 只允许当前会话目录中的读取工具；Agent 从 DLL 目录额外绑定 `browser.open/browser.close` 和页面工具，并把函数调用转换为可批准计划或最多 20 轮的自动工具循环。全局 Agent 可在请求中明确指定任一 envId；单环境 Agent 只能操作创建时绑定的 envId，提示词中的其它环境会被拒绝。自动执行卡片会展示每一步的工具名、envId、operation 和脱敏后的工具参数，便于区分一次导航和后续读取/确认等连续 `mcp.call`。执行前的 `browser.status`、生命周期调用和 DLL callback 都由 Manager 关联到同一 operation；AI 不直接持有 API Key、userSig、完整 CDP URL 或代理凭据。
 
 ## 数据与安全
 

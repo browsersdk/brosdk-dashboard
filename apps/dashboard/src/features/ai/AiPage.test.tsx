@@ -8,6 +8,7 @@ const api = vi.hoisted(() => ({
   plan: vi.fn(),
   execute: vi.fn(),
   run: vi.fn(),
+  onManagerEvent: vi.fn(),
 }));
 const scrollTo = vi.fn();
 
@@ -16,6 +17,7 @@ vi.mock("../../api", () => ({
   aiPlanAgent: api.plan,
   aiExecuteAgent: api.execute,
   aiRunAgent: api.run,
+  onManagerEvent: api.onManagerEvent,
   isDesktopRuntime: () => true,
 }));
 
@@ -65,6 +67,8 @@ beforeEach(() => {
   api.plan.mockReset();
   api.execute.mockReset();
   api.run.mockReset();
+  api.onManagerEvent.mockReset();
+  api.onManagerEvent.mockResolvedValue(() => {});
 });
 
 describe("AiPage", () => {
@@ -240,6 +244,75 @@ describe("AiPage", () => {
     expect(api.plan).not.toHaveBeenCalled();
     expect(api.execute).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: "批准并执行" })).toBeNull();
+  });
+
+  it("shows MCP tool names and arguments in automatic Agent steps", async () => {
+    api.run.mockResolvedValue({
+      answer: "已打开百度",
+      model: "deepseek-v4-flash",
+      maxToolRounds: 20,
+      steps: [{
+        plan: {
+          summary: "打开百度",
+          action: "mcp.call",
+          envId: "env-1",
+          expectedState: "ready",
+          idempotencyKey: "navigate-key",
+          arguments: {
+            tool: "env.navigate",
+            arguments: { url: "https://www.baidu.com/" },
+          },
+        },
+        execution: {
+          action: "mcp.call",
+          operation: { id: "operation-navigate", status: "succeeded" },
+          response: null,
+          statusSemantics: "MCP completed",
+          replayed: false,
+        },
+      }],
+    });
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "自动执行" }));
+    submitPrompt("打开百度");
+
+    await screen.findByText("已打开百度");
+    expect(screen.getByText("mcp.call · env.navigate")).toBeTruthy();
+    expect(screen.getByText(/Operation operation-navigate/)).toBeTruthy();
+    expect(screen.getByText("工具参数")).toBeTruthy();
+    expect(screen.getByText(/https:\/\/www\.baidu\.com\//)).toBeTruthy();
+  });
+
+  it("shows a thinking placeholder and updates it from agent-step events", async () => {
+    let emit: ((event: { eventType: string; payload: unknown }) => void) = () => {};
+    api.onManagerEvent.mockImplementation((cb: (event: unknown) => void) => {
+      emit = cb as typeof emit;
+      return Promise.resolve(() => {});
+    });
+    let resolveRun!: (value: { answer: string; model: string; maxToolRounds: number; steps: unknown[] }) => void;
+    api.run.mockImplementation(() => new Promise((resolve) => { resolveRun = resolve; }));
+    renderPage();
+
+    fireEvent.click(screen.getByRole("button", { name: "Agent" }));
+    fireEvent.click(screen.getByRole("button", { name: "自动执行" }));
+    submitPrompt("重启环境 env-1");
+
+    // While the run is in flight, the placeholder is visible.
+    await screen.findByText("AI 正在思考…");
+
+    // A live agent-step event updates the placeholder content.
+    emit({
+      eventType: "ai.agent-step",
+      payload: { action: "environment.stop", envId: "env-1", stepIndex: 0 },
+    });
+    await screen.findByText("正在执行第 1 步：停止环境…");
+
+    // When the run resolves, the placeholder is replaced by the real answer.
+    resolveRun({ answer: "已完成", model: "deepseek-v4-flash", maxToolRounds: 20, steps: [] });
+    await screen.findByText("已完成");
+    expect(screen.queryByText("AI 正在思考…")).toBeNull();
   });
 
   it("submits with Enter and keeps Shift+Enter for a newline", async () => {

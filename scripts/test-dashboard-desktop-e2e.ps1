@@ -3,6 +3,7 @@ param(
     [string]$DesktopExecutable = "",
     [switch]$FirstRunOnly,
     [switch]$AgentLifecycle,
+    [switch]$AgentStatusQuery,
     [string]$TargetEnvironmentId = ""
 )
 
@@ -26,8 +27,11 @@ $aiLabel = "AI " + (-join ([char[]](0x52A9, 0x624B)))
 $aiProviderSettingsLabel = "AI Provider " + (-join ([char[]](0x8BBE, 0x7F6E)))
 $aiRequestLabel = "AI " + (-join ([char[]](0x8BF7, 0x6C42)))
 $aiReplyLabel = "AI " + (-join ([char[]](0x56DE, 0x590D)))
+$aiErrorLabel = "AI " + (-join ([char[]](0x9519, 0x8BEF)))
 $generatePlanLabel = -join ([char[]](0x751F, 0x6210, 0x8BA1, 0x5212))
 $approvePlanLabel = -join ([char[]](0x6279, 0x51C6, 0x5E76, 0x6267, 0x884C))
+$automaticExecutionLabel = -join ([char[]](0x81EA, 0x52A8, 0x6267, 0x884C))
+$runAgentLabel = (-join ([char[]](0x8FD0, 0x884C))) + " Agent"
 $newConversationLabel = -join ([char[]](0x65B0, 0x5EFA, 0x4F1A, 0x8BDD))
 $singleEnvironmentLabel = -join ([char[]](0x5355, 0x73AF, 0x5883))
 $newConversationEnvironmentLabel = -join ([char[]](0x65B0, 0x4F1A, 0x8BDD, 0x5173, 0x8054, 0x73AF, 0x5883))
@@ -50,6 +54,8 @@ if (-not $resolvedDataDir.StartsWith($tempRoot, [StringComparison]::OrdinalIgnor
 
 $originalDataDir = $env:BROSDK_DATA_DIR
 $originalWorkDir = $env:BROSDK_WORK_DIR
+$originalAiBaseUrl = $env:BROSDK_AI_BASE_URL
+$originalAiModel = $env:BROSDK_AI_MODEL
 $desktopProcess = $null
 $viteProcess = $null
 $ownsDesktop = $false
@@ -69,6 +75,8 @@ $agentPlanObserved = $false
 $agentApprovalInvoked = $false
 $agentOperationObserved = $false
 $chatEnterReplyObserved = $false
+$agentStoppedStatusObserved = $false
+$agentStatusLeftEnvironmentStopped = $false
 $targetEnvId = $null
 $environmentConversationCreated = $false
 
@@ -214,6 +222,11 @@ function New-DashboardConversation($DashboardWindow, [string]$EnvironmentId = ""
 }
 
 try {
+    if ($AgentStatusQuery -and [string]::IsNullOrWhiteSpace($TargetEnvironmentId) -and
+        -not [string]::IsNullOrWhiteSpace($env:BROSDK_E2E_ENV_ID)) {
+        $TargetEnvironmentId = $env:BROSDK_E2E_ENV_ID
+    }
+
     if ([string]::IsNullOrWhiteSpace($DesktopExecutable)) {
         $desktopProcess = Get-Process -Name "brosdk-desktop" -ErrorAction SilentlyContinue |
             Sort-Object StartTime -Descending |
@@ -264,7 +277,35 @@ try {
             }
         }
 
+        if (-not $FirstRunOnly) {
+            $configuredDataDir = $null
+            $configPath = Join-Path $env:LOCALAPPDATA "BroSDK Dashboard\config\data-dir.json"
+            if (Test-Path -LiteralPath $configPath) {
+                $configuredDataDir = (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json).dataDir
+            }
+            $sourceDataDir = if ([string]::IsNullOrWhiteSpace($configuredDataDir)) {
+                Join-Path $env:LOCALAPPDATA "BroSDK Dashboard"
+            }
+            else {
+                [IO.Path]::GetFullPath($configuredDataDir)
+            }
+            $targetSecrets = Join-Path $resolvedDataDir "secrets"
+            New-Item -ItemType Directory -Path $targetSecrets -Force | Out-Null
+            foreach ($secretName in @("sdk-api-key.bin", "ai-api-key.bin")) {
+                $sourceSecret = Join-Path (Join-Path $sourceDataDir "secrets") $secretName
+                if (Test-Path -LiteralPath $sourceSecret) {
+                    Copy-Item -LiteralPath $sourceSecret -Destination (Join-Path $targetSecrets $secretName)
+                }
+            }
+        }
+
         $env:BROSDK_DATA_DIR = $resolvedDataDir
+        if ([string]::IsNullOrWhiteSpace($env:BROSDK_AI_BASE_URL)) {
+            $env:BROSDK_AI_BASE_URL = "https://api.deepseek.com"
+        }
+        if ([string]::IsNullOrWhiteSpace($env:BROSDK_AI_MODEL)) {
+            $env:BROSDK_AI_MODEL = "deepseek-v4-flash"
+        }
         if ([string]::IsNullOrWhiteSpace($env:BROSDK_WORK_DIR)) {
             $env:BROSDK_WORK_DIR = Join-Path $repoRoot "runtime\sdk-work"
         }
@@ -369,17 +410,27 @@ try {
         "$stopPattern($TargetEnvironmentId)"
     }
 
-    $existingStop = Find-DashboardButton $window $targetStopPattern -Like -Enabled
-    if ($existingStop) {
-        Invoke-DashboardButton $existingStop
-        Wait-ForDashboardValue {
-            Find-DashboardButton $window $targetStartPattern -Like -Enabled
-        } "stopped baseline environment" | Out-Null
-    }
+    $baselineControl = Wait-ForDashboardValue {
+        $start = Find-DashboardButton $window $targetStartPattern -Like -Enabled
+        if ($start) {
+            return [pscustomobject]@{ Mode = "stopped"; Button = $start }
+        }
+        $stop = Find-ReadyEnvironmentStopButton $window $targetStopPattern
+        if ($stop) {
+            return [pscustomobject]@{ Mode = "ready"; Button = $stop }
+        }
+        return $false
+    } "stable target environment control"
 
-    $startButton = Wait-ForDashboardValue {
-        Find-DashboardButton $window $targetStartPattern -Like -Enabled
-    } "enabled environment start button"
+    if ($baselineControl.Mode -eq "ready") {
+        Invoke-DashboardButton $baselineControl.Button
+        $startButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window $targetStartPattern -Like -Enabled
+        } "stopped baseline environment"
+    }
+    else {
+        $startButton = $baselineControl.Button
+    }
     if ($startButton.Current.Name -match "\(([^)]+)\)$") {
         $targetEnvId = $Matches[1]
     }
@@ -391,6 +442,109 @@ try {
     }
     $targetStartPattern = "$startPattern($targetEnvId)"
     $targetStopPattern = "$stopPattern($targetEnvId)"
+
+    if ($AgentStatusQuery) {
+        $aiButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window $aiLabel -Enabled
+        } "AI navigation for stopped-status query"
+        Invoke-DashboardButton $aiButton
+
+        New-DashboardConversation $window
+        $agentModeButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window "Agent" -Enabled
+        } "Agent mode for stopped-status query"
+        Invoke-DashboardButton $agentModeButton
+        $automaticExecutionButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window $automaticExecutionLabel -Enabled
+        } "automatic Agent execution mode"
+        Invoke-DashboardButton $automaticExecutionButton
+        $agentRequest = Wait-ForDashboardValue {
+            Find-DashboardEdit $window $aiRequestLabel -Enabled
+        } "Agent stopped-status request input"
+        $statusPrompt = (-join ([char[]](0x53EA, 0x67E5, 0x8BE2, 0x73AF, 0x5883))) +
+            " $targetEnvId " +
+            (-join ([char[]](0x662F, 0x5426, 0x5DF2, 0x7ECF, 0x542F, 0x52A8, 0xFF0C,
+                0x4E0D, 0x6267, 0x884C, 0x542F, 0x52A8, 0x3001, 0x505C, 0x6B62, 0x6216,
+                0x5176, 0x5B83, 0x5199, 0x64CD, 0x4F5C, 0x3002, 0x8BF7, 0x6839, 0x636E,
+                0x5F53, 0x524D, 0x5B9E, 0x65F6, 0x72B6, 0x6001, 0x56DE, 0x7B54, 0x3002)))
+        $agentRequest.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($statusPrompt)
+        $runAgentButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window $runAgentLabel -Enabled
+        } "enabled automatic Agent button"
+        Invoke-DashboardButton $runAgentButton
+
+        Wait-ForDashboardValue {
+            $elements = Get-DashboardElements $window
+            $errorReply = @($elements) | Where-Object {
+                $_.Current.Name -eq $aiErrorLabel
+            } | Select-Object -Last 1
+            if ($errorReply) {
+                $errorText = @($errorReply.FindAll(
+                    [System.Windows.Automation.TreeScope]::Descendants,
+                    [System.Windows.Automation.Condition]::TrueCondition
+                )) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }
+                throw "Agent stopped-status query returned an AI error: $($errorText -join ' ')"
+            }
+            $reply = @($elements) | Where-Object {
+                $_.Current.Name -eq $aiReplyLabel
+            } | Select-Object -Last 1
+            if (-not $reply) {
+                return $false
+            }
+            $replyText = (@($reply.FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants,
+                [System.Windows.Automation.Condition]::TrueCondition
+            )) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join " "
+            $normalizedReply = $replyText.ToLowerInvariant()
+            $claimsReady = @(
+                "ready",
+                (-join ([char[]](0x5DF2, 0x7ECF, 0x542F, 0x52A8))),
+                (-join ([char[]](0x5DF2, 0x542F, 0x52A8, 0x6210, 0x529F)))
+            ) |
+                Where-Object { $normalizedReply.Contains($_) } |
+                Select-Object -First 1
+            $negatedRunning = @(
+                ((-join ([char[]](0x4E0D, 0x5728))) + $runningLabel),
+                (-join ([char[]](0x672A, 0x8FD0, 0x884C))),
+                (-join ([char[]](0x672A, 0x542F, 0x52A8)))
+            ) |
+                Where-Object { $normalizedReply.Contains($_) } |
+                Select-Object -First 1
+            if (-not $claimsReady -and $normalizedReply.Contains($runningLabel) -and -not $negatedRunning) {
+                $claimsReady = $runningLabel
+            }
+            if ($claimsReady) {
+                throw "Agent incorrectly reported a stopped environment as running: $replyText"
+            }
+            $reportsStopped = @(
+                "stopped",
+                (-join ([char[]](0x672A, 0x542F, 0x52A8))),
+                (-join ([char[]](0x6CA1, 0x6709, 0x542F, 0x52A8))),
+                (-join ([char[]](0x672A, 0x8FD0, 0x884C))),
+                (-join ([char[]](0x5DF2, 0x505C, 0x6B62)))
+            ) |
+                Where-Object { $normalizedReply.Contains($_) } |
+                Select-Object -First 1
+            if ($reportsStopped) {
+                return $true
+            }
+            return $false
+        } "automatic Agent stopped-status reply" | Out-Null
+        $agentStoppedStatusObserved = $true
+
+        $environmentButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window $environmentLabel -Enabled
+        } "environment navigation after stopped-status query"
+        Invoke-DashboardButton $environmentButton
+        Wait-ForDashboardValue {
+            Find-DashboardButton $window $targetStartPattern -Like -Enabled
+        } "environment left stopped by Agent status query" | Out-Null
+        $agentStatusLeftEnvironmentStopped = $true
+    }
+
+    $startButton = Wait-ForDashboardValue {
+        Find-DashboardButton $window $targetStartPattern -Like -Enabled
+    } "enabled environment start button after AI status verification"
 
     if ($AgentLifecycle) {
         $aiButton = Wait-ForDashboardValue {
@@ -404,6 +558,10 @@ try {
             Find-DashboardButton $window "Agent" -Enabled
         } "Agent mode"
         Invoke-DashboardButton $agentModeButton
+        $manualExecutionButton = Wait-ForDashboardValue {
+            Find-DashboardButton $window (-join ([char[]](0x6BCF, 0x6B21, 0x6279, 0x51C6))) -Enabled
+        } "manual Agent execution mode"
+        Invoke-DashboardButton $manualExecutionButton
         $agentRequest = Wait-ForDashboardValue {
             Find-DashboardEdit $window $aiRequestLabel -Enabled
         } "Agent request input"
@@ -571,6 +729,9 @@ try {
         agentApprovalInvoked = $agentApprovalInvoked
         agentOperationObserved = $agentOperationObserved
         chatEnterReplyObserved = $chatEnterReplyObserved
+        agentStatusQueryRequested = [bool]$AgentStatusQuery
+        agentStoppedStatusObserved = $agentStoppedStatusObserved
+        agentStatusLeftEnvironmentStopped = $agentStatusLeftEnvironmentStopped
     } | ConvertTo-Json
 }
 finally {
@@ -611,6 +772,18 @@ finally {
     }
     else {
         $env:BROSDK_WORK_DIR = $originalWorkDir
+    }
+    if ($null -eq $originalAiBaseUrl) {
+        Remove-Item Env:BROSDK_AI_BASE_URL -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:BROSDK_AI_BASE_URL = $originalAiBaseUrl
+    }
+    if ($null -eq $originalAiModel) {
+        Remove-Item Env:BROSDK_AI_MODEL -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:BROSDK_AI_MODEL = $originalAiModel
     }
     if ($ownsDesktop -and (Test-Path -LiteralPath $resolvedDataDir)) {
         Remove-Item -LiteralPath $resolvedDataDir -Recurse -Force

@@ -1,6 +1,9 @@
 use std::{error::Error, time::Duration};
 
-use domain::{AiAgentRunRequest, AiChatRequest, EnvironmentRecord, OperationRecord};
+use domain::{
+    AiAgentExecuteRequest, AiAgentPlan, AiAgentRunRequest, AiChatRequest, EnvironmentRecord,
+    OperationRecord,
+};
 use manager::Manager;
 use serde_json::{Value, json};
 use tokio::time::{Instant, sleep};
@@ -53,6 +56,46 @@ async fn main() -> Result<(), Box<dyn Error>> {
             failed_stage = "stopped-baseline";
             ensure_operation_active_or_succeeded(&manager.stop_environment(&env_id).await?)?;
             wait_for_state(&manager, &env_id, "stopped", STOP_TIMEOUT).await?;
+        }
+
+        failed_stage = "inactive-env-get-tool-error";
+        let inactive_get_plan = AiAgentPlan {
+            summary: "Probe the inactive-only env.get contract".into(),
+            action: "mcp.call".into(),
+            env_id: None,
+            expected_state: None,
+            idempotency_key: uuid::Uuid::new_v4().to_string(),
+            arguments: json!({
+                "tool": "env.get",
+                "arguments": { "envId": env_id },
+            }),
+        };
+        let inactive_get = manager
+            .ai_execute_agent(AiAgentExecuteRequest {
+                plan: inactive_get_plan.clone(),
+                approved: true,
+                automatic: true,
+            })
+            .await?;
+        if inactive_get
+            .operation
+            .as_ref()
+            .is_none_or(|operation| operation.status != "failed")
+            || inactive_get.response.as_ref().is_none_or(|response| {
+                !contains_key_string(response, "code", "ENV_NOT_FOUND")
+            })
+        {
+            return Err("inactive env.get was not preserved as a structured failed tool result".into());
+        }
+        let replayed_inactive_get = manager
+            .ai_execute_agent(AiAgentExecuteRequest {
+                plan: inactive_get_plan,
+                approved: true,
+                automatic: true,
+            })
+            .await?;
+        if !replayed_inactive_get.replayed {
+            return Err("failed MCP tool result was left uncertain instead of replayable".into());
         }
 
         failed_stage = "agent-stopped-status";
@@ -113,6 +156,45 @@ async fn main() -> Result<(), Box<dyn Error>> {
             return Err(
                 "automatic Agent did not start through DLL global MCP or reach ready".into(),
             );
+        }
+
+        failed_stage = "global-agent-navigate";
+        let navigate_run = manager
+            .ai_run_agent(AiAgentRunRequest {
+                prompt: format!(
+                    "这是全局会话。环境 {env_id} 已经 ready，请打开 https://example.com/。必须使用导航工具，不要调用 browser.open；完成后简短确认。"
+                ),
+                context_env_id: None,
+                history: Vec::new(),
+                approved: true,
+            })
+            .await?;
+        let used_navigate = navigate_run.steps.iter().any(|step| {
+            step.plan.action == "mcp.call"
+                && step
+                    .plan
+                    .arguments
+                    .get("tool")
+                    .and_then(Value::as_str)
+                    .is_some_and(|tool| matches!(tool, "env.navigate" | "navigate"))
+                && step
+                    .execution
+                    .operation
+                    .as_ref()
+                    .is_some_and(|operation| operation.status == "succeeded")
+        });
+        let used_lifecycle = navigate_run.steps.iter().any(|step| {
+            matches!(
+                step.plan.action.as_str(),
+                "environment.start" | "environment.stop"
+            )
+        });
+        if !used_navigate || used_lifecycle || environment(&manager, &env_id).await?.status != "ready"
+        {
+            return Err(format!(
+                "global Agent navigation mismatch: usedNavigate={used_navigate}, usedLifecycle={used_lifecycle}"
+            )
+            .into());
         }
 
         failed_stage = "chat-mutation-guard";
@@ -213,10 +295,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Ok::<Value, Box<dyn Error>>(json!({
             "status": "passed",
             "automaticMcpActivated": true,
+            "inactiveEnvGetHandled": true,
             "stoppedStatusReplyVerified": true,
             "stoppedStatusToolRounds": stopped_status.steps.len(),
             "agentStartObserved": true,
             "agentLifecycleUsedGlobalMcp": true,
+            "globalNavigateToolObserved": true,
+            "globalNavigateAvoidedLifecycle": true,
             "chatMutationReplyVerified": true,
             "globalChatReplyVerified": true,
             "environmentChatReplyVerified": true,

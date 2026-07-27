@@ -36,6 +36,7 @@
 | 29. AI 会话最新消息跟随 | P1 | 已完成 | 新消息、Agent 状态和会话切换后自动滚动到最新内容 |
 | 30. MCP 自动激活与 AI 运行态强对账 | P0 | 已完成 | 自动环回端口启用全局 MCP，AI 决策前强制刷新 BrowserInfo |
 | 31. AI 生命周期统一到 DLL 全局 MCP | P0 | 已完成 | `browser.status/open/close`、operation/callback 关联和 stopped 状态真实 AI 回归 |
+| 32. AI 全局环境 MCP 与步骤可观测性 | P0 | 已完成 | 全局 `env.*` 页面工具进入 Agent，自动步骤显示工具名和脱敏参数 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -867,7 +868,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 新会话弹窗显式选择“全局/单环境”和 envId；主界面只读显示作用域，删除最后一个会话后创建全局会话，不存在静默改绑路径。
 - DLL 仍只建立一个全局 MCP endpoint。Manager 按会话互斥生成工具目录：全局只发现全局管理读取，单环境只发现绑定 ready 环境的页面工具，并排除全局环境管理工具。
 - 全局 Agent 可按提示词中的精确 envId 操作不同环境；单环境 Agent 的绑定 envId 优先且不可覆盖，提示词出现其它已知 envId 时返回 `INVALID_AGENT_PLAN`。
-- 自动 Agent 使用 Provider 原生 `tool_calls -> role=tool` 循环，最多 20 轮；生命周期工具等待 DLL callback/BrowserInfo 确认终态后才进入下一轮，因此重启严格执行 stop 后 start。
+- 自动 Agent 使用 Provider 原生 `tool_calls -> role=tool` 循环，最多 20 个工具回合；单轮返回多个 tool 调用时按顺序执行并在回合结束后一次性回填全部 tool 结果。生命周期工具等待 DLL callback/BrowserInfo 确认终态后才进入下一轮，因此重启严格执行 stop 后 start。
 - AI composer 改为常见的居中多行输入框和右下发送图标；Enter 发送、Shift+Enter 换行，桌面和 390x844 移动视口均无溢出。
 - 真实 DeepSeek E2E 分别验证全局 Chat、单环境 Chat、Chat mutation guard 和自动重启 stop/start/ready，2 个工具回合完成，环境恢复初始状态。
 - 真实 Windows Tauri E2E 验证首次初始化、SDK 自检、单环境会话 envId 选择、CDP/内部通道、全局 Chat Enter 发送、停止和操作中心；Dashboard 52 项、Rust workspace 114 项、Playwright 18 项、check/Clippy、production build、截图与 Windows release 构建验证全部通过。

@@ -24,7 +24,7 @@ npm run e2e:credential
 npm run e2e:dashboard:desktop
 ```
 
-该 runner 驱动 Windows Tauri 窗口中的设置与环境控件；初始化后先在全部环境 stopped 时执行一次 SDK 自检并要求 `sdkSelfCheckObserved=true`，再启动目标环境。它必须等待目标环境所在表格行明确显示“运行中”，不能把启动中已经可用的停止按钮误判为 ready；随后新建绑定目标 envId 的单环境 AI 会话，验证 CDP 地址或 DLL 内部控制通道、AI Provider 设置入口，再新建全局 Chat 验证 Enter 发送。测试结束前会把目标环境恢复为 stopped，隔离启动时还会关闭进程并清理临时数据目录。可用 `-AgentLifecycle -TargetEnvironmentId <envId>` 改为从单环境 Agent 生成计划和批准启动。
+该 runner 驱动 Windows Tauri 窗口中的设置与环境控件；初始化后先在全部环境 stopped 时执行一次 SDK 自检并要求 `sdkSelfCheckObserved=true`，再启动目标环境。它必须等待目标环境所在表格行明确显示“运行中”，不能把启动中已经可用的停止按钮误判为 ready；随后新建绑定目标 envId 的单环境 AI 会话，验证 CDP 地址或 DLL 内部控制通道、AI Provider 设置入口，再新建全局 Chat 验证 Enter 发送。测试结束前会把目标环境恢复为 stopped，隔离启动时还会关闭进程并清理临时数据目录。可用 `-AgentLifecycle -TargetEnvironmentId <envId>` 改为从单环境 Agent 生成计划和批准启动；`npm run e2e:ai-assistant:desktop` 会复制正式数据目录中的 DPAPI 密文到临时目录，通过真实 Tauri 界面和真实 AI Provider 自动询问 stopped 环境是否启动，并断言回复不声称 ready、环境未被写操作改变。
 
 可选测试变量：
 
@@ -499,3 +499,13 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - `npm run e2e:ai-assistant` 必须先在目标实际 stopped 时询问“是否已经启动”，断言回复不声称 ready、没有生命周期写步骤且环境仍 stopped；后续启动和重启的执行摘要必须包含 `transport=dll-global-mcp`。
 
 2026-07-27 阶段 31 真实结果：DeepSeek `deepseek-v4-flash` 在目标环境实际 stopped 时调用实时状态工具并明确回答未启动，随后全局 MCP 启动和自动重启通过，最终恢复初始状态。报告包含 `stoppedStatusReplyVerified=true`、`agentLifecycleUsedGlobalMcp=true`；实测并交付的 DLL 为 2.1.0.0，源码目录与发布包哈希一致。Dashboard 53 项、Rust workspace 120 项、Playwright 20 项、check/Clippy、production build 全部通过，凭据和目标 envId 未写入报告。
+
+## 34. 阶段 32 AI 全局环境 MCP 与步骤可观测性验收
+
+- 全局 Agent 工具目录必须包含 DLL 全局 endpoint 广告的 `env.*` 浏览器工具，模型函数名为 `mcp_global_*`，schema 显式要求 `envId`；单环境 Agent 继续隐藏 envId 并由 Manager 注入。
+- Chat 模式仍只绑定读取工具；`env.navigate/env.act` 等会改变页面状态的工具只能进入 Agent。
+- `mcp.call` 执行时必须区分全局读取工具、全局 `env.*` 浏览器工具和单环境浏览器工具。全局 `env.*` 调用从参数读取 envId，要求目标 ready，并把 operation 绑定到该 envId；`browser.status(envId)` 这类状态读取不能被误判为页面 mutation。
+- 自动 Agent 步骤 UI 必须显示工具名、envId、operation id 和脱敏后的工具参数，避免用户只能看到多个无法区分的 `mcp.call`。
+- `npm run e2e:ai-assistant` 必须覆盖真实全局会话导航：环境 ready 后要求打开 `https://example.com/`，断言模型使用 `env.navigate`，且没有再次调用生命周期 `browser.open/browser.close`。
+
+2026-07-27 阶段 32 真实结果：DeepSeek `deepseek-v4-flash` 真实 AI E2E 通过，报告包含 `globalNavigateToolObserved=true`、`globalNavigateAvoidedLifecycle=true`、`inactiveEnvGetHandled=true`、`initialStateRestored=true`。Dashboard AI 组件测试新增自动 Agent MCP 参数展示断言，Manager 单元测试新增全局 `env.navigate` 绑定、schema envId、Chat 过滤 mutation、全局状态读取不强制 ready 和全局环境工具执行校验。桌面 E2E 脚本修复 ready baseline 竞态、停止状态中文否定误判和自动/手动执行模式切换。

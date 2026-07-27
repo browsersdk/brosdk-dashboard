@@ -15,6 +15,7 @@ export interface AiConversationMessage {
   content: string;
   createdAt: string;
   error?: boolean;
+  pending?: boolean;
   plan?: AiAgentPlan;
   execution?: AiAgentExecution;
   run?: AiAgentRun;

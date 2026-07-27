@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { assertEnvironmentIdentity } from "./environmentIdentity";
 import type {
   AiAgentExecution,
@@ -115,6 +116,12 @@ export function isDesktopRuntime() {
 
 export async function eventsSince(sequence: number): Promise<ManagerEvent[]> {
   return invoke<ManagerEvent[]>("manager_events_since", { sequence });
+}
+
+export function onManagerEvent(
+  callback: (event: ManagerEvent) => void,
+): Promise<UnlistenFn> {
+  return listen<ManagerEvent>("manager-event", (event) => callback(event.payload));
 }
 
 export async function updateSettings(settings: ManagerSettings): Promise<void> {

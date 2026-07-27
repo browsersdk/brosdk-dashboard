@@ -2760,13 +2760,16 @@ h2 {
 }
 
 .agent-run-step {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
   min-height: 42px;
   padding-top: 8px;
   border-top: 1px solid #dfece5;
   gap: 9px;
 }
 
-.agent-run-step > span:first-child {
+.agent-step-index {
   display: grid;
   flex: 0 0 22px;
   width: 22px;
@@ -2779,11 +2782,18 @@ h2 {
   font-weight: 700;
 }
 
-.agent-run-step > div {
+.agent-run-step-main {
   display: grid;
   min-width: 0;
   margin-right: auto;
-  gap: 2px;
+  gap: 6px;
+}
+
+.agent-run-step-line {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
 }
 
 .agent-run-step strong,
@@ -2802,6 +2812,19 @@ h2 {
   color: #78857e;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 9px;
+}
+
+.agent-run-step .status-badge {
+  flex: 0 0 auto;
+}
+
+.agent-run-step .json-preview {
+  margin-top: 0;
+  background: #fbfdfc;
+}
+
+.agent-run-step .json-preview pre {
+  max-height: 148px;
 }
 
 .ai-conversation-empty {
