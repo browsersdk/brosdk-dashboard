@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Boxes, HardDriveDownload, LoaderCircle, Plus, X } from "lucide-react";
+import { actionTitle, desktopActionReason } from "../../actionTitles";
 import type { EnvironmentCreateInput, KernelRecord, ProxyProfile } from "../../types";
 
 const supportedKernelTypes = new Set(["chrome", "firefox", "chromium", "broium"]);
@@ -42,6 +43,8 @@ export function EnvironmentCreatePanel({
   );
   const [proxyProfileId, setProxyProfileId] = useState("");
   const [kernelId, setKernelId] = useState(availableKernels[0]?.id ?? "");
+  const createActionReason = desktopActionReason(desktop, busy, "环境创建正在执行");
+  const kernelRequiredReason = kernelId ? "" : "请选择内核版本";
 
   useEffect(() => {
     if (!availableKernels.some((kernel) => kernel.id === kernelId)) {
@@ -79,7 +82,7 @@ export function EnvironmentCreatePanel({
           <h2>创建环境</h2>
           <small>{availableKernels.length} 个本地内核</small>
         </div>
-        <button className="icon-button" type="button" title="关闭" aria-label="关闭创建面板" disabled={busy} onClick={onCancel}>
+        <button className="icon-button" type="button" title={actionTitle("关闭", busy ? "环境创建正在执行" : "")} aria-label="关闭创建面板" disabled={busy} onClick={onCancel}>
           <X size={15} />
         </button>
       </div>
@@ -108,13 +111,13 @@ export function EnvironmentCreatePanel({
 
       <div className="environment-create-actions">
         {availableKernels.length === 0 ? (
-          <button className="button secondary compact" type="button" disabled={busy} onClick={onOpenKernels}>
+          <button className="button secondary compact" type="button" title={actionTitle("前往内核", busy ? "环境创建正在执行" : "")} disabled={busy} onClick={onOpenKernels}>
             <HardDriveDownload size={14} />前往内核
           </button>
         ) : (
           <>
-            <button className="button secondary compact" type="button" disabled={busy} onClick={onCancel}>取消</button>
-            <button className="button primary compact" type="submit" disabled={!desktop || !kernelId || busy}>
+            <button className="button secondary compact" type="button" title={actionTitle("取消创建", busy ? "环境创建正在执行" : "")} disabled={busy} onClick={onCancel}>取消</button>
+            <button className="button primary compact" type="submit" title={actionTitle("创建环境", createActionReason || kernelRequiredReason)} disabled={!desktop || !kernelId || busy}>
               {busy ? <LoaderCircle className="spin" size={14} /> : <Plus size={14} />}创建环境
             </button>
           </>

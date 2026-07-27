@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Eraser, Globe2, LoaderCircle, Pencil, Play, RefreshCw, ScanSearch, Square, Trash2, X } from "lucide-react";
+import { actionTitle, desktopActionReason } from "../../actionTitles";
 import type { DashboardSnapshot, EnvironmentBindingSummary } from "../../types";
 import { environmentCdpLabel, environmentControlChannel } from "../../environmentIdentity";
 import { formatRemoteValue, readRemoteValue, remoteProxyLabel } from "./remoteDetails";
@@ -65,6 +66,12 @@ export function EnvironmentDetail({
   const metadataValid = normalizedName.length > 0
     && [...normalizedName].length <= 32
     && new TextEncoder().encode(normalizedSerial).length <= 64;
+  const actionReason = desktopActionReason(desktop, busy, "环境操作正在执行");
+  const startReason = actionReason || (!canStart ? "当前状态不能启动" : "");
+  const stopReason = actionReason || (!canStop ? "当前状态不能停止" : "");
+  const stoppedRequiredReason = actionReason || (environment.status !== "stopped" ? "环境需已停止" : "");
+  const readyRequiredReason = actionReason || (environment.status !== "ready" ? "环境需运行中" : "");
+  const metadataSaveReason = busy ? "环境操作正在执行" : !metadataValid ? "请检查名称和序列号" : "";
   const rows = [
     ["内核", [readRemoteValue(kernel, ["kernel"]), readRemoteValue(kernel, ["version"])].filter(Boolean).join(" ") || "-"],
     ["系统", formatRemoteValue(readRemoteValue(kernel, ["system"]) ?? readRemoteValue(fingerprint, ["system", "platform"]))],
@@ -87,34 +94,34 @@ export function EnvironmentDetail({
       </div>
       <div className="environment-detail-actions">
         {canStop ? (
-          <button className="button secondary compact" type="button" disabled={!desktop || busy} onClick={onStop}>
+          <button className="button secondary compact" type="button" title={actionTitle("停止环境", stopReason)} disabled={!desktop || busy} onClick={onStop}>
             <Square size={14} />停止
           </button>
         ) : (
-          <button className="button primary compact" type="button" disabled={!desktop || busy || !canStart} onClick={onStart}>
+          <button className="button primary compact" type="button" title={actionTitle("启动环境", startReason)} disabled={!desktop || busy || !canStart} onClick={onStart}>
             <Play size={14} />启动
           </button>
         )}
-        <button className="button secondary compact" type="button" disabled={!desktop || busy} onClick={onRefresh}>
+        <button className="button secondary compact" type="button" title={actionTitle("刷新详情", actionReason)} disabled={!desktop || busy} onClick={onRefresh}>
           {busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}刷新详情
         </button>
-        <button className="button secondary compact" type="button" disabled={!desktop || busy || environment.status !== "stopped"} onClick={() => {
+        <button className="button secondary compact" type="button" title={actionTitle("编辑信息", stoppedRequiredReason)} disabled={!desktop || busy || environment.status !== "stopped"} onClick={() => {
           setDraftName(environment.name);
           setDraftSerial(typeof remoteSerial === "string" ? remoteSerial : "");
           setEditing(true);
         }}>
           <Pencil size={14} />编辑信息
         </button>
-        <button className="button secondary compact" type="button" disabled={!desktop || busy || environment.status !== "ready"} onClick={onOpenCheck}>
+        <button className="button secondary compact" type="button" title={actionTitle("检查指纹", readyRequiredReason)} disabled={!desktop || busy || environment.status !== "ready"} onClick={onOpenCheck}>
           <Globe2 size={14} />检查指纹
         </button>
-        <button className="button secondary compact" type="button" disabled={!desktop || busy || environment.status !== "ready"} onClick={onCaptureDiagnostic}>
+        <button className="button secondary compact" type="button" title={actionTitle("页面诊断", readyRequiredReason)} disabled={!desktop || busy || environment.status !== "ready"} onClick={onCaptureDiagnostic}>
           <ScanSearch size={14} />页面诊断
         </button>
-        <button className="button secondary compact" type="button" disabled={!desktop || busy || environment.status !== "stopped"} onClick={() => setConfirmAction("cleanup")}>
+        <button className="button secondary compact" type="button" title={actionTitle("清理本地数据", stoppedRequiredReason)} disabled={!desktop || busy || environment.status !== "stopped"} onClick={() => setConfirmAction("cleanup")}>
           <Eraser size={14} />清理本地数据
         </button>
-        <button className="button danger compact" type="button" disabled={!desktop || busy || environment.status !== "stopped"} onClick={() => setConfirmAction("delete")}>
+        <button className="button danger compact" type="button" title={actionTitle("删除环境", stoppedRequiredReason)} disabled={!desktop || busy || environment.status !== "stopped"} onClick={() => setConfirmAction("delete")}>
           <Trash2 size={14} />删除环境
         </button>
       </div>
@@ -129,8 +136,8 @@ export function EnvironmentDetail({
           <label className="field"><span>环境名称</span><input aria-label="环境名称" value={draftName} onChange={(event) => setDraftName(event.target.value)} /></label>
           <label className="field"><span>序列号</span><input aria-label="序列号" value={draftSerial} onChange={(event) => setDraftSerial(event.target.value)} /></label>
           <div className="environment-metadata-actions">
-            <button className="button secondary compact" type="button" disabled={busy} onClick={() => setEditing(false)}>取消</button>
-            <button className="button primary compact" type="submit" disabled={busy || !metadataValid}>{busy ? <LoaderCircle className="spin" size={14} /> : null}保存</button>
+            <button className="button secondary compact" type="button" title={actionTitle("取消编辑", busy ? "环境操作正在执行" : "")} disabled={busy} onClick={() => setEditing(false)}>取消</button>
+            <button className="button primary compact" type="submit" title={actionTitle("保存信息", metadataSaveReason)} disabled={busy || !metadataValid}>{busy ? <LoaderCircle className="spin" size={14} /> : null}保存</button>
           </div>
         </form>
       )}

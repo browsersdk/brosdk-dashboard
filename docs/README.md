@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-27，阶段 0-33 已完成：
+截至 2026-07-27，阶段 0-34 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-33 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、不可变作用域 AI 会话、原生 tools 驱动的 Chat/Agent、DLL 全局多环境 MCP、全局 `env.*` 浏览器工具、自动 Agent 步骤参数可视化、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复、桌面单实例和逐页 UI 交互审查已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
+[roadmap.md](roadmap.md) 中阶段 0-34 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、不可变作用域 AI 会话、原生 tools 驱动的 Chat/Agent、DLL 全局多环境 MCP、全局 `env.*` 浏览器工具、自动 Agent 步骤参数可视化、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复、桌面单实例、逐页 UI 交互审查和全界面动作状态收口已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -122,6 +122,8 @@ brosdk-dashboard/
 阶段 32 AI 全局环境 MCP 与步骤可观测性已完成：全局 Agent 会话可绑定 DLL 广告的 `env.*` 页面工具，并要求模型显式传入 envId；单环境会话继续隐藏 envId 并由 Manager 覆盖注入。自动 Agent 步骤卡片显示 `mcp.call · env.navigate/env.tabs/...`、目标 envId、operation 和脱敏后的工具参数，便于区分一次用户意图下的启动、导航、读取和确认等连续工具调用。真实 DeepSeek 回归验证“打开百度”使用页面工具而不是生命周期工具，`mcp.call` 参数可见且不会误报未暴露工具。
 
 阶段 33 Dashboard UI/交互审查已完成：使用浏览器插件逐页检查总览、环境、指纹、代理、内核、MCP、AI、操作和设置，验证页面非空、无框架错误覆盖、无控制台 warning/error、无横向溢出，并补齐失败交互的回归。主导航切换会同步 `page` 查询参数并支持浏览器后退；AI 输入的按钮点击与 Enter 键共用同一个可提交条件，预览态或缺少 Key 时不会提交到 Tauri API；总览 MCP 状态区分“能力存在”和“端口已连接”，MCP 控制台禁用按钮提供悬停原因。最终 Dashboard 56 项、Playwright 桌面/移动 24 项、TypeScript/Rust check、Clippy 全部通过。
+
+阶段 34 全界面动作状态收口已完成：总览、环境、指纹、代理、内核、MCP、AI、操作和设置中的禁用按钮都提供明确悬停原因，桌面预览、忙碌、缺少目标环境、缺少 URL、未配置凭据等状态不再只表现为灰色按钮。新增共享 `actionTitle/desktopActionReason` 帮助器，统一桌面能力和忙碌态提示；表格动作列和 AI 会话列表的图标按钮固定为可点击尺寸，内核安装/卸载双按钮不会被表格压缩。Playwright 新增桌面/移动守护，逐页断言禁用动作有原因、图标按钮不小于 30px、无横向溢出；浏览器插件再次覆盖 9 个主要页面。最终 Dashboard 56 项、Playwright 桌面/移动 26 项、TypeScript/Rust check、Rustfmt 和 Clippy 全部通过。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Eye, EyeOff, KeyRound, LayoutDashboard, LoaderCircle, LogOut, ShieldCheck } from "lucide-react";
+import { actionTitle, desktopActionReason } from "../../actionTitles";
 
 interface ApiKeySetupProps {
   mode: "first-run" | "settings";
@@ -25,6 +26,9 @@ export function ApiKeySetup({
   const [apiKey, setApiKey] = useState("");
   const [visible, setVisible] = useState(false);
   const managed = source === "environment";
+  const credentialActionReason = desktopActionReason(desktop, busy, "凭据操作正在执行")
+    || (managed ? "API Key 由环境变量管理" : "");
+  const submitReason = credentialActionReason || (!apiKey.trim() ? "请输入 API Key" : "");
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -39,7 +43,7 @@ export function ApiKeySetup({
       <p className="credential-state">浏览器预览模式</p>
       {mode === "first-run" && (
         <div className="credential-actions">
-          <button className="button primary" type="button" onClick={onPreview} disabled={!onPreview}>
+          <button className="button primary" type="button" title={actionTitle("进入工作台预览", onPreview ? "" : "预览不可用")} onClick={onPreview} disabled={!onPreview}>
             <LayoutDashboard size={16} />进入工作台预览
           </button>
         </div>
@@ -76,11 +80,11 @@ export function ApiKeySetup({
       {managed && <p className="credential-state">由系统环境管理</p>}
       <div className="credential-actions">
         {mode === "settings" && onClear && (
-          <button className="button secondary" type="button" disabled={busy || managed || !desktop} onClick={() => void onClear()}>
+          <button className="button secondary" type="button" title={actionTitle("移除 API Key", credentialActionReason)} disabled={busy || managed || !desktop} onClick={() => void onClear()}>
             <LogOut size={15} />移除
           </button>
         )}
-        <button className="button primary" type="submit" disabled={!apiKey.trim() || busy || managed || !desktop}>
+        <button className="button primary" type="submit" title={actionTitle(mode === "first-run" ? "初始化" : "更换并初始化", submitReason)} disabled={!apiKey.trim() || busy || managed || !desktop}>
           {busy ? <LoaderCircle className="spin" size={16} /> : <ShieldCheck size={16} />}
           {mode === "first-run" ? "初始化" : "更换并初始化"}
         </button>

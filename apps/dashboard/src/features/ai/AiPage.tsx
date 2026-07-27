@@ -16,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { aiChat, aiExecuteAgent, aiPlanAgent, aiRunAgent, isDesktopRuntime, onManagerEvent } from "../../api";
+import { actionTitle } from "../../actionTitles";
 import type {
   AiAgentExecution,
   AiAgentPlan,
@@ -112,6 +113,12 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
           ? "请输入请求内容"
           : "";
   const canSubmit = submitDisabledReason === "";
+  const aiBusyReason = busy ? "AI 正在处理当前请求" : "";
+  const clearConversationReason = aiBusyReason
+    || (activeConversation.messages.length === 0 ? "当前会话为空" : "");
+  const createConversationReason = newConversationScope === "environment" && !newConversationEnvId
+    ? "请选择关联环境"
+    : "";
 
   useEffect(() => {
     saveConversationState(conversationState);
@@ -381,7 +388,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
           )}
         </div>
         <div className="ai-toolbar-provider">
-          <button className="icon-button" type="button" title="清空当前会话" aria-label="清空当前会话" disabled={activeConversation.messages.length === 0 || Boolean(busy)} onClick={clearCurrentConversation}>
+          <button className="icon-button" type="button" title={actionTitle("清空当前会话", clearConversationReason)} aria-label="清空当前会话" disabled={activeConversation.messages.length === 0 || Boolean(busy)} onClick={clearCurrentConversation}>
             <Eraser size={15} />
           </button>
           <div className="ai-provider-status">
@@ -410,7 +417,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
                   <strong>{conversation.title}</strong>
                   <small>{conversation.mode === "agent" ? "Agent" : "Chat"} · {conversation.contextEnvId ? "单环境" : "全局"} · {formatDate(conversation.updatedAt)}</small>
                 </button>
-                <button className="icon-button" type="button" title="删除会话" aria-label={`删除会话 ${conversation.title}`} disabled={Boolean(busy)} onClick={() => deleteConversation(conversation.id)}>
+                <button className="icon-button" type="button" title={actionTitle("删除会话", aiBusyReason)} aria-label={`删除会话 ${conversation.title}`} disabled={Boolean(busy)} onClick={() => deleteConversation(conversation.id)}>
                   <Trash2 size={13} />
                 </button>
               </div>
@@ -546,7 +553,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
             )}
             <footer>
               <button className="button secondary" type="button" onClick={() => setNewConversationOpen(false)}>取消</button>
-              <button className="button primary" type="button" disabled={newConversationScope === "environment" && !newConversationEnvId} onClick={confirmNewConversation}>创建</button>
+              <button className="button primary" type="button" title={actionTitle("创建会话", createConversationReason)} disabled={newConversationScope === "environment" && !newConversationEnvId} onClick={confirmNewConversation}>创建</button>
             </footer>
           </section>
         </div>
@@ -589,6 +596,7 @@ function AgentPlanCard({ plan, execution, attempted, busy, disabled, onExecute }
   disabled: boolean;
   onExecute: () => void;
 }) {
+  const executeReason = disabled ? "AI 正在处理当前请求" : "";
   return (
     <div className="agent-plan">
       <dl className="detail-list compact">
@@ -598,7 +606,7 @@ function AgentPlanCard({ plan, execution, attempted, busy, disabled, onExecute }
       </dl>
       <JsonPreview label="参数" value={plan.arguments} />
       {!execution && !attempted && (
-        <button className="button primary" type="button" disabled={disabled} onClick={onExecute}>
+        <button className="button primary" type="button" title={actionTitle("批准并执行", executeReason)} disabled={disabled} onClick={onExecute}>
           {busy ? <LoaderCircle className="spin" size={15} /> : <CheckCircle2 size={15} />}
           批准并执行
         </button>

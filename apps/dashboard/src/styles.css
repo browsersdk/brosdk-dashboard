@@ -388,8 +388,11 @@ h2 {
 }
 
 .icon-button {
+  flex: 0 0 32px;
   width: 32px;
+  min-width: 32px;
   height: 32px;
+  min-height: 32px;
   padding: 0;
   color: #4f5d72;
   border-color: #d8dde5;
@@ -1426,12 +1429,13 @@ h2 {
 }
 
 .row-actions {
-  width: 54px;
+  width: 82px;
   text-align: right !important;
+  white-space: nowrap;
 }
 
 .row-actions .icon-button {
-  margin-left: auto;
+  margin-left: 6px;
 }
 
 .environment-detail {
@@ -2317,7 +2321,7 @@ h2 {
 
 .ai-conversation-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
+  grid-template-columns: minmax(0, 1fr) 36px;
   align-items: center;
   min-height: 52px;
   border: 1px solid transparent;
@@ -2362,8 +2366,8 @@ h2 {
 }
 
 .ai-conversation-row .icon-button {
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   color: #8a94a3;
 }
 

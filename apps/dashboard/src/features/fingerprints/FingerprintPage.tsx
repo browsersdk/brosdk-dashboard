@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleDot, Columns3, Fingerprint, Globe2, List, LoaderCircle, RefreshCw, Search, X } from "lucide-react";
 import { isDesktopRuntime, openFingerprintCheck, refreshEnvironmentDetail } from "../../api";
+import { actionTitle, desktopActionReason } from "../../actionTitles";
 import type { DashboardSnapshot, OperationRecord } from "../../types";
 import { environmentControlLabel } from "../../environmentIdentity";
 import { fingerprintDetailGroups, formatFingerprintValue, formatRemoteValue, readRemoteValue, remoteProxyLabel } from "../environments/remoteDetails";
@@ -42,6 +43,11 @@ export function FingerprintPage({
   const selected = environments.find((environment) => environment.envId === selectedEnvId) ?? null;
   const binding = snapshot?.environmentBindings.find((item) => item.envId === selectedEnvId) ?? null;
   const groups = fingerprintDetailGroups(binding?.remoteFingerprint);
+  const fingerprintActionReason = desktopActionReason(desktop, Boolean(busy), "指纹操作正在执行");
+  const selectedRequiredReason = selected ? "" : "请选择环境";
+  const readyRequiredReason = selected && selected.status !== "ready" ? "环境需运行中" : "";
+  const comparisonRequiredReason = comparisonEnvIds.length > 0 ? "" : "请选择对比环境";
+  const clearComparisonReason = busy ? "指纹操作正在执行" : comparisonRequiredReason;
   const filtered = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase();
     if (!normalized) return environments;
@@ -144,17 +150,17 @@ export function FingerprintPage({
         </div>
         <div className="toolbar-group actions">
           {mode === "detail" ? <>
-            <button className="button secondary compact" type="button" disabled={!desktop || !selected || Boolean(busy)} onClick={() => selected && void refresh(selected.envId)}>
+            <button className="button secondary compact" type="button" title={actionTitle("刷新指纹", fingerprintActionReason || selectedRequiredReason)} disabled={!desktop || !selected || Boolean(busy)} onClick={() => selected && void refresh(selected.envId)}>
               {busy === `refresh:${selected?.envId}` ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}刷新
             </button>
-            <button className="button secondary compact" type="button" disabled={!desktop || !selected || selected.status !== "ready" || Boolean(busy)} onClick={() => selected && void openCheck(selected.envId)}>
+            <button className="button secondary compact" type="button" title={actionTitle("打开指纹检查页", fingerprintActionReason || selectedRequiredReason || readyRequiredReason)} disabled={!desktop || !selected || selected.status !== "ready" || Boolean(busy)} onClick={() => selected && void openCheck(selected.envId)}>
               {busy === `check:${selected?.envId}` ? <LoaderCircle className="spin" size={14} /> : <Globe2 size={14} />}检查页
             </button>
           </> : <>
-            <button className="button secondary compact" type="button" disabled={!desktop || comparisonEnvIds.length === 0 || Boolean(busy)} onClick={() => void refreshComparison()}>
+            <button className="button secondary compact" type="button" title={actionTitle("刷新所选指纹", fingerprintActionReason || comparisonRequiredReason)} disabled={!desktop || comparisonEnvIds.length === 0 || Boolean(busy)} onClick={() => void refreshComparison()}>
               {busy === "refresh:compare" ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}刷新所选
             </button>
-            <button className="button secondary compact" type="button" disabled={comparisonEnvIds.length === 0 || Boolean(busy)} onClick={() => setComparisonEnvIds([])}>
+            <button className="button secondary compact" type="button" title={actionTitle("清除对比选择", clearComparisonReason)} disabled={comparisonEnvIds.length === 0 || Boolean(busy)} onClick={() => setComparisonEnvIds([])}>
               <X size={14} />清除
             </button>
           </>}

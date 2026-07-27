@@ -1,6 +1,17 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const scenario = "preview=workspace&scenario=duplicate-names";
+const pageHeadings = {
+  overview: "总览",
+  environments: "环境",
+  fingerprints: "指纹",
+  proxies: "代理",
+  kernels: "内核",
+  mcp: "MCP",
+  ai: "AI 助手",
+  operations: "操作",
+  settings: "设置",
+} as const;
 
 test("browser first run offers a working workspace preview entry", async ({ page }) => {
   const issues = monitorPageIssues(page);
@@ -48,6 +59,47 @@ test("main navigation syncs the page query and browser history", async ({ page }
   await page.goBack();
   await expectHealthyDashboard(page, "环境");
   await expect(page).toHaveURL(/page=environments/);
+  expect(issues).toEqual([]);
+});
+
+test("disabled actions expose reasons and icon targets stay stable", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  for (const [pageKey, heading] of Object.entries(pageHeadings)) {
+    await page.goto(`/?${scenario}&page=${pageKey}`);
+    await expectHealthyDashboard(page, heading);
+
+    const missingTitles = await page.locator("button").evaluateAll((buttons) => {
+      const visible = (element: Element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+      };
+      return buttons
+        .filter((button) => visible(button) && (button as HTMLButtonElement).disabled && !button.getAttribute("title"))
+        .map((button) => (button.getAttribute("aria-label") || button.textContent || "").replace(/\s+/g, " ").trim());
+    });
+    expect(missingTitles).toEqual([]);
+
+    const smallIconButtons = await page.locator("button.icon-button").evaluateAll((buttons) => {
+      const visible = (element: Element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+      };
+      return buttons
+        .filter((button) => {
+          if (!visible(button)) return false;
+          const rect = button.getBoundingClientRect();
+          return rect.width < 30 || rect.height < 30;
+        })
+        .map((button) => ({
+          name: (button.getAttribute("aria-label") || button.textContent || "").replace(/\s+/g, " ").trim(),
+          width: Math.round(button.getBoundingClientRect().width),
+          height: Math.round(button.getBoundingClientRect().height),
+        }));
+    });
+    expect(smallIconButtons).toEqual([]);
+  }
   expect(issues).toEqual([]);
 });
 

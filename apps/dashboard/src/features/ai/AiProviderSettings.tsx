@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, KeyRound, LoaderCircle, ShieldCheck, Trash2 } from "lucide-react";
 import { clearAiApiKey, configureAiProvider, isDesktopRuntime } from "../../api";
+import { actionTitle, desktopActionReason } from "../../actionTitles";
 import type { DashboardSnapshot } from "../../types";
 
 export function AiProviderSettings({ snapshot, onRefresh, onError }: {
@@ -49,12 +50,17 @@ export function AiProviderSettings({ snapshot, onRefresh, onError }: {
 
   const envManaged = snapshot?.ai.baseUrlSource === "environment" || snapshot?.ai.modelSource === "environment";
   const keyManaged = snapshot?.ai.apiKeySource === "environment";
+  const desktop = isDesktopRuntime();
+  const providerActionReason = desktopActionReason(desktop, Boolean(busy), "AI Provider 操作正在执行");
+  const clearKeyReason = providerActionReason
+    || (keyManaged ? "AI API Key 由环境变量管理" : "")
+    || (!snapshot?.ai.apiKeyPresent ? "AI API Key 未配置" : "");
 
   return (
     <div className="settings-section ai-provider-settings">
       <div className="section-heading">
         <div><ShieldCheck size={17} /><h2>AI Provider</h2></div>
-        <button className="button primary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void save()}>
+        <button className="button primary compact" type="button" title={actionTitle("保存 AI Provider", providerActionReason)} disabled={!desktop || Boolean(busy)} onClick={() => void save()}>
           {busy === "save" ? <LoaderCircle className="spin" size={14} /> : <CheckCircle2 size={14} />}保存
         </button>
       </div>
@@ -70,7 +76,7 @@ export function AiProviderSettings({ snapshot, onRefresh, onError }: {
       </div>
       <div className="ai-provider-actions">
         <small>API Key 仅保存在平台安全存储，不会写入 SQLite、事件或 AI 上下文。</small>
-        <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy) || keyManaged || !snapshot?.ai.apiKeyPresent} onClick={() => void clearKey()}>
+        <button className="button secondary compact" type="button" title={actionTitle("清除 AI API Key", clearKeyReason)} disabled={!desktop || Boolean(busy) || keyManaged || !snapshot?.ai.apiKeyPresent} onClick={() => void clearKey()}>
           {busy === "clear" ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}清除 API Key
         </button>
       </div>

@@ -74,6 +74,7 @@ import { FingerprintPage } from "./features/fingerprints/FingerprintPage";
 import { McpPage } from "./features/mcp/McpPage";
 import { OperationsPage } from "./features/operations/OperationsPage";
 import { ApiKeySetup } from "./features/setup/ApiKeySetup";
+import { actionTitle, desktopActionReason } from "./actionTitles";
 import { environmentCdpLabel, environmentControlLabel, environmentLabel } from "./environmentIdentity";
 import { environmentProgress } from "./environmentProgress";
 import type {
@@ -585,6 +586,8 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
   const selectableVisibleIds = filteredRows.slice(0, 20).map((environment) => environment.envId);
   const allVisibleSelected = selectableVisibleIds.length > 0
     && selectableVisibleIds.every((envId) => selectedEnvIds.includes(envId));
+  const desktop = isDesktopRuntime();
+  const environmentActionReason = desktopActionReason(desktop, Boolean(busyAction), "环境操作正在执行");
 
   return (
     <section className={`module-workspace environment-workspace ${selected ? "with-detail" : ""}`}>
@@ -594,7 +597,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           <span className={`cache-state ${cache?.state ?? "empty"}`} title={cacheTitle} aria-live="polite">
             <Database size={13} />{cacheLabel}
           </span>
-          {!isDesktopRuntime() && <span className="cache-state empty" title="浏览器预览只读，真实环境操作请使用桌面客户端"><Monitor size={13} />浏览器预览 · 只读</span>}
+          {!desktop && <span className="cache-state empty" title="浏览器预览只读，真实环境操作请使用桌面客户端"><Monitor size={13} />浏览器预览 · 只读</span>}
           <label className="search-control">
             <Search size={15} />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索名称或 envId" />
@@ -613,13 +616,13 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           </label>
         </div>
         <div className="toolbar-group actions">
-          <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busyAction)} onClick={() => void runAction("sync", syncEnvironments)}>
+          <button className="button secondary compact" type="button" title={actionTitle("同步环境", environmentActionReason)} disabled={!desktop || Boolean(busyAction)} onClick={() => void runAction("sync", syncEnvironments)}>
             <RefreshCw className={busyAction === "sync" ? "spin" : ""} size={14} />同步
           </button>
-          <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busyAction)} onClick={() => void runAction("reconcile", reconcileRuntimes)}>
+          <button className="button secondary compact" type="button" title={actionTitle("对账运行态", environmentActionReason)} disabled={!desktop || Boolean(busyAction)} onClick={() => void runAction("reconcile", reconcileRuntimes)}>
             <Activity className={busyAction === "reconcile" ? "spin" : ""} size={14} />对账
           </button>
-          <button className="button primary compact" type="button" aria-expanded={createOpen} disabled={Boolean(busyAction)} onClick={() => { onError(""); setCreateOpen((open) => !open); }}>
+          <button className="button primary compact" type="button" title={actionTitle("新建环境", busyAction ? "环境操作正在执行" : "")} aria-expanded={createOpen} disabled={Boolean(busyAction)} onClick={() => { onError(""); setCreateOpen((open) => !open); }}>
             <Plus size={14} />新建环境
           </button>
         </div>
@@ -630,7 +633,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           kernels={snapshot?.kernels ?? []}
           platform={snapshot?.capabilities.platform ?? ""}
           busy={busyAction === "create"}
-          desktop={isDesktopRuntime()}
+          desktop={desktop}
           onCancel={() => setCreateOpen(false)}
           onOpenKernels={() => { setCreateOpen(false); onOpenKernels(); }}
           onCreate={create}
@@ -639,7 +642,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
       <EnvironmentBatchBar
         environments={rows}
         selectedIds={selectedEnvIds}
-        desktop={isDesktopRuntime()}
+        desktop={desktop}
         busy={Boolean(busyAction)}
         onAction={(action, envIds) => void runBatch(action, envIds)}
         onClear={() => setSelectedEnvIds([])}
@@ -649,7 +652,11 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
         <table className="module-table">
           <thead><tr><th className="selection-cell"><input type="checkbox" aria-label="选择当前结果（最多 20 个）" checked={allVisibleSelected} disabled={selectableVisibleIds.length === 0} onChange={(event) => setSelectedEnvIds(event.target.checked ? selectableVisibleIds : [])} /></th><th>环境</th><th>状态</th><th>CDP</th><th>最后事件</th><th aria-label="操作" /></tr></thead>
           <tbody>
-            {filteredRows.map((environment) => (
+            {filteredRows.map((environment) => {
+              const startReason = environmentActionReason
+                || (!["stopped", "failed"].includes(environment.status) ? "当前状态不能启动" : "");
+              const stopReason = environmentActionReason;
+              return (
               <tr key={environment.envId} data-env-id={environment.envId} className={selectedEnvId === environment.envId ? "selected" : ""} onClick={() => setSelectedEnvId(environment.envId)}>
                 <td className="selection-cell"><input type="checkbox" aria-label={environmentControlLabel("选择", environment)} checked={selectedEnvIds.includes(environment.envId)} disabled={!selectedEnvIds.includes(environment.envId) && selectedEnvIds.length >= 20} onClick={(event) => event.stopPropagation()} onChange={(event) => toggleEnvironment(environment.envId, event.target.checked)} /></td>
                 <td><div className="resource-name"><span className="resource-icon"><Boxes size={16} /></span><div><strong>{environment.name}</strong><small>{environment.envId}</small></div></div></td>
@@ -658,17 +665,18 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
                 <td>{environment.lastEvent}</td>
                 <td className="row-actions">
                   {environment.status === "ready" || environment.status === "starting" ? (
-                    <button className="icon-button danger" type="button" title="停止环境" aria-label={environmentControlLabel("停止", environment)} disabled={!isDesktopRuntime() || Boolean(busyAction)} onClick={(event) => { event.stopPropagation(); void runAction(`stop:${environment.envId}`, () => stopEnvironment(environment.envId)); }}>
+                    <button className="icon-button danger" type="button" title={actionTitle("停止环境", stopReason)} aria-label={environmentControlLabel("停止", environment)} disabled={!desktop || Boolean(busyAction)} onClick={(event) => { event.stopPropagation(); void runAction(`stop:${environment.envId}`, () => stopEnvironment(environment.envId)); }}>
                       {busyAction === `stop:${environment.envId}` ? <LoaderCircle className="spin" size={15} /> : <Square size={15} />}
                     </button>
                   ) : (
-                    <button className="icon-button" type="button" title="启动环境" aria-label={environmentControlLabel("启动", environment)} disabled={!isDesktopRuntime() || Boolean(busyAction) || !["stopped", "failed"].includes(environment.status)} onClick={(event) => { event.stopPropagation(); void runAction(`start:${environment.envId}`, () => startEnvironment(environment.envId)); }}>
+                    <button className="icon-button" type="button" title={actionTitle("启动环境", startReason)} aria-label={environmentControlLabel("启动", environment)} disabled={!desktop || Boolean(busyAction) || !["stopped", "failed"].includes(environment.status)} onClick={(event) => { event.stopPropagation(); void runAction(`start:${environment.envId}`, () => startEnvironment(environment.envId)); }}>
                       {busyAction === `start:${environment.envId}` ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
                     </button>
                   )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
         {filteredRows.length === 0 && (
@@ -684,7 +692,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           environment={selected}
           binding={selectedBinding}
           busy={Boolean(busyAction)}
-          desktop={isDesktopRuntime()}
+          desktop={desktop}
           diagnostic={diagnostics[selected.envId] ?? null}
           onClose={() => setSelectedEnvId(null)}
           onStart={() => void runAction(`start:${selected.envId}`, () => startEnvironment(selected.envId))}
@@ -725,6 +733,10 @@ function ProxyPage({ snapshot, onRefresh, onError }: {
   const [diagnostic, setDiagnostic] = useState<unknown>(null);
   const [busy, setBusy] = useState("");
   const selected = snapshot?.proxies.find((profile) => profile.id === selectedId) ?? null;
+  const desktop = isDesktopRuntime();
+  const proxyActionReason = desktopActionReason(desktop, Boolean(busy), "代理操作正在执行");
+  const proxyUrlMissingReason = url.trim() ? "" : "请输入代理 URL";
+  const diagnosticUrlMissingReason = targetUrl.trim() ? "" : "请输入诊断 URL";
 
   useEffect(() => {
     if (!selected) return;
@@ -774,8 +786,8 @@ function ProxyPage({ snapshot, onRefresh, onError }: {
       <div className="module-toolbar">
         <div className="toolbar-group"><span className="toolbar-title">代理档案</span></div>
         <div className="toolbar-group actions">
-          <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("system", systemProxyDiagnostics, true)}><Gauge size={14} />系统代理</button>
-          <button className="button primary compact" type="button" disabled={Boolean(busy)} onClick={() => { setSelectedId(null); setName(""); setUrl(""); setBoundEnvId(""); }}><Network size={14} />新建</button>
+          <button className="button secondary compact" type="button" title={actionTitle("系统代理诊断", proxyActionReason)} disabled={!desktop || Boolean(busy)} onClick={() => void run("system", systemProxyDiagnostics, true)}><Gauge size={14} />系统代理</button>
+          <button className="button primary compact" type="button" title={actionTitle("新建代理", busy ? "代理操作正在执行" : "")} disabled={Boolean(busy)} onClick={() => { setSelectedId(null); setName(""); setUrl(""); setBoundEnvId(""); }}><Network size={14} />新建</button>
         </div>
       </div>
       <div className="resource-body">
@@ -788,7 +800,7 @@ function ProxyPage({ snapshot, onRefresh, onError }: {
                 <td>{profile.scheme.toUpperCase()}</td><td><code>{profile.host}:{profile.port}</code></td>
                 <td>{profile.passwordPresent ? <span className="credential-state"><KeyRound size={13} />已保护</span> : "无"}</td>
                 <td>{profile.boundEnvIds.length ? profile.boundEnvIds.join(", ") : "-"}</td>
-                <td className="row-actions"><button className="icon-button danger" type="button" title="删除" aria-label={`删除 ${profile.name}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void run(`delete:${profile.id}`, () => deleteProxyProfile(profile.id)); }}><Trash2 size={15} /></button></td>
+                <td className="row-actions"><button className="icon-button danger" type="button" title={actionTitle("删除", proxyActionReason)} aria-label={`删除 ${profile.name}`} disabled={!desktop || Boolean(busy)} onClick={(event) => { event.stopPropagation(); void run(`delete:${profile.id}`, () => deleteProxyProfile(profile.id)); }}><Trash2 size={15} /></button></td>
               </tr>
             ))}</tbody>
           </table>
@@ -798,12 +810,12 @@ function ProxyPage({ snapshot, onRefresh, onError }: {
           <div className="panel-heading"><Network size={17} /><h2>{selected ? "编辑代理" : "新建代理"}</h2></div>
           <label className="field"><span>名称</span><input value={name} onChange={(event) => setName(event.target.value)} /></label>
           <label className="field"><span>代理 URL</span><input placeholder="socks5://user:pass@host:1080" value={url} onChange={(event) => { setUrl(event.target.value); setParseSummary(""); }} /></label>
-          <div className="inline-form-actions"><button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || !url || Boolean(busy)} onClick={() => void preview()}><Search size={14} />解析</button>{parseSummary && <code>{parseSummary}</code>}</div>
+          <div className="inline-form-actions"><button className="button secondary compact" type="button" title={actionTitle("解析代理 URL", proxyActionReason || proxyUrlMissingReason)} disabled={!desktop || !url.trim() || Boolean(busy)} onClick={() => void preview()}><Search size={14} />解析</button>{parseSummary && <code>{parseSummary}</code>}</div>
           <label className="field"><span>绑定环境</span><select value={boundEnvId} onChange={(event) => setBoundEnvId(event.target.value)}><option value="">不绑定</option>{snapshot?.environments.map((environment) => <option key={environment.envId} value={environment.envId}>{environmentLabel(environment)}</option>)}</select></label>
-          <div className="form-actions"><button className="button primary" type="button" disabled={!isDesktopRuntime() || !url || Boolean(busy)} onClick={() => void save()}><CheckCircle2 size={15} />保存</button></div>
+          <div className="form-actions"><button className="button primary" type="button" title={actionTitle("保存代理", proxyActionReason || proxyUrlMissingReason)} disabled={!desktop || !url.trim() || Boolean(busy)} onClick={() => void save()}><CheckCircle2 size={15} />保存</button></div>
           <div className="divider" />
           <label className="field"><span>诊断 URL</span><input value={targetUrl} onChange={(event) => setTargetUrl(event.target.value)} /></label>
-          <button className="button secondary full-width" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("diagnose", () => diagnoseProxy(selectedId, targetUrl), true)}>{busy === "diagnose" ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}运行诊断</button>
+          <button className="button secondary full-width" type="button" title={actionTitle("运行诊断", proxyActionReason || diagnosticUrlMissingReason)} disabled={!desktop || !targetUrl.trim() || Boolean(busy)} onClick={() => void run("diagnose", () => diagnoseProxy(selectedId, targetUrl), true)}>{busy === "diagnose" ? <LoaderCircle className="spin" size={15} /> : <Activity size={15} />}运行诊断</button>
           {diagnostic !== null && <JsonPreview label="诊断结果" value={diagnostic} />}
         </aside>
       </div>
@@ -817,6 +829,8 @@ function KernelPage({ snapshot, onRefresh, onError }: {
   onError: (message: string) => void;
 }) {
   const [busy, setBusy] = useState("");
+  const desktop = isDesktopRuntime();
+  const kernelActionReason = desktopActionReason(desktop, Boolean(busy), "内核操作正在执行");
   async function run(action: string, callback: () => Promise<unknown>) {
     setBusy(action); onError("");
     try { await callback(); await onRefresh(); }
@@ -828,8 +842,8 @@ function KernelPage({ snapshot, onRefresh, onError }: {
       <div className="module-toolbar">
         <div className="toolbar-group"><span className="toolbar-title">内核与缓存</span></div>
         <div className="toolbar-group actions">
-          <button className="button secondary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("cleanup", () => cleanupKernelCache(null))}><Trash2 size={14} />清理缓存</button>
-          <button className="button primary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("refresh", refreshKernels)}><RefreshCw className={busy === "refresh" ? "spin" : ""} size={14} />刷新</button>
+          <button className="button secondary compact" type="button" title={actionTitle("清理缓存", kernelActionReason)} disabled={!desktop || Boolean(busy)} onClick={() => void run("cleanup", () => cleanupKernelCache(null))}><Trash2 size={14} />清理缓存</button>
+          <button className="button primary compact" type="button" title={actionTitle("刷新内核", kernelActionReason)} disabled={!desktop || Boolean(busy)} onClick={() => void run("refresh", refreshKernels)}><RefreshCw className={busy === "refresh" ? "spin" : ""} size={14} />刷新</button>
         </div>
       </div>
       <div className="table-wrap">
@@ -841,8 +855,8 @@ function KernelPage({ snapshot, onRefresh, onError }: {
               <td>{kernel.major ?? "未知"}</td><td>{kernel.version ?? "未知"}</td><td>{kernel.latestVersion ?? "未知"}</td><td>{kernel.platform} / {kernel.arch}</td>
               <td><span className={`status-badge ${kernel.status}`}>{kernelStatus(kernel.status)}</span></td><td>{kernel.downloadAvailable ? "可用" : "未知"}</td>
               <td className="row-actions inline-actions">
-                {kernel.major !== null && <button className="icon-button" type="button" title="安装或更新" aria-label={`安装 ${kernel.name}`} disabled={!isDesktopRuntime() || !kernel.downloadAvailable || Boolean(busy)} onClick={() => void run(`install:${kernel.id}`, () => installKernel(kernel.major!, kernel.kernelType))}><HardDriveDownload size={15} /></button>}
-                {kernel.installPath && <button className="icon-button danger" type="button" title="卸载" aria-label={`卸载 ${kernel.name}`} disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run(`uninstall:${kernel.id}`, () => uninstallKernel(kernel.id))}><Trash2 size={15} /></button>}
+                {kernel.major !== null && <button className="icon-button" type="button" title={actionTitle("安装或更新", kernelActionReason || (!kernel.downloadAvailable ? "下载源未知" : ""))} aria-label={`安装 ${kernel.name}`} disabled={!desktop || !kernel.downloadAvailable || Boolean(busy)} onClick={() => void run(`install:${kernel.id}`, () => installKernel(kernel.major!, kernel.kernelType))}><HardDriveDownload size={15} /></button>}
+                {kernel.installPath && <button className="icon-button danger" type="button" title={actionTitle("卸载", kernelActionReason)} aria-label={`卸载 ${kernel.name}`} disabled={!desktop || Boolean(busy)} onClick={() => void run(`uninstall:${kernel.id}`, () => uninstallKernel(kernel.id))}><Trash2 size={15} /></button>}
               </td>
             </tr>
           ))}</tbody>
@@ -866,6 +880,11 @@ function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, creden
   const [settings, setSettings] = useState<ManagerSettings | null>(snapshot?.settings ?? null);
   const [busy, setBusy] = useState("");
   const selfCheckBlocked = (snapshot?.environments ?? []).some((environment) => environment.status !== "stopped");
+  const desktop = isDesktopRuntime();
+  const settingsActionReason = desktopActionReason(desktop, Boolean(busy), "设置操作正在执行");
+  const diagnosticsReason = settingsActionReason || (selfCheckBusy ? "SDK 自检正在执行" : "");
+  const selfCheckReason = diagnosticsReason
+    || (selfCheckBlocked ? "需先停止全部环境并完成状态对账" : "");
   useEffect(() => { if (snapshot?.settings) setSettings(snapshot.settings); }, [snapshot?.settings]);
   if (!settings) return <section className="module-workspace"><div className="empty-state"><LoaderCircle className="spin" size={18} />读取设置</div></section>;
 
@@ -895,7 +914,7 @@ function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, creden
   return (
     <section className="settings-layout">
       <div className="settings-section">
-        <div className="section-heading"><div><Settings size={17} /><h2>目录与运行</h2></div><button className="button primary compact" type="button" disabled={!isDesktopRuntime() || Boolean(busy)} onClick={() => void run("save", () => updateSettings(settings))}><CheckCircle2 size={14} />保存设置</button></div>
+        <div className="section-heading"><div><Settings size={17} /><h2>目录与运行</h2></div><button className="button primary compact" type="button" title={actionTitle("保存设置", settingsActionReason)} disabled={!desktop || Boolean(busy)} onClick={() => void run("save", () => updateSettings(settings))}><CheckCircle2 size={14} />保存设置</button></div>
         <div className="settings-form">
           <DirectoryField label="数据目录" value={settings.dataDir} onChange={(value) => setSettings({ ...settings, dataDir: value })} onPick={() => void choose("dataDir")} />
           <DirectoryField label="SDK WorkDir" value={settings.workDir} onChange={(value) => setSettings({ ...settings, workDir: value })} onPick={() => void choose("workDir")} />
@@ -915,15 +934,15 @@ function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, creden
         </dl>
         <ApiKeySetup
           mode="settings"
-          desktop={isDesktopRuntime()}
+          desktop={desktop}
           source={snapshot?.sdk.apiKey.source ?? "none"}
           busy={busy === "credential" || credentialBusy}
           onSubmit={onCredentialChange}
           onClear={removeCredential}
         />
         <div className="diagnostic-actions">
-          <button className="button secondary" type="button" disabled={!isDesktopRuntime() || Boolean(busy) || selfCheckBusy} onClick={() => void exportDiagnostics()}>{busy === "diagnostics" ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}导出诊断包</button>
-          <button className="button primary" type="button" disabled={!isDesktopRuntime() || Boolean(busy) || selfCheckBusy || selfCheckBlocked} onClick={() => void onRunSelfCheck()}>{selfCheckBusy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}运行 SDK 自检</button>
+          <button className="button secondary" type="button" title={actionTitle("导出诊断包", diagnosticsReason)} disabled={!desktop || Boolean(busy) || selfCheckBusy} onClick={() => void exportDiagnostics()}>{busy === "diagnostics" ? <LoaderCircle className="spin" size={15} /> : <Download size={15} />}导出诊断包</button>
+          <button className="button primary" type="button" title={actionTitle("运行 SDK 自检", selfCheckReason)} disabled={!desktop || Boolean(busy) || selfCheckBusy || selfCheckBlocked} onClick={() => void onRunSelfCheck()}>{selfCheckBusy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}运行 SDK 自检</button>
         </div>
         {selfCheckBlocked && <p className="section-note self-check-blocked"><CircleAlert size={13} />需先停止全部环境并完成状态对账</p>}
         <SelfCheckResult report={selfCheckReport} />
@@ -934,7 +953,8 @@ function SettingsPage({ snapshot, onRefresh, onError, onCredentialChange, creden
 }
 
 function DirectoryField({ label, value, onChange, onPick }: { label: string; value: string; onChange: (value: string) => void; onPick: () => void }) {
-  return <label className="field directory-field"><span>{label}</span><div><input value={value} onChange={(event) => onChange(event.target.value)} /><button className="icon-button" type="button" title={`选择${label}`} aria-label={`选择${label}`} disabled={!isDesktopRuntime()} onClick={onPick}><FolderOpen size={15} /></button></div></label>;
+  const desktop = isDesktopRuntime();
+  return <label className="field directory-field"><span>{label}</span><div><input value={value} onChange={(event) => onChange(event.target.value)} /><button className="icon-button" type="button" title={actionTitle(`选择${label}`, desktopActionReason(desktop, false))} aria-label={`选择${label}`} disabled={!desktop} onClick={onPick}><FolderOpen size={15} /></button></div></label>;
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {
