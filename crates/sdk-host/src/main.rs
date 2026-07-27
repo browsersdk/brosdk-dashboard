@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use std::{
     ffi::{c_char, c_void},
     path::PathBuf,

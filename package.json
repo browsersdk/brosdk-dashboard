@@ -23,6 +23,7 @@
     "e2e:multi-environment": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-multi-environment-e2e.ps1",
     "e2e:dashboard": "npm run e2e --workspace apps/dashboard",
     "e2e:dashboard:desktop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-dashboard-desktop-e2e.ps1",
+    "e2e:tray": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-desktop-tray-e2e.ps1",
     "sdk:capabilities": "cargo run -p sdk-host -- capabilities --json",
     "ai:smoke": "cargo run -p ai-agent --bin ai-smoke",
     "release:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-windows-sidecar.ps1",

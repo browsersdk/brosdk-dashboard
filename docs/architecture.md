@@ -17,7 +17,7 @@ libs/windows_x64/brosdk.h
 
 建议采用：
 
-- 桌面外壳：Tauri 2 / Rust。
+- 桌面外壳：Tauri 2 / Rust；Windows 使用 GUI subsystem，主窗口关闭后驻留系统托盘。
 - Dashboard：React + TypeScript + Vite，移植 `brosdk-v3/apps/dashboard` 的信息架构和视觉基线。
 - 本地 Manager：Rust async service，负责状态机、SQLite、operation 队列、设置、日志和事件。
 - SDK runtime host：独立 Rust 后台子进程，加载 `brosdk.dll`，通过 named pipe/UDS 和 Manager 通讯；Windows 由 Manager 使用 `CREATE_NO_WINDOW` 启动，不显示独立终端。

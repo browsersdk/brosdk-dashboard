@@ -48,6 +48,19 @@ function Get-BroSdkInstallations {
   }
 }
 
+function Get-PeSubsystem([string]$Path) {
+  $bytes = [IO.File]::ReadAllBytes($Path)
+  if ($bytes.Length -lt 256 -or [BitConverter]::ToUInt16($bytes, 0) -ne 0x5A4D) {
+    throw "File is not a valid PE executable: $Path"
+  }
+  $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+  if ($peOffset -lt 0 -or $peOffset + 94 -gt $bytes.Length -or
+      [BitConverter]::ToUInt32($bytes, $peOffset) -ne 0x00004550) {
+    throw "File has an invalid PE header: $Path"
+  }
+  return [BitConverter]::ToUInt16($bytes, $peOffset + 24 + 68)
+}
+
 if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
   throw "NSIS installer not found: $installerPath"
 }
@@ -77,6 +90,11 @@ try {
   foreach ($required in @($desktopExecutable, $sidecar, $sdkDll, $uninstaller)) {
     if (-not $required) {
       throw "Installed release is missing a required executable or SDK file"
+    }
+  }
+  foreach ($executable in @($desktopExecutable, $sidecar)) {
+    if ((Get-PeSubsystem $executable.FullName) -ne 2) {
+      throw "Installed executable is not linked as a Windows GUI subsystem application: $($executable.Name)"
     }
   }
 

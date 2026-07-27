@@ -24,6 +24,19 @@ function Get-Sha256([string]$Path) {
   }
 }
 
+function Get-PeSubsystem([string]$Path) {
+  $bytes = [IO.File]::ReadAllBytes($Path)
+  if ($bytes.Length -lt 256 -or [BitConverter]::ToUInt16($bytes, 0) -ne 0x5A4D) {
+    throw "File is not a valid PE executable: $Path"
+  }
+  $peOffset = [BitConverter]::ToInt32($bytes, 0x3C)
+  if ($peOffset -lt 0 -or $peOffset + 94 -gt $bytes.Length -or
+      [BitConverter]::ToUInt32($bytes, $peOffset) -ne 0x00004550) {
+    throw "File has an invalid PE header: $Path"
+  }
+  return [BitConverter]::ToUInt16($bytes, $peOffset + 24 + 68)
+}
+
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
   throw "Portable release manifest not found: $manifestPath"
 }
@@ -43,6 +56,13 @@ foreach ($relativePath in $requiredFiles) {
   }
   if ($manifestPaths -notcontains $relativePath) {
     throw "Required file is missing from RELEASE-MANIFEST.json: $relativePath"
+  }
+}
+
+foreach ($relativePath in @("BroSDK Dashboard.exe", "sdk-host.exe")) {
+  $path = Join-Path $portableRoot $relativePath
+  if ((Get-PeSubsystem $path) -ne 2) {
+    throw "Windows executable is not linked as a GUI subsystem application: $relativePath"
   }
 }
 

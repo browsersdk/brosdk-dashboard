@@ -1,3 +1,106 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use tauri::{
+    AppHandle, Manager, Runtime, WindowEvent,
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
+};
+
+const MAIN_WINDOW_LABEL: &str = "main";
+const TRAY_ID: &str = "brosdk-dashboard-tray";
+const TRAY_OPEN_ID: &str = "tray-open";
+const TRAY_EXIT_ID: &str = "tray-exit";
+static EXITING: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrayMenuAction {
+    Show,
+    Exit,
+    Ignore,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowCloseAction {
+    Hide,
+    Close,
+}
+
+fn tray_menu_action(id: &str) -> TrayMenuAction {
+    match id {
+        TRAY_OPEN_ID => TrayMenuAction::Show,
+        TRAY_EXIT_ID => TrayMenuAction::Exit,
+        _ => TrayMenuAction::Ignore,
+    }
+}
+
+fn window_close_action(label: &str, exiting: bool) -> WindowCloseAction {
+    if label == MAIN_WINDOW_LABEL && !exiting {
+        WindowCloseAction::Hide
+    } else {
+        WindowCloseAction::Close
+    }
+}
+
+fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
+    if EXITING.load(Ordering::Acquire) {
+        return;
+    }
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn exit_from_tray<R: Runtime>(app: &AppHandle<R>) {
+    if EXITING.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    let manager = app.state::<manager::Manager>().inner().clone();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_secs(5), manager.stop_runtime()).await;
+        app.exit(0);
+    });
+}
+
+fn configure_tray<R: Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, TRAY_OPEN_ID, "打开主界面", true, None::<&str>)?;
+    let exit = MenuItem::with_id(app, TRAY_EXIT_ID, "退出", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &exit])?;
+
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
+        .tooltip("BroSDK Dashboard")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match tray_menu_action(event.id().as_ref()) {
+            TrayMenuAction::Show => show_main_window(app),
+            TrayMenuAction::Exit => exit_from_tray(app),
+            TrayMenuAction::Ignore => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    ..
+                } | TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                }
+            ) {
+                show_main_window(tray.app_handle());
+            }
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 #[tauri::command]
 async fn manager_snapshot(
     manager: tauri::State<'_, manager::Manager>,
@@ -476,7 +579,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(manager.clone())
-        .setup(move |_app| {
+        .setup(move |app| {
+            configure_tray(app)?;
             let startup_manager = manager.clone();
             tauri::async_runtime::spawn(async move {
                 if startup_manager.start_runtime().await.is_ok() {
@@ -484,6 +588,15 @@ pub fn run() {
                 }
             });
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event
+                && window_close_action(window.label(), EXITING.load(Ordering::Acquire))
+                    == WindowCloseAction::Hide
+            {
+                api.prevent_close();
+                let _ = window.hide();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             manager_snapshot,
@@ -535,4 +648,32 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("failed to run BroSDK Dashboard");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tray_menu_ids_map_only_to_supported_actions() {
+        assert_eq!(tray_menu_action(TRAY_OPEN_ID), TrayMenuAction::Show);
+        assert_eq!(tray_menu_action(TRAY_EXIT_ID), TrayMenuAction::Exit);
+        assert_eq!(tray_menu_action("unknown"), TrayMenuAction::Ignore);
+    }
+
+    #[test]
+    fn main_window_close_hides_until_explicit_exit() {
+        assert_eq!(
+            window_close_action(MAIN_WINDOW_LABEL, false),
+            WindowCloseAction::Hide
+        );
+        assert_eq!(
+            window_close_action(MAIN_WINDOW_LABEL, true),
+            WindowCloseAction::Close
+        );
+        assert_eq!(
+            window_close_action("secondary", false),
+            WindowCloseAction::Close
+        );
+    }
 }

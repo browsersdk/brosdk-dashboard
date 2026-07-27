@@ -413,3 +413,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - `cargo run -p sdk-client --bin runtime-host-smoke` 必须覆盖运行、health、优雅停止和强制退出，结束后不得残留 `sdk-host`。
 
 2026-07-27 阶段 21 结果：长期和一次性 Host 启动均通过统一后台进程工厂设置 `CREATE_NO_WINDOW`。Windows 子进程行为测试确认无 console handle 且 stdout 捕获正常；真实 runtime-host smoke 通过，Rust workspace 94 项和 Clippy 全部通过，退出后无 `sdk-host` 残留。
+
+## 25. 阶段 22 Windows 桌面生命周期验收
+
+- `BroSDK Dashboard.exe` 和 `sdk-host.exe` 的 PE `Subsystem` 必须为 2；`npm run release:verify` 和安装测试都必须执行该门禁。
+- `npm run e2e:tray` 必须真实发送主窗口关闭请求，确认窗口隐藏但进程不退出，再通过托盘恢复，并从右键菜单退出。
+- 托盘退出等待 runtime 优雅停止必须有上限；测试结束不得残留 Dashboard、`sdk-host` 或 `brosdk-dashboard-tray-e2e-*` 临时目录。
+- debug 和便携 release 都执行托盘 E2E；`npm run release:test:installer` 继续覆盖安装后首次启动与静默卸载。
+
+2026-07-27 阶段 22 结果：旧便携产物实测 Dashboard/host 为控制台 `Subsystem=3`；修复后 debug 和新便携产物均为 GUI `Subsystem=2`。两种构建的托盘隐藏/恢复/退出通过，release 清单和 NSIS 临时安装、首次启动、静默卸载通过，无进程或临时目录残留。

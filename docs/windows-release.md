@@ -26,6 +26,7 @@ dist/release/
 `WINDOWS-RELEASE-MANIFEST.json` 记录版本、目标三元组、产物类型、文件大小、SHA-256 和签名状态。`npm run release:verify` 同时检查：
 
 - 便携目录的三个必需二进制及内部清单。
+- Dashboard 和 `sdk-host.exe` 的 PE subsystem 都是 Windows GUI（值 2），直接启动不创建终端窗口。
 - 便携 ZIP 可以打开且包含完整资源。
 - NSIS 安装包版本与发布版本一致。
 - 所有发布产物大小和 SHA-256 与总清单一致。
@@ -62,6 +63,15 @@ npm run release:test:msi
 构建先用 `--no-bundle` 生成便携版，再单独生成安装器，避免将 Tauri 安装器 bundle 标记带入便携可执行文件。
 
 ## 安装器 E2E
+
+桌面托盘生命周期可在 debug 或指定便携程序上独立验证：
+
+```powershell
+npm run e2e:tray
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-desktop-tray-e2e.ps1 -DesktopExecutable "dist\release\BroSDK-Dashboard-portable\BroSDK Dashboard.exe"
+```
+
+该测试关闭主窗口后确认进程继续运行，从托盘恢复窗口，再通过右键菜单退出。
 
 首次启动、文件布局和卸载烟雾测试不需要测试凭据：
 

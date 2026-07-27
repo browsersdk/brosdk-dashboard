@@ -26,6 +26,7 @@
 | 19. AI 会话与 Agent 执行可靠性 | P0 | 已完成 | 会话历史、新建/清空、envId 目标校正、真实状态前置条件和接口覆盖审计 |
 | 20. 多环境 Agent 与完整单环境 MCP | P0 | 已完成 | 可选 envId 路由、运行时全工具目录、会话级自动执行和双环境 Agent/MCP E2E |
 | 21. Windows Runtime Host 后台化 | P0 | 已完成 | sdk-host 全部启动路径不创建终端窗口，保留 IPC 与诊断输出捕获 |
+| 22. Windows 桌面生命周期 | P0 | 已完成 | Dashboard/Host GUI subsystem、关闭到托盘、托盘恢复/退出和 release PE 门禁 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -776,3 +777,15 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - Windows 为所有子进程设置 `CREATE_NO_WINDOW`；不改变 `sdk-host` 的 CLI 输出协议，stdout/stderr 仍可由自动化和错误处理捕获。
 - Windows 行为测试在按生产方式创建的子进程内调用 `GetConsoleWindow()`，结果为 0，并同时验证 stdout 管道可读。
 - 真实 runtime-host smoke 覆盖启动、health、capabilities、优雅停止和 supervisor 强制退出；Rust workspace 94 项与 Clippy 全部通过，退出后无 `sdk-host` 残留。
+
+## 25. 阶段 22：Windows 桌面生命周期
+
+目标：让 Windows 桌面程序直接启动时不显示终端，关闭主窗口后驻留托盘，并提供可验证的恢复与退出路径。
+
+实现结果（2026-07-27）：
+
+- Tauri 主程序和 `sdk-host` 都声明 Windows GUI subsystem；受管 host 仍保留 `CREATE_NO_WINDOW` 作为父进程侧防护。
+- 主窗口关闭请求改为隐藏；托盘单击/双击恢复窗口，右键菜单提供“打开主界面”和“退出”。退出最多等待 5 秒完成 runtime 优雅停止，避免异常 host 永久卡住菜单动作。
+- 新增 `npm run e2e:tray`，通过 Windows UI Automation 和真实托盘交互验证关闭隐藏、进程保留、托盘恢复与菜单退出，测试使用唯一临时数据目录并清理残留。
+- 便携与安装验证读取 PE header，Dashboard 和 host 必须为 `Subsystem=2`；旧控制台子系统产物会直接拒绝。
+- debug 与便携 release 托盘 E2E、NSIS 首次启动/静默卸载、release 清单验证通过；阶段增量后 Rust workspace 为 96 项，Clippy 通过，无 Dashboard、host 或临时目录残留。
