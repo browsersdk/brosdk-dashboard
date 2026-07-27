@@ -1,5 +1,17 @@
 # Windows 发布与回滚
 
+## 构建目录
+
+构建和发布使用三个职责不同的目录：
+
+| 目录 | 产生者 | 内容 | 用途 |
+| --- | --- | --- | --- |
+| `target/` | Cargo / Tauri | Rust 编译缓存、原始 exe、依赖与原始 NSIS/MSI bundle | 构建工作区，不直接交付 |
+| `apps/dashboard/dist/` | Vite | Dashboard 前端静态资源 | Tauri 嵌入输入，不直接交付 |
+| `dist/release/` | `scripts/build-windows-release.ps1` | 便携目录、ZIP、安装器和发布清单 | 最终交付目录 |
+
+`target/` 与 `apps/dashboard/dist/` 服从工具链目录约定，会包含缓存和中间文件；发布脚本从中选择 Dashboard、`sdk-host.exe`、`brosdk.dll` 和安装器，重命名并校验后写入 `dist/release/`。三个目录都在 `.gitignore` 中，删除后可通过发布命令完整重建。Tauri 的 NSIS/WiX 下载缓存位于 `%LOCALAPPDATA%/tauri`，不因删除项目 `target/` 而重新下载。
+
 ## 产物与命令
 
 Windows x64 默认交付 NSIS 安装包和便携 ZIP：

@@ -825,3 +825,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 环境目录从全局 `tools/list` 动态过滤。由于环境管理工具也使用 `env.` 前缀，策略显式排除 `env.list/resolve/get/create/update/destroy`，避免把创建、更新、删除误归入 ready 环境的页面工具白名单。
 - Dashboard 显示真实 `env.*` 工具名，结构化表单继续按基础工具语义工作；AI 提示要求使用 `env.tabs/env.snapshot/env.act`，旧计划里的无前缀名称仍可兼容规范化。
 - transport、Manager 和 MCP 页面测试通过；Dashboard 51 项、Rust workspace 101 项、Playwright 桌面/移动 16 项、check 与 Clippy 全部通过。真实 DLL 生命周期 E2E 发现并放行 18/18 个浏览器工具，经全局 endpoint 完成 `env.tabs(list)`、`env.read(page)`、指纹检查和停止，环境最终为 stopped。
+
+## 29. 阶段 26：GitHub 首页与发布产物收口
+
+目标：让首次访问仓库的开发者能从根 README 完成理解、开发、测试和 Windows 交付，并保证发布包包含当前受版本管理的 SDK 运行时。
+
+实现结果（2026-07-27）：
+
+- 根 README 覆盖产品定位、首次 API Key 初始化、envId 数据模型、隔离 Host、桌面单实例/托盘、全局 MCP、AI Agent、安全边界和文档索引。
+- 开发与发布命令已集中说明；`target/` 定义为 Cargo/Tauri 原始构建区，`apps/dashboard/dist/` 定义为 Vite 中间产物，`dist/release/` 定义为经过发布脚本整理和验证的最终交付区。
+- 更新后的 `libs/windows_x64/brosdk.dll` 和 `brosdk.h` 纳入版本库；本地服务端接口快照 `doc.json`/`docs.json` 显式忽略，不会随 GitHub 上传。
+- 默认 Windows x64 NSIS 与便携 ZIP 使用当前代码和 DLL 重建，并通过发布清单、SHA-256、ZIP 布局、PE GUI subsystem 和签名状态校验；静默安装/首次初始化/卸载及便携版单实例/托盘 E2E 通过。

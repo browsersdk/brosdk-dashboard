@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-27，阶段 0-25 已完成：
+截至 2026-07-27，阶段 0-26 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-25 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/会话与关联环境、Agent 手动/自动执行、DLL 全局多环境 MCP、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复和桌面单实例已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
+[roadmap.md](roadmap.md) 中阶段 0-26 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/会话与关联环境、Agent 手动/自动执行、DLL 全局多环境 MCP、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复和桌面单实例已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -106,6 +106,8 @@ brosdk-dashboard/
 阶段 24 客户端状态恢复与单实例已完成：上次进程遗留的 operation 在新会话标为 `CLIENT_RESTARTED`，环境以新 Runtime Host 的 BrowserInfo 重新判定；envId 存在且端口为 0 仍恢复 ready，不存在则恢复 stopped。应用标识 `com.brosdk.dashboard` 只允许一个桌面实例，重复启动会唤醒已有窗口，不会再次初始化同一份 DLL；DLL appId 锁继续隔离其它客户端冲突。Rust workspace 101 项测试、目标 Clippy 与真实 `secondInstanceRedirected` 托盘 E2E 通过。
 
 阶段 25 新版全局多环境 MCP 已完成：Manager 只连接 `/sdk/v1/mcp`，浏览器工具使用真实 `env.*` 名称，并在每次调用中覆盖写入所选 ready 环境的 envId。单环境目录明确排除 `env.list/resolve/get/create/update/destroy` 管理工具，防止环境 mutation 绕过 operation 策略；旧无前缀计划仍会规范化。真实 DLL E2E 发现并放行 18/18 个浏览器工具，完成 `env.tabs`、`env.read`、指纹检查和停止。
+
+阶段 26 GitHub 与发布入口已完成：仓库根目录新增面向使用者的 README，覆盖首次启动、核心能力、架构、安全边界、开发、测试和 Windows 打包命令；`target/`、`apps/dashboard/dist/` 和 `dist/release/` 的中间产物/交付职责已经明确。更新后的 `brosdk.dll` 与 `brosdk.h` 纳入版本管理，根目录 `doc.json`/`docs.json` 显式忽略；默认 Windows 发布重新构建并通过清单、静默安装/卸载以及便携版单实例/托盘 E2E。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

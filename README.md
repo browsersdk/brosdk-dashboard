@@ -1,0 +1,184 @@
+<p align="center">
+  <img src="apps/desktop/src-tauri/icons/128x128.png" width="96" height="96" alt="BroSDK Dashboard icon">
+</p>
+
+# BroSDK Dashboard
+
+BroSDK Dashboard 是基于 BroSDK 的 Windows 多指纹浏览器桌面控制台，提供多环境生命周期、代理与内核管理、远端指纹查看、全局 MCP 自动化和受控 AI Agent。
+
+当前版本面向 Windows x64。仓库已包含运行所需的 `libs/windows_x64/brosdk.dll` 和 C API 头文件 `brosdk.h`；服务端接口快照 `doc.json` / `docs.json` 仅作本地参考，不进入版本库。
+
+## 核心能力
+
+- 首次启动输入 API Key，按 `getUserSig(role=user) -> sdk_init` 完成初始化；API Key 使用 Windows DPAPI 保护，不写入 SQLite、日志或发布清单。
+- 以服务端数据为事实来源，以 `envId` 为环境唯一主键；本地 SQLite 只保存可删除、脱敏且带新鲜度状态的缓存。
+- 创建环境只要求选择代理和已安装内核版本，其余指纹参数使用服务端策略。
+- 支持环境创建、同步、启动、进度回调、停止、更新、删除、详情和关键指纹查看。
+- 运行时由隔离的 `sdk-host.exe` 加载 DLL；Dashboard 和 Host 均为 Windows GUI 子系统，不显示终端窗口。
+- 应用单实例运行；关闭主窗口后驻留系统托盘，重复启动会唤醒已有窗口，避免相同 appId 被重复初始化。
+- 使用 DLL 全局 `/sdk/v1/mcp` 入口，页面工具采用 `env.* + arguments.envId`；Manager 强制注入选中环境并实施工具白名单。
+- AI Chat/Agent 支持本地会话历史、精确环境上下文、逐次批准和显式自动执行模式；所有 mutation 仍经过 Manager 状态机。
+
+## 架构
+
+```text
+React Dashboard
+      |
+      | Tauri command / event
+      v
+Manager + SQLite cache + secure credentials
+      |
+      | named pipe, framed JSON
+      v
+sdk-host.exe
+      |
+      | BroSDK C ABI
+      v
+brosdk.dll ---- SDK server / browser runtime / global MCP
+```
+
+Dashboard 不直接加载 DLL、访问 CDP 或调用 `/api/v2/sdk/*`。环境管理来自 `/api/v2/browser/*` 及对应 DLL C API，运行状态以 DLL callback 和 `sdk_browser_info` 对账结果为准。
+
+## 开发环境
+
+- Windows 10/11 x64
+- Node.js 当前 LTS 与 npm
+- Rust stable，目标工具链 `x86_64-pc-windows-msvc`
+- Visual Studio Build Tools（MSVC 与 Windows SDK）
+- Microsoft Edge WebView2 Runtime
+- 可用的 BroSDK API Key 和 SDK 服务网络连接
+
+安装依赖并启动真实桌面开发版：
+
+```powershell
+npm ci
+npm run tauri:dev
+```
+
+首次打开时输入 API Key 完成初始化。`npm run dev` 只启动 Dashboard 前端，适合 UI 预览，不提供 DLL、托盘和本机 mutation 能力。
+
+## 构建与打包
+
+前端生产构建：
+
+```powershell
+npm run build
+```
+
+Tauri 原始构建入口：
+
+```powershell
+npm run tauri:build
+```
+
+推荐使用仓库发布脚本生成 Windows x64 的 NSIS 安装包和便携 ZIP，并校验文件布局、版本、SHA-256、PE GUI subsystem 和签名状态：
+
+```powershell
+npm run release:windows
+npm run release:verify
+```
+
+只生成便携包：
+
+```powershell
+npm run release:portable
+npm run release:verify:portable
+```
+
+额外生成企业部署用 MSI：
+
+```powershell
+npm run release:windows:msi
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-release.ps1 -RequireMsi
+npm run release:test:msi
+```
+
+### `target` 与 `dist` 的区别
+
+| 目录 | 用途 | 是否交付 |
+| --- | --- | --- |
+| `target/` | Cargo/Tauri 的编译缓存、目标文件、原始可执行文件和原始 bundle；体积大，可删除后重建 | 否 |
+| `apps/dashboard/dist/` | Vite 生成的前端静态资源，作为 Tauri 构建输入 | 否 |
+| `dist/release/` | 发布脚本从原始产物中整理出的安装包、便携目录、ZIP 和校验清单 | 是 |
+
+之所以分开，是因为 `target/` 和 `apps/dashboard/dist/` 遵循各自工具链的构建约定，可能包含缓存与中间文件；`dist/release/` 只保留可发布给用户的经过校验的成品。三个目录均可由命令重新生成，不提交 Git。
+
+默认发布布局：
+
+```text
+dist/release/
+  BroSDK-Dashboard-<version>-windows-x64-setup.exe
+  BroSDK-Dashboard-<version>-windows-x64-portable.zip
+  WINDOWS-RELEASE-MANIFEST.json
+  BroSDK-Dashboard-portable/
+    BroSDK Dashboard.exe
+    sdk-host.exe
+    brosdk/brosdk.dll
+    RELEASE-MANIFEST.json
+```
+
+更多签名、安装器、升级和回滚说明见 [Windows 发布文档](docs/windows-release.md)。
+
+## 测试
+
+本地静态检查和单元测试：
+
+```powershell
+npm run check
+npm test
+npm run e2e:dashboard
+```
+
+桌面与运行时测试：
+
+```powershell
+npm run sdk:capabilities
+npm run sdk:runtime-smoke
+npm run e2e:dashboard:desktop
+npm run e2e:tray
+```
+
+真实账号测试只从当前进程环境变量或安全输入读取凭据，禁止把 API Key 写进命令脚本、仓库、日志和测试报告：
+
+```powershell
+$env:BROSDK_API_KEY = Read-Host "BroSDK API Key"
+npm run e2e:environment
+Remove-Item Env:BROSDK_API_KEY
+```
+
+环境 E2E 会启动真实浏览器并调用全局 MCP；测试结束必须将环境恢复为 stopped。创建/多环境测试会使用临时环境并执行补偿清理。完整命令和安全约束见 [测试交接文档](docs/testing-handoff.md)。
+
+## MCP 与 AI Agent
+
+新版 DLL 只需要一个全局 MCP endpoint：
+
+```text
+http://127.0.0.1:<embedded-port>/sdk/v1/mcp
+```
+
+Manager 从运行时 `tools/list` 动态发现工具。环境页面工具使用真实 `env.tabs`、`env.read`、`env.snapshot`、`env.act` 等名称，每次调用由 Manager 覆盖写入 `arguments.envId`。`env.list/resolve/get/create/update/destroy` 属于环境管理工具，不会进入单环境页面工具白名单；创建、更新、删除和启停继续走可审计 operation。
+
+AI Agent 不直接持有 API Key、userSig、完整 CDP URL 或代理凭据。会话可以绑定一个精确 `envId`，自动执行模式也不会绕过环境状态、工具目录和幂等校验。
+
+## 数据与安全
+
+- 默认用户数据目录：`%LOCALAPPDATA%\BroSDK Dashboard`
+- API Key 和 AI Provider Key：Windows DPAPI 保护
+- 环境列表与详情：服务端为事实来源，本地只保留脱敏缓存
+- 运行状态：每次客户端启动通过新 Runtime Host 重新对账
+- 桌面实例：应用标识 `com.brosdk.dashboard`，同一用户会话只保留一个实例
+- 发布签名：仓库不保存证书；内部构建会明确报告 `NotSigned`
+
+## 文档
+
+- [项目规划与当前状态](docs/README.md)
+- [架构与进程边界](docs/architecture.md)
+- [DLL C API 接入](docs/dll-integration.md)
+- [接口覆盖矩阵](docs/interface-coverage.md)
+- [Manager 领域模型](docs/manager-domain.md)
+- [实施路线图](docs/roadmap.md)
+- [Windows 发布与回滚](docs/windows-release.md)
+
+## License
+
+本仓库当前标记为 `UNLICENSED`，未授予开源使用许可。`brosdk.dll` 及其头文件的分发和使用应遵循 BroSDK 对应授权条款。
