@@ -207,7 +207,7 @@ describe("AiPage", () => {
     api.run.mockResolvedValue({
       answer: "环境已重启并恢复运行",
       model: "deepseek-v4-flash",
-      maxToolRounds: 4,
+      maxToolRounds: 20,
       steps: [{
         plan,
         execution: {

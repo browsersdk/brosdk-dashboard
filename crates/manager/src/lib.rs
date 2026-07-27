@@ -50,7 +50,7 @@ const MAX_MCP_ARGUMENT_BYTES: usize = 64 * 1024;
 const MAX_MCP_ARGUMENT_DEPTH: usize = 16;
 const MAX_MCP_STRING_CHARS: usize = 16 * 1024;
 const MAX_AI_TOOL_RESULT_BYTES: usize = 64 * 1024;
-const MAX_AUTOMATIC_AGENT_TOOL_ROUNDS: usize = 4;
+const MAX_AUTOMATIC_AGENT_TOOL_ROUNDS: usize = 20;
 const AGENT_ENVIRONMENT_WAIT_SECONDS: u64 = 120;
 const GLOBAL_MCP_READ_TOOLS: &[&str] = &[
     "sdk.health",
