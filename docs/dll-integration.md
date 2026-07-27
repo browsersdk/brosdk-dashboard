@@ -133,6 +133,8 @@ typedef void (*sdk_result_cb_t)(
 
 `data/len` 是 UTF-8 JSON。`code` 不是稳定 reqId/eventId 来源，必须以 JSON body 为事实来源。
 
+环境启动期间 DLL 会发送 `type=browser-open` 的中间事件，`data` 中包含 `envId/eventId/percent`，部分版本同时提供 `statusName`。Manager 只接受 0-100 的 `percent/progress` 和有界状态名用于可见进度；完整 `data` 不直接渲染。最终 ready 仍只由 `browser-open-success` 确认。
+
 Manager 内部统一转换为：
 
 ```json

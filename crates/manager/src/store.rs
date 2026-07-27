@@ -1551,6 +1551,14 @@ fn apply_lifecycle_event(
     event: &HostEvent,
 ) -> Result<(), StoreError> {
     let event_name = event.event_name.to_ascii_lowercase();
+    let is_start_event =
+        operation.kind == "environment.start" && event_name.contains("browser-open");
+    let is_stop_event =
+        operation.kind == "environment.stop" && event_name.contains("browser-close");
+    if !is_start_event && !is_stop_event {
+        return Ok(());
+    }
+    let message = lifecycle_event_message(event);
     let (operation_status, environment_status) = if operation.kind == "environment.start"
         && event_name.contains("browser-open-success")
     {
@@ -1560,6 +1568,18 @@ fn apply_lifecycle_event(
     } else if event_name.contains("fail") || event_name.contains("error") || event.code < 0 {
         ("failed", "failed")
     } else {
+        let now = timestamp();
+        transaction.execute(
+            r#"UPDATE operations SET message = ?1, request_id = COALESCE(request_id, ?2),
+                      updated_at = ?3 WHERE id = ?4 AND status IN ('queued', 'running')"#,
+            params![message, event.request_id, now, operation.id],
+        )?;
+        transaction.execute(
+            r#"UPDATE environments SET last_event = ?1,
+                      request_id = COALESCE(request_id, ?2), updated_at = ?3
+               WHERE env_id = ?4 AND generation = ?5"#,
+            params![message, event.request_id, now, env_id, operation.generation],
+        )?;
         return Ok(());
     };
     let now = timestamp();
@@ -1569,7 +1589,7 @@ fn apply_lifecycle_event(
                   updated_at = ?4 WHERE id = ?5"#,
         params![
             operation_status,
-            event.event_name,
+            message,
             event.request_id,
             now,
             operation.id,
@@ -1587,7 +1607,7 @@ fn apply_lifecycle_event(
         params![
             environment_status,
             cdp,
-            event.event_name,
+            message,
             event.request_id,
             now,
             env_id,
@@ -1595,6 +1615,52 @@ fn apply_lifecycle_event(
         ],
     )?;
     Ok(())
+}
+
+fn lifecycle_event_message(event: &HostEvent) -> String {
+    let mut parts = vec![event.event_name.clone()];
+    if let Some(status) = lifecycle_status_name(&event.payload) {
+        parts.push(status);
+    }
+    if let Some(progress) = lifecycle_progress(&event.payload) {
+        parts.push(format!("{progress}%"));
+    }
+    parts.join(" · ")
+}
+
+fn lifecycle_status_name(payload: &Value) -> Option<String> {
+    let value = callback_field(payload, &["statusName", "stateName", "statusText"], 0)?;
+    let status = value.as_str()?.trim();
+    if status.is_empty() || status.chars().any(char::is_control) {
+        return None;
+    }
+    Some(status.chars().take(64).collect())
+}
+
+fn lifecycle_progress(payload: &Value) -> Option<u8> {
+    let value = callback_field(payload, &["percent", "progress"], 0)?;
+    let progress = value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|value| u64::try_from(value).ok()))
+        .or_else(|| value.as_str()?.trim().parse::<u64>().ok())?;
+    u8::try_from(progress).ok().filter(|value| *value <= 100)
+}
+
+fn callback_field<'a>(payload: &'a Value, names: &[&str], depth: usize) -> Option<&'a Value> {
+    if depth > 8 {
+        return None;
+    }
+    match payload {
+        Value::Object(object) => names.iter().find_map(|name| object.get(*name)).or_else(|| {
+            object
+                .values()
+                .find_map(|value| callback_field(value, names, depth + 1))
+        }),
+        Value::Array(values) => values
+            .iter()
+            .find_map(|value| callback_field(value, names, depth + 1)),
+        _ => None,
+    }
 }
 
 fn event_cdp(event: &HostEvent) -> String {
@@ -2287,6 +2353,90 @@ mod tests {
         assert_eq!(operation.request_id, Some(42));
         assert_eq!(environment.status, "ready");
         assert_eq!(environment.cdp, "127.0.0.1:9222");
+    }
+
+    #[test]
+    fn open_progress_callback_updates_environment_and_operation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("upsert environment");
+        let generation = store.next_generation("env-1").expect("generation");
+        let operation = store
+            .create_operation(
+                "environment.start",
+                Some("env-1"),
+                "启动环境",
+                generation,
+                None,
+            )
+            .expect("operation");
+        store
+            .transition_operation(&operation.id, "running", "calling SDK", None)
+            .expect("running");
+        store
+            .accept_environment_operation(
+                &operation.id,
+                Some(42),
+                "starting",
+                "-",
+                "SDK accepted request; awaiting callback",
+            )
+            .expect("accepted response");
+
+        store
+            .apply_host_event(&HostEvent {
+                sequence: 1,
+                event_type: "sdk.result".into(),
+                code: 0,
+                event_name: "browser-open".into(),
+                request_id: Some(42),
+                operation_id: Some(operation.id.clone()),
+                env_id: Some("env-1".into()),
+                payload: json!({
+                    "data": {
+                        "envId": "env-1",
+                        "statusName": "Downloading",
+                        "percent": 37
+                    }
+                }),
+                received_at: Utc::now(),
+            })
+            .expect("progress callback");
+
+        let environment = store.list_environments().expect("environments").remove(0);
+        let operation = store
+            .list_operations(100)
+            .expect("operations")
+            .into_iter()
+            .find(|candidate| candidate.id == operation.id)
+            .expect("operation");
+        assert_eq!(environment.status, "starting");
+        assert_eq!(environment.last_event, "browser-open · Downloading · 37%");
+        assert_eq!(environment.current_operation_id, Some(operation.id.clone()));
+        assert_eq!(operation.status, "running");
+        assert_eq!(operation.message, "browser-open · Downloading · 37%");
+    }
+
+    #[test]
+    fn lifecycle_progress_accepts_numeric_strings_and_rejects_invalid_values() {
+        assert_eq!(
+            lifecycle_progress(&json!({ "data": { "progress": "84" } })),
+            Some(84)
+        );
+        assert_eq!(
+            lifecycle_progress(&json!({ "data": { "percent": 101 } })),
+            None
+        );
+        assert_eq!(
+            lifecycle_status_name(&json!({ "data": { "statusName": "Bad\nStatus" } })),
+            None
+        );
     }
 
     #[test]

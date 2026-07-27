@@ -75,6 +75,7 @@ import { McpPage } from "./features/mcp/McpPage";
 import { OperationsPage } from "./features/operations/OperationsPage";
 import { ApiKeySetup } from "./features/setup/ApiKeySetup";
 import { environmentCdpLabel, environmentControlLabel, environmentLabel } from "./environmentIdentity";
+import { environmentProgress } from "./environmentProgress";
 import type {
   DashboardSnapshot,
   EnvironmentBatchAction,
@@ -333,6 +334,21 @@ function Metric({ icon: Icon, tone, label, value, detail }: {
   );
 }
 
+function EnvironmentRuntimeStatus({ status, lastEvent }: { status: string; lastEvent: string }) {
+  const progress = status === "starting" ? environmentProgress(lastEvent) : null;
+  return (
+    <div className="environment-runtime-status">
+      <span className={`status-badge ${status}`}>{statusLabel[status] ?? status}</span>
+      {progress !== null && (
+        <div className="environment-progress" role="progressbar" aria-label="环境启动进度" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress}>
+          <span><i style={{ width: `${progress}%` }} /></span>
+          <small>{progress}%</small>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SdkPanel({ snapshot }: { snapshot: DashboardSnapshot | null }) {
   const capabilities = snapshot?.capabilities;
   const rows = useMemo(() => [
@@ -570,7 +586,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
               <tr key={environment.envId} data-env-id={environment.envId} className={selectedEnvId === environment.envId ? "selected" : ""} onClick={() => setSelectedEnvId(environment.envId)}>
                 <td className="selection-cell"><input type="checkbox" aria-label={environmentControlLabel("选择", environment)} checked={selectedEnvIds.includes(environment.envId)} disabled={!selectedEnvIds.includes(environment.envId) && selectedEnvIds.length >= 20} onClick={(event) => event.stopPropagation()} onChange={(event) => toggleEnvironment(environment.envId, event.target.checked)} /></td>
                 <td><div className="resource-name"><span className="resource-icon"><Boxes size={16} /></span><div><strong>{environment.name}</strong><small>{environment.envId}</small></div></div></td>
-                <td><span className={`status-badge ${environment.status}`}>{statusLabel[environment.status] ?? environment.status}</span></td>
+                <td><EnvironmentRuntimeStatus status={environment.status} lastEvent={environment.lastEvent} /></td>
                 <td><code title={environment.cdp}>{environmentCdpLabel(environment)}</code></td>
                 <td>{environment.lastEvent}</td>
                 <td className="row-actions">

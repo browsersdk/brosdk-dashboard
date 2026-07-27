@@ -422,3 +422,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - debug 和便携 release 都执行托盘 E2E；`npm run release:test:installer` 继续覆盖安装后首次启动与静默卸载。
 
 2026-07-27 阶段 22 结果：旧便携产物实测 Dashboard/host 为控制台 `Subsystem=3`；修复后 debug 和新便携产物均为 GUI `Subsystem=2`。两种构建的托盘隐藏/恢复/退出通过，release 清单和 NSIS 临时安装、首次启动、静默卸载通过，无进程或临时目录残留。
+
+## 26. 阶段 23 环境启动回调进度验收
+
+- Store 必须从 DLL callback 的 `data.percent` 或 `data.progress` 读取 0-100 进度，并把安全摘要同步到当前环境和 operation；非终态事件不能把 operation 提前标为 succeeded。
+- Dashboard 只在 starting 环境显示进度条，页面不可显示 callback payload JSON；桌面和移动 Playwright 都断言 `aria-valuenow` 与可见百分比一致。
+- `npm run e2e:environment` 必须在 Manager 事件流中观察真实 `browser-open` 中间进度；报告只允许输出 `startProgressCallbackObserved`，不得输出 envId、payload 或凭据。
+- 终态仍只由 `browser-open-success`/失败事件决定，progress callback 不替代 ready 语义。
+
+2026-07-27 阶段 23 结果：真实唯一环境报告 `startProgressCallbackObserved=true`、`readySource=sdk_callback`，随后 CDP evaluate、18 个 MCP 工具、指纹检查和停止均通过。Dashboard 51 项、Playwright 桌面/移动 16 项、Rust workspace 99 项、check、Clippy、runtime smoke、production/release 构建通过；测试结束目标环境已恢复 stopped，无进程或本轮临时目录残留。

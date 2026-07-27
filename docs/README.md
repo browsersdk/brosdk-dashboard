@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-27，阶段 0-22 已完成：
+截至 2026-07-27，阶段 0-23 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-22 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/会话与关联环境、Agent 手动/自动执行、DLL MCP 全单环境工具路由、CDP 运行态回填、Windows 安装交付和托盘生命周期已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
+[roadmap.md](roadmap.md) 中阶段 0-23 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/会话与关联环境、Agent 手动/自动执行、DLL MCP 全单环境工具路由、CDP 运行态回填、Windows 安装交付、托盘生命周期和启动进度回调已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -100,6 +100,8 @@ brosdk-dashboard/
 阶段 21 Windows Runtime Host 后台化已完成：Dashboard 发起的长期 `serve` 与一次性 `capabilities/smoke` 统一通过同一进程工厂启动，Windows 使用 `CREATE_NO_WINDOW`，不会再为 `sdk-host` 创建终端窗口；stdin/stdout/stderr 管道语义保持不变，诊断和自动化仍可读取 JSON。Windows 行为测试在子进程内确认 `GetConsoleWindow()` 返回空句柄，真实 runtime-host smoke 的启动、健康检查、优雅停止和强制退出降级通过；Rust workspace 94 项与 Clippy 全部通过。
 
 阶段 22 Windows 桌面生命周期已完成：`BroSDK Dashboard.exe` 与 `sdk-host.exe` 均链接为 Windows GUI subsystem，直接启动不会创建终端窗口；便携版和安装版验证会读取 PE header 并强制 `Subsystem=2`。关闭主窗口只隐藏到托盘，单击或双击托盘图标恢复，右键“退出”在有界优雅停止后结束应用。`npm run e2e:tray` 已在 debug 和便携 release 上验证隐藏、进程保留、恢复和退出；NSIS 首次启动/静默卸载及 release 清单验证通过。
+
+阶段 23 环境启动进度已完成：DLL `browser-open` 中间 callback 的 `data.percent/progress` 与 `statusName` 经 Host 脱敏后更新当前 operation 和环境 `lastEvent`；Dashboard 在“启动中”状态显示百分比进度条，只显示事件名、状态名和 0-100 百分比，不展示原始 payload JSON。真实唯一环境 E2E 断言 `startProgressCallbackObserved=true`，并继续完成 callback ready、CDP evaluate、18 个单环境 MCP 工具、指纹检查和停止。Dashboard 51 项、Playwright 桌面/移动 16 项、Rust workspace 99 项、check、Clippy、production/release 构建全部通过。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

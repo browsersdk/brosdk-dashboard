@@ -1816,6 +1816,45 @@ h2 {
   background: #fff5db;
 }
 
+.environment-runtime-status {
+  display: grid;
+  width: 112px;
+  gap: 5px;
+}
+
+.environment-runtime-status > .status-badge {
+  width: max-content;
+}
+
+.environment-progress {
+  display: grid;
+  grid-template-columns: minmax(56px, 1fr) 30px;
+  align-items: center;
+  gap: 5px;
+}
+
+.environment-progress > span {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #e2e7ee;
+}
+
+.environment-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #d58a13;
+  transition: width 180ms ease-out;
+}
+
+.environment-progress small {
+  color: #6f7785;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 .note-list {
   display: flex;
   flex-wrap: wrap;

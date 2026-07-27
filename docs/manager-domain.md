@@ -61,6 +61,8 @@ queued -> running -> succeeded
 
 启动/停止操作在调用 SDK 前进入 `running`，环境进入 `preparing`/`stopping`。`sdk_browser_open` / `sdk_browser_close` 的同步非负返回值是 accepted 状态码，不保证等于 callback `reqId`，也不会让环境进入 ready。Runtime Host 按 `envId + open/close` 方向暂存 operation，首个 lifecycle callback 到达后写入真实 `reqId` 并建立后续映射；如果 terminal callback 早于 host 同步响应，accepted 更新会检查 operation 当前状态，已经完成的 `succeeded/ready` 不会被回退。
 
+非终态 `browser-open`/`browser-close` callback 只在事件方向与当前 lifecycle operation 一致且 generation 未变化时更新运行摘要。Manager 从 payload 读取 0-100 的 `percent/progress` 和受限 `statusName/stateName/statusText`，写成 `event · status · N%` 的 operation message/环境 last event；不会把原始 payload 暴露到 Dashboard，也不会提前把环境标为 ready/stopped。
+
 `sdk_browser_info` 对账不会在活跃 start operation 期间因列表为空把环境提前改回 stopped；Starting/无 CDP 条目也不会被当作 ready。
 
 ## 4. Snapshot 与增量事件

@@ -41,6 +41,20 @@ test("same-name environments remain independently searchable and selectable", as
   expect(issues).toEqual([]);
 });
 
+test("environment start callback progress is visible without exposing payload JSON", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  await page.goto("/?preview=workspace&scenario=starting-progress&page=environments");
+  await expectHealthyDashboard(page, "环境");
+
+  const row = page.locator('tr[data-env-id="env-demo-01"]');
+  await expect(row).toContainText("启动中");
+  await expect(row).toContainText("37%");
+  await expect(row).toContainText("browser-open · Downloading · 37%");
+  await expect(row).not.toContainText('"data"');
+  await expect(row.getByRole("progressbar", { name: "环境启动进度" })).toHaveAttribute("aria-valuenow", "37");
+  expect(issues).toEqual([]);
+});
+
 test("fingerprint comparison keeps columns bound to envId", async ({ page }) => {
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=fingerprints`);

@@ -200,6 +200,8 @@ Manager 侧 `RuntimeHost` actor 同时监督子进程退出、请求响应、超
 
 DLL callback 函数只在回调有效期内复制 `data/len` 到无界队列，不解析 JSON、不访问数据库。`sdk-host` 主任务随后完成 JSON 解析、敏感字段脱敏、递增 sequence、envId 提取，以及异步 SDK reqId 到 operation id 的映射。
 
+`browser-open` 中间事件可携带 `data.percent/progress` 和 `statusName`。Manager 只把合法百分比和受限状态名压缩为运行摘要，Dashboard 在 starting 状态据此显示进度条；完整 callback payload 仍只留在脱敏事件诊断边界，终态继续以 `browser-open-success` 为准。
+
 ## 10. 安全边界
 
 - API Key 只来自环境变量或系统密钥库，不写入文档、仓库、SQLite 明文字段或普通日志。

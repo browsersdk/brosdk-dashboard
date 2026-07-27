@@ -1,6 +1,6 @@
 # 服务端、DLL 与 MCP 覆盖审计
 
-审计日期：2026-07-26。审计依据：仓库 `doc.json`、`browser-open-server/modules/open/router/browser`、`libs/windows_x64/brosdk.h`、DLL 源码 `orbitbridge/projects/brosdk` 及参考客户端 `orbitbridge/projects/brostu`。
+审计日期：2026-07-27。审计依据：仓库 `doc.json`、`browser-open-server/modules/open/router/browser`、`libs/windows_x64/brosdk.h`、DLL 源码 `orbitbridge/projects/brosdk` 及参考客户端 `orbitbridge/projects/brostu`。
 
 ## 结论
 
@@ -9,7 +9,7 @@
 已完成的主链路：
 
 - API Key 安全初始化、`getUserSig(role=user)`、DLL 初始化与完整环境分页同步。
-- 环境创建、详情、元数据更新、删除、批量启停、callback/browser info 对账和本地数据清理。
+- 环境创建、详情、元数据更新、删除、批量启停、callback 启动进度/browser info 对账和本地数据清理。
 - 指纹关键字段、代理、内核、操作记录、CDP/MCP 运行信息与诊断摘要。
 - DLL 全局和单环境 MCP 的可选 envId 路由、动态发现、严格 session lifecycle、Manager 策略与响应脱敏。
 - AI Provider、持久化会话历史、关联环境、受控计划、会话级手动/自动执行、幂等 reservation 和真实状态校验。

@@ -272,9 +272,11 @@ function demoSnapshot(): DashboardSnapshot {
   const search = new URLSearchParams(window.location.search);
   const workspacePreview = search.get("preview") === "workspace";
   const duplicateNames = search.get("scenario") === "duplicate-names";
+  const startingProgress = search.get("scenario") === "starting-progress";
   const firstEnvironmentName = duplicateNames ? "共享工作环境" : "Marketing CN";
   const secondEnvironmentName = duplicateNames ? "共享工作环境" : "Operations JP";
-  const previewEnvironmentStatus = duplicateNames ? "ready" : "stopped";
+  const firstEnvironmentStatus = duplicateNames ? "ready" : startingProgress ? "starting" : "stopped";
+  const secondEnvironmentStatus = duplicateNames ? "ready" : "stopped";
   const previewNow = new Date().toISOString();
   const previewOperations = duplicateNames ? [
     {
@@ -436,9 +438,9 @@ function demoSnapshot(): DashboardSnapshot {
       {
         envId: "env-demo-01",
         name: firstEnvironmentName,
-        status: previewEnvironmentStatus,
+        status: firstEnvironmentStatus,
         cdp: duplicateNames ? "ws://127.0.0.1/preview/env-demo-01" : "-",
-        lastEvent: "browser-close-success",
+        lastEvent: startingProgress ? "browser-open · Downloading · 37%" : "browser-close-success",
         generation: 0,
         requestId: null,
         currentOperationId: null,
@@ -447,7 +449,7 @@ function demoSnapshot(): DashboardSnapshot {
       {
         envId: "env-demo-02",
         name: secondEnvironmentName,
-        status: previewEnvironmentStatus,
+        status: secondEnvironmentStatus,
         cdp: duplicateNames ? "ws://127.0.0.1/preview/env-demo-02" : "-",
         lastEvent: "env_page sync",
         generation: 0,

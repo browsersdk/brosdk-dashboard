@@ -19,6 +19,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut target_started = false;
     let mut target_stopped = false;
     let mut ready_source = None;
+    let mut start_progress_callback_observed = false;
     let mut evaluate_verified = false;
     let mut manual_close_verified = false;
     let mut embedded_mcp_reachable = false;
@@ -95,6 +96,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
         target_started = true;
         let (ready, source) = wait_for_state(&manager, env_id, "ready", READY_TIMEOUT).await?;
         ready_source = Some(source);
+        start_progress_callback_observed = manager.events_since(0)?.iter().any(|event| {
+            event.env_id.as_deref() == Some(env_id)
+                && event.payload.get("eventName").and_then(Value::as_str) == Some("browser-open")
+                && callback_progress(&event.payload).is_some()
+        });
+        if !start_progress_callback_observed {
+            return Err("browser-open progress callback was not observed".into());
+        }
 
         let targets = manager
             .browser_command(
@@ -233,6 +242,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "status": "passed",
             "environmentCount": environment_count,
             "readySource": ready_source,
+            "startProgressCallbackObserved": start_progress_callback_observed,
             "cdpReady": ready.cdp != "-",
             "runtimeEvaluateVerified": evaluate_verified,
             "fingerprintCheckOpened": fingerprint_check_opened,
@@ -275,6 +285,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     "status": "failed",
                     "environmentCount": environment_count,
                     "readySource": ready_source,
+                    "startProgressCallbackObserved": start_progress_callback_observed,
                     "runtimeEvaluateVerified": evaluate_verified,
                     "fingerprintCheckOpened": fingerprint_check_opened,
                     "pageDiagnosticVerified": page_diagnostic_verified,
@@ -292,6 +303,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
             Err(error)
         }
     }
+}
+
+fn callback_progress(payload: &Value) -> Option<u64> {
+    let progress = payload
+        .pointer("/payload/data/percent")
+        .or_else(|| payload.pointer("/payload/data/progress"))?;
+    let value = progress
+        .as_u64()
+        .or_else(|| progress.as_str()?.trim().parse::<u64>().ok())?;
+    (value <= 100).then_some(value)
 }
 
 async fn wait_for_state(
@@ -584,6 +605,28 @@ mod tests {
             &json!({ "result": { "result": { "value": 41 } } }),
             42.0
         ));
+    }
+
+    #[test]
+    fn reads_only_bounded_callback_progress() {
+        assert_eq!(
+            callback_progress(&json!({
+                "payload": { "data": { "percent": 37 } }
+            })),
+            Some(37)
+        );
+        assert_eq!(
+            callback_progress(&json!({
+                "payload": { "data": { "progress": "84" } }
+            })),
+            Some(84)
+        );
+        assert_eq!(
+            callback_progress(&json!({
+                "payload": { "data": { "percent": 101 } }
+            })),
+            None
+        );
     }
 
     #[test]

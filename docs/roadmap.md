@@ -27,6 +27,7 @@
 | 20. 多环境 Agent 与完整单环境 MCP | P0 | 已完成 | 可选 envId 路由、运行时全工具目录、会话级自动执行和双环境 Agent/MCP E2E |
 | 21. Windows Runtime Host 后台化 | P0 | 已完成 | sdk-host 全部启动路径不创建终端窗口，保留 IPC 与诊断输出捕获 |
 | 22. Windows 桌面生命周期 | P0 | 已完成 | Dashboard/Host GUI subsystem、关闭到托盘、托盘恢复/退出和 release PE 门禁 |
+| 23. 环境启动回调进度 | P0 | 已完成 | DLL percent/statusName 进入 operation 与环境表，真实 callback 和响应式 E2E 通过 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -789,3 +790,15 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 新增 `npm run e2e:tray`，通过 Windows UI Automation 和真实托盘交互验证关闭隐藏、进程保留、托盘恢复与菜单退出，测试使用唯一临时数据目录并清理残留。
 - 便携与安装验证读取 PE header，Dashboard 和 host 必须为 `Subsystem=2`；旧控制台子系统产物会直接拒绝。
 - debug 与便携 release 托盘 E2E、NSIS 首次启动/静默卸载、release 清单验证通过；阶段增量后 Rust workspace 为 96 项，Clippy 通过，无 Dashboard、host 或临时目录残留。
+
+## 26. 阶段 23：环境启动回调进度
+
+目标：在环境启动期间显示 DLL callback 返回的真实进度，同时继续隐藏内部 payload 和敏感字段。
+
+实现结果（2026-07-27）：
+
+- Store 只处理与 operation 方向一致的 `browser-open`/`browser-close` 事件；非终态回调更新 operation message、环境 last event、reqId 和时间，不提前完成 operation 或改变 generation。
+- 进度兼容 callback 嵌套的 `percent`/`progress` 数值与数字字符串，只接受 0-100；状态只读取 `statusName/stateName/statusText`，拒绝控制字符并限制为 64 字符。
+- 环境表在 `starting` 状态从精简事件文本读取百分比，显示固定宽度进度条和数值；完整 callback payload 不进入可见 UI。桌面和 390x844 视口没有重叠或横向溢出。
+- 真实生命周期 runner 在 ready 后回查 Manager 事件流，必须发现目标 envId 的 `browser-open` 中间回调和合法进度；报告只输出 `startProgressCallbackObserved` 布尔值。
+- 真实 E2E 得到 `startProgressCallbackObserved=true`，并完成 callback ready、CDP evaluate、18 个 MCP 工具、指纹检查和停止；Dashboard 51 项、Playwright 16 项、Rust workspace 99 项、check、Clippy、runtime smoke 和 release 构建通过。
