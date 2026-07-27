@@ -96,6 +96,22 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
   const mode = activeConversation.mode;
   const selectedEnvId = activeConversation.contextEnvId;
   const environment = snapshot?.environments.find((item) => item.envId === selectedEnvId) ?? null;
+  const desktopRuntime = isDesktopRuntime();
+  const sendActionLabel = mode === "chat"
+    ? "发送"
+    : activeConversation.executionMode === "automatic"
+      ? "运行 Agent"
+      : "生成计划";
+  const submitDisabledReason = !desktopRuntime
+    ? "请在桌面客户端中使用 AI 助手"
+    : !snapshot?.ai.apiKeyPresent
+      ? "请先配置 AI API Key"
+      : busy
+        ? "AI 正在处理当前请求"
+        : !prompt.trim()
+          ? "请输入请求内容"
+          : "";
+  const canSubmit = submitDisabledReason === "";
 
   useEffect(() => {
     saveConversationState(conversationState);
@@ -231,7 +247,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
 
   async function submit() {
     const requestPrompt = prompt.trim();
-    if (!requestPrompt) return;
+    if (!canSubmit || !requestPrompt) return;
     const conversationId = activeConversation.id;
     const history = conversationHistory(activeConversation.messages);
     const contextEnvId = activeConversation.contextEnvId;
@@ -489,9 +505,9 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
               <button
                 className="ai-send-button"
                 type="button"
-                title={mode === "chat" ? "发送" : activeConversation.executionMode === "automatic" ? "运行 Agent" : "生成计划"}
-                aria-label={mode === "chat" ? "发送" : activeConversation.executionMode === "automatic" ? "运行 Agent" : "生成计划"}
-                disabled={!isDesktopRuntime() || !prompt.trim() || Boolean(busy) || !snapshot?.ai.apiKeyPresent}
+                title={submitDisabledReason || sendActionLabel}
+                aria-label={sendActionLabel}
+                disabled={!canSubmit}
                 onClick={() => void submit()}
               >
                 {busy === "submit" ? <LoaderCircle className="spin" size={17} /> : <SendHorizontal size={17} />}

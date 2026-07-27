@@ -144,6 +144,19 @@ export function McpPage({
     && Boolean(selectedTool)
     && arguments_ !== null
     && validArguments(selectedToolBase, form, selectedGlobalEnvId);
+  const discoverDisabledReason = !desktop
+    ? "浏览器预览只读"
+    : !snapshot?.mcp.active
+      ? "DLL MCP 未连接"
+      : busy
+        ? "MCP 正在执行"
+        : scope === "environment" && !selectedEnvId
+          ? "请选择运行环境"
+          : "";
+  const runDisabledReason = discoverDisabledReason
+    || (!selectedTool ? "请选择工具" : "")
+    || (arguments_ === null ? "参数 JSON 格式错误" : "")
+    || (!validArguments(selectedToolBase, form, selectedGlobalEnvId) ? "请完善工具参数" : "");
 
   function chooseScope(nextScope: McpToolScope) {
     setScope(nextScope);
@@ -208,7 +221,7 @@ export function McpPage({
         <div className="mcp-toolbar-status">
           <span className={`service-dot ${snapshot?.mcp.active ? "ready" : "error"}`} />
           <span>{snapshot?.mcp.active ? "DLL MCP 已连接" : "DLL MCP 未激活"}</span>
-          <button className="button secondary compact" type="button" disabled={!canDiscover} onClick={() => void discover()}>
+          <button className="button secondary compact" type="button" title={discoverDisabledReason || "发现工具"} disabled={!canDiscover} onClick={() => void discover()}>
             {busy === "discover" ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}
             发现工具
           </button>
@@ -254,7 +267,7 @@ export function McpPage({
             onRawArgumentsChange={setRawArguments}
           />
 
-          <button className="button primary full-width mcp-run-button" type="submit" disabled={!canRun}>
+          <button className="button primary full-width mcp-run-button" type="submit" title={runDisabledReason || "运行工具"} disabled={!canRun}>
             {busy === "run" ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />}
             运行工具
           </button>
@@ -264,7 +277,7 @@ export function McpPage({
           <div className="mcp-output-toolbar">
             <div className="segmented-control" aria-label="MCP 输出">
               <button type="button" className={outputView === "tools" ? "active" : ""} onClick={() => setOutputView("tools")}>工具状态</button>
-              <button type="button" className={outputView === "response" ? "active" : ""} disabled={!result} onClick={() => setOutputView("response")}>响应</button>
+              <button type="button" className={outputView === "response" ? "active" : ""} title={result ? "响应" : "暂无响应"} disabled={!result} onClick={() => setOutputView("response")}>响应</button>
             </div>
             <small>{discovery?.protocolVersion ?? result?.protocolVersion ?? "等待连接"}</small>
           </div>

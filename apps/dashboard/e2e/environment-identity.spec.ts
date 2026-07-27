@@ -32,6 +32,25 @@ test("overview prioritizes runtime activity and keeps SDK self-check in diagnost
   expect(issues).toEqual([]);
 });
 
+test("main navigation syncs the page query and browser history", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  await page.goto(`/?${scenario}&page=settings`);
+  await expectHealthyDashboard(page, "设置");
+
+  await page.getByRole("button", { name: "环境", exact: true }).click();
+  await expectHealthyDashboard(page, "环境");
+  await expect(page).toHaveURL(/page=environments/);
+
+  await page.getByRole("button", { name: "AI 助手", exact: true }).click();
+  await expectHealthyDashboard(page, "AI 助手");
+  await expect(page).toHaveURL(/page=ai/);
+
+  await page.goBack();
+  await expectHealthyDashboard(page, "环境");
+  await expect(page).toHaveURL(/page=environments/);
+  expect(issues).toEqual([]);
+});
+
 test("same-name environments remain independently searchable and selectable", async ({ page }) => {
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=environments`);
@@ -177,6 +196,24 @@ test("AI conversations keep an immutable global or environment MCP scope", async
   await expectHealthyDashboard(page, "设置");
   await expect(page.getByRole("heading", { name: "AI Provider" })).toBeVisible();
   await expect(page.getByLabel("OpenAI-compatible Base URL")).toHaveValue("https://api.deepseek.com");
+  expect(issues).toEqual([]);
+});
+
+test("AI preview blocks Enter submission when the provider key is missing", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  await page.goto(`/?${scenario}&page=ai`);
+  await expectHealthyDashboard(page, "AI 助手");
+
+  const request = page.getByLabel("AI 请求");
+  const send = page.getByRole("button", { name: "发送" });
+  await request.fill("环境是否启动");
+  await expect(send).toBeDisabled();
+  await expect(send).toHaveAttribute("title", "请在桌面客户端中使用 AI 助手");
+  await request.press("Enter");
+
+  await expect(request).toHaveValue("环境是否启动");
+  await expect(page.getByText("当前会话为空")).toBeVisible();
+  await expect(page.getByText("Cannot read properties")).toHaveCount(0);
   expect(issues).toEqual([]);
 });
 

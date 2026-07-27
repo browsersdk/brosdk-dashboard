@@ -331,6 +331,27 @@ describe("AiPage", () => {
     expect((input as HTMLTextAreaElement).value).toBe("保留换行");
   });
 
+  it("does not submit from click or Enter when the provider API key is missing", () => {
+    renderPage({
+      snapshot: {
+        ...snapshot,
+        ai: { ...snapshot.ai, apiKeyPresent: false, apiKeySource: "none" },
+      },
+    });
+    const input = screen.getByLabelText("AI 请求") as HTMLTextAreaElement;
+    const sendButton = screen.getByRole("button", { name: "发送" }) as HTMLButtonElement;
+
+    fireEvent.change(input, { target: { value: "环境是否启动" } });
+    expect(sendButton.disabled).toBe(true);
+    expect(sendButton.title).toBe("请先配置 AI API Key");
+
+    fireEvent.click(sendButton);
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    expect(api.chat).not.toHaveBeenCalled();
+    expect(input.value).toBe("环境是否启动");
+    expect(screen.getByText("当前会话为空")).toBeTruthy();
+  });
+
   it("does not offer an unsafe retry after an execution attempt fails", async () => {
     api.plan.mockResolvedValue({
       summary: "启动目标环境",

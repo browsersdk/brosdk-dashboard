@@ -37,6 +37,7 @@
 | 30. MCP 自动激活与 AI 运行态强对账 | P0 | 已完成 | 自动环回端口启用全局 MCP，AI 决策前强制刷新 BrowserInfo |
 | 31. AI 生命周期统一到 DLL 全局 MCP | P0 | 已完成 | `browser.status/open/close`、operation/callback 关联和 stopped 状态真实 AI 回归 |
 | 32. AI 全局环境 MCP 与步骤可观测性 | P0 | 已完成 | 全局 `env.*` 页面工具进入 Agent，自动步骤显示工具名和脱敏参数 |
+| 33. Dashboard UI/交互审查 | P1 | 已完成 | 逐页浏览器审查、导航 URL 同步、AI Enter 防线和 MCP 状态文案优化 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -910,3 +911,26 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 真实 DeepSeek 回归先把目标环境保持 stopped，再询问“环境是否已经启动”；模型使用实时工具结果回答未启动，且没有产生启停步骤。随后 Agent 启动与自动重启均报告 `transport=dll-global-mcp`，测试结束恢复初始状态。
 - 真实运行期间 DLL 从仓库原版本更新为 2.1.0.0；该版本已纳入 Git，且 NSIS 与便携包内 DLL 哈希和源码目录一致。
 - Dashboard 53 项、Rust workspace 120 项、Playwright 桌面/移动 20 项、TypeScript/Rust check、Clippy、production build 和真实 AI E2E 全部通过。
+
+## 35. 阶段 32：AI 全局环境 MCP 与步骤可观测性
+
+目标：让全局 Agent 不只会启停环境，也能使用 DLL 广告的多环境 `env.*` 页面工具，并让用户看清楚每个 `mcp.call` 的工具名和参数。
+
+实现结果（2026-07-27）：
+
+- 全局 Agent 工具目录绑定 DLL 全局 MCP 中的 `env.*` 页面工具，并要求模型显式提供 envId；单环境会话继续隐藏 envId 并由 Manager 覆盖注入。
+- Agent 执行步骤展示 `mcp.call · <tool>`、目标 envId、operation 和脱敏工具参数，用户能区分导航、读取、截图等连续工具调用。
+- 真实 DeepSeek 回归验证“打开百度”走 `env.navigate`，不会误用 `browser.open` 生命周期工具；步骤参数在 UI 中可见。
+- Dashboard/Manager 保持既有工具白名单、状态校验、operation 和响应脱敏边界。
+
+## 36. 阶段 33：Dashboard UI/交互审查
+
+目标：逐一检查 Dashboard 主要页面和核心交互，修复会影响多环境指纹浏览器日常使用的状态表达、键盘操作和 URL 可恢复性问题。
+
+实现结果（2026-07-27）：
+
+- 使用浏览器插件逐页检查总览、环境、指纹、代理、内核、MCP、AI、操作和设置；页面均非空，无框架错误覆盖、无应用控制台 warning/error、无横向溢出。
+- 主导航切换同步 `page` 查询参数，并支持浏览器后退回到上一页，避免刷新或分享当前视图时回到旧页面。
+- AI 输入区的发送按钮和 Enter 键共用 `canSubmit` 条件；浏览器预览、未配置 AI Key、忙碌或空输入时不会提交请求，避免绕过禁用按钮调用 Tauri API。
+- 总览 MCP 指标区分“能力存在”和“当前端口已连接”；MCP 控制台的发现、运行和响应按钮在禁用时提供具体悬停原因。
+- 验证通过 Dashboard 56 项组件测试、Playwright 桌面/移动 24 项、TypeScript/Rust check、Rustfmt 和 Clippy。

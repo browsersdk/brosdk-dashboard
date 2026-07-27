@@ -125,6 +125,19 @@ const stageLabel: Record<SmokeStageStatus, string> = {
   skipped: "跳过",
 };
 
+function mcpMetricValue(snapshot: DashboardSnapshot | null) {
+  if (!snapshot) return "-";
+  if (snapshot.mcp.active) return "已连接";
+  if (!snapshot.capabilities.embeddedMcp) return "不可用";
+  return snapshot.mcp.configured ? "待连接" : "未启用";
+}
+
+function mcpMetricDetail(snapshot: DashboardSnapshot | null) {
+  const hint = snapshot?.mcp.endpointHint;
+  if (!hint || hint === "not enabled") return snapshot?.mcp.active ? "已连接" : "端口未启用";
+  return hint;
+}
+
 export default function App() {
   const [page, setPage] = useState<Page>(() => {
     const previewPage = new URLSearchParams(window.location.search).get("page");
@@ -178,6 +191,23 @@ export default function App() {
   const latestSmoke = smoke ?? snapshot?.sdk.lastSmoke ?? null;
   const readyEnvironmentCount = snapshot?.environments.filter((environment) => environment.status === "ready").length ?? 0;
 
+  const navigateToPage = useCallback((nextPage: Page, options: { replace?: boolean } = {}) => {
+    setPage(nextPage);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("page") === nextPage) return;
+    url.searchParams.set("page", nextPage);
+    window.history[options.replace ? "replaceState" : "pushState"](null, "", url);
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const nextPage = new URLSearchParams(window.location.search).get("page");
+      setPage(navItems.some((item) => item.key === nextPage) ? nextPage as Page : "overview");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
   async function executeSmoke() {
     setSmokeBusy(true);
     setError("");
@@ -198,7 +228,7 @@ export default function App() {
     try {
       await configureApiKey(apiKey);
       await load();
-      setPage("environments");
+      navigateToPage("environments", { replace: true });
     } catch (requestError) {
       setError(errorMessage(requestError, "初始化失败"));
     } finally {
@@ -243,7 +273,7 @@ export default function App() {
               className={page === item.key ? "active" : ""}
               title={item.label}
               type="button"
-              onClick={() => setPage(item.key)}
+              onClick={() => navigateToPage(item.key)}
             >
               <item.icon size={18} />
               <span>{item.label}</span>
@@ -280,7 +310,7 @@ export default function App() {
             <section className="summary-band" aria-label="运行概览">
               <Metric icon={ServerCog} tone="blue" label="SDK" value={statusLabel[snapshot?.sdk.state ?? ""] ?? "-"} detail={snapshot?.capabilities.dllExists ? "DLL present" : "DLL missing"} />
               <Metric icon={ShieldCheck} tone="green" label="API Key" value={snapshot?.sdk.apiKey.present ? "已设置" : "未设置"} detail={snapshot?.sdk.apiKey.source ?? "BROSDK_API_KEY"} />
-              <Metric icon={Bot} tone="amber" label="内嵌 MCP" value={snapshot?.capabilities.embeddedMcp ? "可用" : "未知"} detail={snapshot?.mcp.endpointHint ?? "-"} />
+              <Metric icon={Bot} tone="amber" label="内嵌 MCP" value={mcpMetricValue(snapshot)} detail={mcpMetricDetail(snapshot)} />
               <Metric icon={Boxes} tone="gray" label="环境" value={String(snapshot?.environments.length ?? 0)} detail={`${readyEnvironmentCount} 个运行中`} />
             </section>
             <section className="workspace overview-grid">
@@ -295,14 +325,14 @@ export default function App() {
             snapshot={snapshot}
             onRefresh={load}
             onError={(message) => setError(message)}
-            onOpenKernels={() => setPage("kernels")}
+            onOpenKernels={() => navigateToPage("kernels")}
           />
         )}
         {page === "fingerprints" && <FingerprintPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "proxies" && <ProxyPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "kernels" && <KernelPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "mcp" && <McpPage snapshot={snapshot} desktop={isDesktopRuntime()} onRefresh={load} onError={setError} />}
-        {page === "ai" && <AiPage snapshot={snapshot} onRefresh={load} onError={setError} onOpenSettings={() => setPage("settings")} />}
+        {page === "ai" && <AiPage snapshot={snapshot} onRefresh={load} onError={setError} onOpenSettings={() => navigateToPage("settings")} />}
         {page === "operations" && <OperationsPage snapshot={snapshot} onRefresh={load} onError={setError} />}
         {page === "settings" && (
           <SettingsPage
