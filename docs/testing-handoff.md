@@ -270,7 +270,7 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 成功同步必须删除缓存中服务端已不存在的环境；失败同步不得写入部分结果，cache status 必须为 stale。
 - schema migration 必须清除旧 `local_label`/`tags_json` 覆盖，Dashboard 搜索和展示只使用服务端名称与 envId。
 - 全局 MCP 测试覆盖 `/sdk/v1/mcp` 的 initialize、initialized、tools/list、只读 tools/call、DELETE，并确认 mutation 工具不会被 Dashboard 直通。
-- 单环境 MCP 测试覆盖可选 `?envId=` 路由、advertised tools 与可调用目录一致；非 ready 环境、未公布工具、非 object 或超限参数必须拒绝。
+- 单环境 MCP 测试覆盖全局 endpoint 的 `env.* + arguments.envId` 路由、advertised tools 与可调用目录一致；非 ready 环境、管理 mutation、未公布工具、非 object 或超限参数必须拒绝。
 - 真实测试至少验证全局 `sdk.health`、`env.list`、`mcp.endpoint`，以及 ready 环境的 `tabs(list)` 和一个页面读取工具；报告不输出 envId、页面正文、URL query、API Key 或 userSig。
 
 2026-07-26 远端缓存子阶段结果：Manager 35 个测试通过，覆盖多页合并、重复 envId、空列表、缺少 total、总数变化、重复页无进展、条数上限、原子替换、远端删除、双重脱敏、失败保留和 v5 迁移。`npm run check`、`npm test`、`npm run build` 均通过；真实 Manager smoke 在独立临时数据目录完成首次自动刷新和显式刷新，operation 为 succeeded、缓存为 `sdk-server/fresh/1`，runtime 正常停止，临时数据库已清理。环境页在 1440x900 与 390x844 下无重叠、无页面级横向溢出，控制台无应用 warning/error。MCP 全局/单环境验收留给下一子阶段。
@@ -395,7 +395,7 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 
 ## 23. 阶段 20 多环境 Agent 与完整单环境 MCP 验收
 
-- `mcp-client` 的统一入口接收 `Option<envId>`：`None` 请求 `/sdk/v1/mcp`，`Some` 请求 `/sdk/v1/mcp?envId=...`；envId 必须由 URL API 编码，不能字符串拼接。
+- `mcp-client` 的统一入口接收 `Option<envId>`；阶段 25 后两种作用域都请求 `/sdk/v1/mcp`，环境调用使用 `env.*` 并在 JSON arguments 中注入 envId。
 - 全局仍只允许 9 个管理读取。ready 单环境的 `allowedTools` 必须等于 DLL 当次广告目录；不能把 17、18 或 19 写成产品常量。
 - 任意单环境工具参数必须是 JSON object，最大 64 KiB、最多 16 层、单字符串最多 16 KiB；常用读取继续有结构化表单，其余工具使用高级 JSON 参数区。
 - Agent 支持 `mcp.call`。显式 envId 必须覆盖错误的关联环境，Manager 写入最新 `expectedState`；执行时仍走 reservation、operation 和 DLL `tools/list` 校验。
@@ -403,7 +403,7 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 执行尝试后不得再次显示同一计划的批准按钮；失败视为状态可能不确定，必须重新生成计划。
 - `npm run e2e:multi-environment` 从当前用户安全存储复制 SDK/AI 加密 secret 到唯一临时数据目录，不把明文放入命令行；创建两个临时环境，结束时停止、清理、删除并核对账号环境总数恢复。
 
-2026-07-26 阶段 20 结果：真实双环境 E2E 覆盖 Agent 手动和自动启停、错误关联环境下的精确 envId 解析、两个环境均 ready/stopped、每环境最少 18 个工具、Agent 自动 `mcp.call -> tabs(list)`、远端指纹刷新和补偿清理。成功报告为 `agentManualModeCovered/agentAutomaticModeCovered/agentMcpCallCovered/environmentMcpOptionalEnvId=true`，临时环境清理 2/2，账号环境数 1 -> 1，无 `sdk-host` 残留。Dashboard 49 项组件测试、Playwright 桌面/移动 14 项、Rust workspace 93 项和 production build 通过；视觉截图确认 Agent 双模式控制和 MCP JSON 参数区无重叠或横向溢出。
+2026-07-26 阶段 20 结果：真实双环境 E2E 覆盖 Agent 手动和自动启停、错误关联环境下的精确 envId 解析、两个环境均 ready/stopped、每环境最少 18 个工具、Agent 自动 MCP tabs 调用、远端指纹刷新和补偿清理。该阶段的查询参数路由已由阶段 25 的全局 `env.tabs + arguments.envId` 替代。临时环境清理 2/2，账号环境数 1 -> 1，无 `sdk-host` 残留。Dashboard 49 项组件测试、Playwright 桌面/移动 14 项、Rust workspace 93 项和 production build 通过。
 
 ## 24. 阶段 21 Windows Runtime Host 后台化验收
 
@@ -440,3 +440,13 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 应用单实例使用 Tauri identifier，不替代 DLL appId 锁；必须确认 single-instance 插件先于会初始化 Manager/runtime 的其它插件注册。
 
 2026-07-27 阶段 24 结果：遗留 starting/ready 的有/无 BrowserInfo 两条恢复路径均由 Store 测试通过，Rust workspace 共 101 项测试及目标 Clippy 通过。`npm run e2e:tray` 真实启动第二个相同进程，报告 `secondInstanceRedirected=true`，随后托盘恢复和菜单退出通过；测试后无 Dashboard、sdk-host 或临时目录残留。
+
+## 28. 阶段 25 新版全局多环境 MCP 验收
+
+- 环境 discovery 和 call 的首个 HTTP 请求路径必须都是 `/sdk/v1/mcp`，不得带 `?envId=`；调用 JSON 必须包含 `name=env.tabs` 和 Manager 选中的 arguments.envId。
+- 用户参数中已有不同 envId 时必须由 Manager 覆盖；旧基础名称 `tabs` 必须规范为 `env.tabs`。
+- 环境目录只能包含浏览器 `env.*` 工具，必须排除 `env.list/resolve/get/create/update/destroy`；全局 mutation 继续走 Manager operation。
+- MCP 页面显示真实 `env.*` 名称且结构化参数表单可用；Agent 新计划优先生成带前缀工具名。
+- `npm run e2e:environment` 必须发现 allowed=advertised 的 18 个浏览器工具，通过 `env.tabs/env.read` 后停止环境，报告中不输出 envId 或页面正文。
+
+2026-07-27 阶段 25 结果：Dashboard 51 项、Rust workspace 101 项、Playwright 桌面/移动 16 项、check 与 Clippy 全部通过。真实 DLL 生命周期 E2E 报告 `embeddedMcpAdvertisedToolCount=18`、`embeddedMcpAllowedToolCount=18`、`embeddedMcpToolVerified/embeddedMcpReadVerified/environmentStopped=true`；全局管理集合未进入单环境白名单，凭据和真实 envId 未写入输出。

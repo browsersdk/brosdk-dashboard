@@ -127,20 +127,23 @@ export function McpPage({
   const policyTools = useMemo(() => toolsForScope(snapshot, scope), [snapshot, scope]);
   const availableTools = discovery?.allowedTools ?? policyTools;
   const selectedTool = availableTools.includes(tool) ? tool : availableTools[0] ?? "";
+  const selectedToolBase = scope === "environment"
+    ? environmentToolBase(selectedTool)
+    : selectedTool;
   const advertisedTools = discovery?.advertisedTools
     ?? availableTools.map((name) => ({ name, description: null, readOnlyHint: null, destructiveHint: null }));
   const canDiscover = desktop
     && Boolean(snapshot?.mcp.active)
     && !busy
     && (scope === "global" || Boolean(selectedEnvId));
-  const usesRawArguments = !structuredTools.has(selectedTool);
+  const usesRawArguments = !structuredTools.has(selectedToolBase);
   const arguments_ = usesRawArguments
     ? parseRawArguments(rawArguments)
-    : buildArguments(selectedTool, form, selectedGlobalEnvId);
+    : buildArguments(selectedToolBase, form, selectedGlobalEnvId);
   const canRun = canDiscover
     && Boolean(selectedTool)
     && arguments_ !== null
-    && validArguments(selectedTool, form, selectedGlobalEnvId);
+    && validArguments(selectedToolBase, form, selectedGlobalEnvId);
 
   function chooseScope(nextScope: McpToolScope) {
     setScope(nextScope);
@@ -240,7 +243,7 @@ export function McpPage({
           </label>
 
           <McpArgumentFields
-            tool={selectedTool}
+            tool={selectedToolBase}
             form={form}
             environments={environments}
             selectedGlobalEnvId={selectedGlobalEnvId}
@@ -495,7 +498,11 @@ function boundedInteger(value: string, minimum: number, maximum: number) {
 }
 
 function toolLabel(tool: string) {
-  return toolLabels[tool] ?? tool;
+  return toolLabels[tool] ?? toolLabels[environmentToolBase(tool)] ?? tool;
+}
+
+function environmentToolBase(tool: string) {
+  return tool.startsWith("env.") ? tool.slice(4) : tool;
 }
 
 function operationStatus(status: string) {

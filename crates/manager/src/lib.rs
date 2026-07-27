@@ -59,6 +59,14 @@ const GLOBAL_MCP_READ_TOOLS: &[&str] = &[
     "task.get",
     "mcp.endpoint",
 ];
+const GLOBAL_ENVIRONMENT_MANAGEMENT_TOOLS: &[&str] = &[
+    "env.list",
+    "env.resolve",
+    "env.get",
+    "env.create",
+    "env.update",
+    "env.destroy",
+];
 const ENVIRONMENT_MCP_READ_TOOLS: &[&str] = &[
     "browser_state",
     "tabs",
@@ -443,7 +451,7 @@ impl Manager {
                     "Dashboard communicates with Manager through Tauri commands.".into(),
                     "Manager communicates with sdk-host through a supervised named pipe/UDS.".into(),
                     "Global MCP is limited to management reads; lifecycle mutations continue through Manager operations.".into(),
-                    "Environment MCP tools are discovered dynamically from the DLL for each ready envId.".into(),
+                    "Environment MCP tools use the global env.* catalog; Manager injects the selected envId into every call.".into(),
                     "Unexpected host exit becomes degraded state and never exits the desktop UI.".into(),
                 ],
             },
@@ -1097,6 +1105,7 @@ impl Manager {
                 "allowedActions": allowed_agent_actions(),
                 "readySemantics": "accepted is not ready",
                 "writesRequireApproval": true,
+                "mcpEnvironmentTools": "use env.* names; Manager injects the selected envId",
             }
         }))
     }
@@ -1133,6 +1142,10 @@ impl Manager {
             .read()
             .await
             .ok_or(ManagerError::McpNotConfigured)?;
+        let tool = match request.scope {
+            McpToolScope::Global => request.tool.clone(),
+            McpToolScope::Environment => global_environment_mcp_tool_name(&request.tool)?,
+        };
         let (env_id, generation, arguments, kind, label) = match request.scope {
             McpToolScope::Global => {
                 if request
@@ -1147,7 +1160,7 @@ impl Manager {
                 (
                     None,
                     0,
-                    validate_global_mcp_tool_call(&request.tool, request.arguments)?,
+                    validate_global_mcp_tool_call(&tool, request.arguments)?,
                     "mcp.global-tool-call",
                     "调用 DLL 全局 MCP",
                 )
@@ -1173,7 +1186,7 @@ impl Manager {
                 (
                     Some(env_id.to_string()),
                     environment.generation,
-                    validate_environment_mcp_tool_call(&request.tool, request.arguments)?,
+                    validate_environment_mcp_tool_call(&tool, request.arguments)?,
                     "mcp.environment-tool-call",
                     "调用 DLL 环境 MCP",
                 )
@@ -1181,7 +1194,7 @@ impl Manager {
         };
         let request_summary = json!({
             "scope": mcp_scope_name(request.scope),
-            "tool": request.tool,
+            "tool": tool,
             "argumentKeys": arguments
                 .as_object()
                 .map(|object| object.keys().cloned().collect::<Vec<_>>())
@@ -1199,14 +1212,12 @@ impl Manager {
             .operations
             .start(&operation.id, "calling embedded MCP")?;
         let result = match request.scope {
-            McpToolScope::Global => {
-                mcp_client::call_global_tool(port, &request.tool, arguments).await
-            }
+            McpToolScope::Global => mcp_client::call_global_tool(port, &tool, arguments).await,
             McpToolScope::Environment => {
                 mcp_client::call_env_tool(
                     port,
                     env_id.as_deref().expect("validated environment id"),
-                    &request.tool,
+                    &tool,
                     arguments,
                 )
                 .await
@@ -1230,7 +1241,7 @@ impl Manager {
                     Some(&operation.id),
                     &json!({
                         "scope": mcp_scope_name(request.scope),
-                        "tool": request.tool,
+                        "tool": tool,
                         "advertisedToolCount": advertised_tools.len(),
                         "protocolVersion": result.protocol_version,
                     }),
@@ -1239,7 +1250,7 @@ impl Manager {
                     operation,
                     scope: request.scope,
                     env_id,
-                    tool: request.tool,
+                    tool,
                     protocol_version: result.protocol_version,
                     advertised_tools,
                     response,
@@ -3833,6 +3844,7 @@ fn validate_environment_mcp_read_tool_call(
     tool: &str,
     arguments: serde_json::Value,
 ) -> Result<serde_json::Value, ManagerError> {
+    let tool = environment_mcp_base_tool(tool)?;
     if !ENVIRONMENT_MCP_READ_TOOLS.contains(&tool) {
         return Err(ManagerError::McpToolNotAllowed(format!(
             "environment:{tool}"
@@ -4010,6 +4022,32 @@ fn validate_environment_mcp_tool_call(
     Ok(arguments)
 }
 
+fn environment_mcp_base_tool(tool: &str) -> Result<&str, ManagerError> {
+    let tool = tool.trim();
+    let base = tool.strip_prefix("env.").unwrap_or(tool);
+    if base.is_empty()
+        || base.chars().count() > 124
+        || !base
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Err(ManagerError::InvalidMcpArguments(
+            "environment tool must be an env.* catalog name".into(),
+        ));
+    }
+    Ok(base)
+}
+
+fn global_environment_mcp_tool_name(tool: &str) -> Result<String, ManagerError> {
+    let tool = format!("env.{}", environment_mcp_base_tool(tool)?);
+    if GLOBAL_ENVIRONMENT_MANAGEMENT_TOOLS.contains(&tool.as_str()) {
+        return Err(ManagerError::McpToolNotAllowed(format!(
+            "environment:{tool}"
+        )));
+    }
+    Ok(tool)
+}
+
 fn validate_mcp_argument_value(
     value: &serde_json::Value,
     depth: usize,
@@ -4136,7 +4174,10 @@ fn mcp_scope_name(scope: McpToolScope) -> &'static str {
 fn mcp_tool_allowed(scope: McpToolScope, tool: &str) -> bool {
     match scope {
         McpToolScope::Global => GLOBAL_MCP_READ_TOOLS.contains(&tool),
-        McpToolScope::Environment => !tool.trim().is_empty(),
+        McpToolScope::Environment => tool.strip_prefix("env.").is_some_and(|base| {
+            environment_mcp_base_tool(base).is_ok()
+                && !GLOBAL_ENVIRONMENT_MANAGEMENT_TOOLS.contains(&tool)
+        }),
     }
 }
 
@@ -4184,6 +4225,12 @@ fn mcp_error_message(error: &mcp_client::McpClientError) -> &'static str {
         mcp_client::McpClientError::ToolUnavailable(_) => "embedded MCP tool is unavailable",
         mcp_client::McpClientError::Rpc(_) => "embedded MCP returned a JSON-RPC error",
         mcp_client::McpClientError::ToolFailed => "embedded MCP tool failed",
+        mcp_client::McpClientError::InvalidEnvironmentTool(_) => {
+            "embedded MCP environment tool name is invalid"
+        }
+        mcp_client::McpClientError::InvalidEnvironmentArguments => {
+            "embedded MCP environment arguments are invalid"
+        }
     }
 }
 
@@ -4847,7 +4894,7 @@ mod tests {
     }
 
     #[test]
-    fn agent_mcp_call_uses_optional_environment_scope() {
+    fn agent_mcp_call_selects_environment_scope() {
         let environments = vec![
             environment_record("env-selected", "stopped"),
             environment_record("env-target", "ready"),
@@ -4927,6 +4974,26 @@ mod tests {
 
     #[test]
     fn mcp_read_policy_stays_bounded_while_environment_calls_follow_runtime_catalog() {
+        assert_eq!(
+            global_environment_mcp_tool_name("tabs").expect("legacy alias"),
+            "env.tabs"
+        );
+        assert_eq!(
+            global_environment_mcp_tool_name("env.tabs").expect("global name"),
+            "env.tabs"
+        );
+        assert!(mcp_tool_allowed(McpToolScope::Environment, "env.tabs"));
+        assert!(!mcp_tool_allowed(McpToolScope::Environment, "tabs"));
+        assert!(!mcp_tool_allowed(McpToolScope::Environment, "env.create"));
+        assert!(matches!(
+            global_environment_mcp_tool_name("env.create"),
+            Err(ManagerError::McpToolNotAllowed(_))
+        ));
+        assert_eq!(
+            validate_environment_mcp_read_tool_call("env.tabs", json!({ "action": "list" }))
+                .expect("prefixed read"),
+            json!({ "action": "list" })
+        );
         assert!(matches!(
             validate_environment_mcp_read_tool_call("tabs", json!({ "action": "new" })),
             Err(ManagerError::InvalidMcpArguments(_))

@@ -184,8 +184,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ensure_operation_succeeded(&discovery.operation)?;
             embedded_mcp_advertised_tool_count = discovery.advertised_tools.len();
             embedded_mcp_allowed_tool_count = discovery.allowed_tools.len();
-            if !discovery.allowed_tools.iter().any(|tool| tool == "tabs")
-                || !discovery.allowed_tools.iter().any(|tool| tool == "read")
+            if !discovery.allowed_tools.iter().any(|tool| tool == "env.tabs")
+                || !discovery.allowed_tools.iter().any(|tool| tool == "env.read")
             {
                 return Err("environment MCP discovery did not allow tabs and read".into());
             }
@@ -193,7 +193,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .call_embedded_mcp(domain::McpToolCallRequest {
                     scope: domain::McpToolScope::Environment,
                     env_id: Some(env_id.into()),
-                    tool: "tabs".into(),
+                    tool: "env.tabs".into(),
                     arguments: json!({ "action": "list" }),
                 })
                 .await?;
@@ -205,7 +205,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .call_embedded_mcp(domain::McpToolCallRequest {
                     scope: domain::McpToolScope::Environment,
                     env_id: Some(env_id.into()),
-                    tool: "read".into(),
+                    tool: "env.read".into(),
                     arguments: json!({ "page": page }),
                 })
                 .await?;
@@ -255,6 +255,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "embeddedMcpReachable": embedded_mcp_reachable,
             "embeddedMcpToolVerified": embedded_mcp_tool_verified,
             "embeddedMcpReadVerified": embedded_mcp_read_verified,
+            "embeddedMcpGlobalRouting": embedded_mcp_tool_verified && embedded_mcp_read_verified,
             "embeddedMcpAdvertisedToolCount": embedded_mcp_advertised_tool_count,
             "embeddedMcpAllowedToolCount": embedded_mcp_allowed_tool_count,
             "targetSelection": if requested_env_id.is_some() { "explicit" } else { "only-environment" },

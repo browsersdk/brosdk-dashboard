@@ -121,6 +121,6 @@ AI Chat/Agent 的环境上下文按选中的精确 `envId` 构造。Dashboard �
 
 ## 6. DLL MCP 路由
 
-Manager 是 DLL MCP 的唯一客户端边界。请求显式区分 `global` 与 `environment` scope：全局 scope 连接 `/sdk/v1/mcp`，不能携带 Manager 路由 envId；环境 scope 连接 `/sdk/v1/mcp/env/{envId}`，且只接受缓存中处于 ready 的环境。工具发现和调用分别写入 `mcp.tools-discover`、`mcp.global-tool-call` 或 `mcp.environment-tool-call` operation。
+Manager 是 DLL MCP 的唯一客户端边界。请求显式区分 `global` 与 `environment` scope，但两者都连接 `/sdk/v1/mcp`：全局 scope 只能调用 9 个管理读取；环境 scope 只接受缓存中处于 ready 的环境，把旧基础工具名规范为 `env.*`，并在 arguments 中覆盖写入目标 envId。环境目录从全局 `tools/list` 动态选取浏览器工具，排除同样使用 `env.` 前缀的 `env.list/resolve/get/create/update/destroy` 管理工具。工具发现和调用分别写入 `mcp.tools-discover`、`mcp.global-tool-call` 或 `mcp.environment-tool-call` operation。
 
 Manager 在建立 MCP session 前执行工具与参数白名单校验。全局只开放健康、环境读取、浏览器状态和任务读取；环境级只开放有尺寸、数量和超时上限的读取工具。DLL 广告 mutation 并不自动获得权限，环境生命周期与远端环境写入仍走既有 Manager operation。MCP 响应返回 Dashboard 前再次脱敏，URL 只保留 origin；operation request 仅记录 scope、工具名和参数键，不保存页面内容或参数值。

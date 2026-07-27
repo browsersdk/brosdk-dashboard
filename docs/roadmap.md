@@ -24,7 +24,7 @@
 | 17. CDP 运行态多源回填 | P0 | 已完成 | callback/getEnvInfo/BrowserInfo 三路回填，端口 0 保持内部控制通道 |
 | 18. Windows 安装交付闭环 | P0 | 已完成 | NSIS、便携包、可选 MSI、哈希清单、安装版 Dashboard E2E 与静默卸载 |
 | 19. AI 会话与 Agent 执行可靠性 | P0 | 已完成 | 会话历史、新建/清空、envId 目标校正、真实状态前置条件和接口覆盖审计 |
-| 20. 多环境 Agent 与完整单环境 MCP | P0 | 已完成 | 可选 envId 路由、运行时全工具目录、会话级自动执行和双环境 Agent/MCP E2E |
+| 20. 多环境 Agent 与完整单环境 MCP | P0 | 已完成 | 运行时全工具目录、会话级自动执行和双环境 Agent/MCP E2E；路由已在阶段 25 升级为全局 `env.*` |
 | 21. Windows Runtime Host 后台化 | P0 | 已完成 | sdk-host 全部启动路径不创建终端窗口，保留 IPC 与诊断输出捕获 |
 | 22. Windows 桌面生命周期 | P0 | 已完成 | Dashboard/Host GUI subsystem、关闭到托盘、托盘恢复/退出和 release PE 门禁 |
 | 23. 环境启动回调进度 | P0 | 已完成 | DLL percent/statusName 进入 operation 与环境表，真实 callback 和响应式 E2E 通过 |
@@ -308,7 +308,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - SQLite 环境表只允许保存服务端响应的脱敏、可删除缓存。缓存不能产生本地专属环境名称、标签或覆盖服务端字段。
 - `sdk_env_page` 必须分页拉取完整集合。只有所有页都成功时才原子替换缓存；任一页失败时保留上一份缓存并明确标记 stale。
 - generation、reqId、CDP 和 ready/stopped 是当前设备的浏览器进程事实，作为本地运行态叠加在远端缓存上，不视为远端环境配置。
-- DLL 全局 MCP `/sdk/v1/mcp` 用于环境发现、详情和运行状态诊断；单环境 MCP `/sdk/v1/mcp/env/{envId}` 用于具体浏览器页面操作。
+- DLL 全局 MCP `/sdk/v1/mcp` 同时用于管理读取和 `env.*` 浏览器操作；兼容单环境 endpoint 不再用于本项目的新调用。
 - 全局 MCP 的 create/update/destroy/open/close 等写工具不直接暴露给 Dashboard，继续复用 Manager operation、状态校验、审批和补偿逻辑。
 
 任务：
@@ -326,7 +326,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 - DLL 源码的全局 MCP 已包含 `sdk.health`、`sdk.info`、`env.list/resolve/get/create/update/destroy`、`browser.open/close/cleanup/status/install`、`task.list/get` 和 `mcp.endpoint`。
 - DLL 单环境 MCP 已包含 `browser_state`、`tabs`、`snapshot`、`diff`、`read`、`grep`、`screenshot`、`pdf`、`wait` 以及导航/交互类工具。
-- 因此缺口不在 DLL，而在本项目原先只实现 `/sdk/v1/mcp/env/{envId}` 且只允许 `browser_state(get)`、`tabs(list/current)`。
+- 因此缺口不在 DLL，而在本项目当时只接入兼容单环境 endpoint 且只允许 `browser_state(get)`、`tabs(list/current)`；阶段 25 已迁移到全局 `env.*` catalog。
 - `brostu` 与当前 DLL 一样通过 init `port` 启用内嵌服务，并直接使用 `PageEnv/GetEnvInfo/CreateEnv/UpdateEnv/BrowserInfo`，没有额外的本地环境事实库要求。
 
 验收：
@@ -455,7 +455,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 ## 17. 当前状态
 
-阶段 0-20 已完成。Dashboard 已形成以 envId 为唯一主键的多环境工作台、具备会话历史和手动/自动执行语义的受控 AI、按可选 envId 路由的 DLL MCP 能力，以及经过真实安装 E2E 的 Windows 交付链路；环境配置仍以 SDK 服务端为事实来源，本地只保存可删除的脱敏缓存和运行态。接口覆盖不再用单一“完成”描述，详见 [interface-coverage.md](interface-coverage.md)。
+阶段 0-20 已完成。Dashboard 已形成以 envId 为唯一主键的多环境工作台、具备会话历史和手动/自动执行语义的受控 AI、动态 DLL MCP 能力，以及经过真实安装 E2E 的 Windows 交付链路；阶段 25 已把 MCP 路由升级为全局 `env.* + arguments.envId`。环境配置仍以 SDK 服务端为事实来源，本地只保存可删除的脱敏缓存和运行态。接口覆盖不再用单一“完成”描述，详见 [interface-coverage.md](interface-coverage.md)。
 
 阶段 14 envId 身份子阶段完成（2026-07-26）：
 
@@ -562,7 +562,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 阶段 11 Manager MCP 子阶段完成（2026-07-26）：
 
-- MCP client 复用全局 `/sdk/v1/mcp` 与单环境 `/sdk/v1/mcp/env/{envId}` 的严格 Streamable HTTP session 生命周期，`tools/list` 同时解析说明和 read-only/destructive annotations。
+- MCP client 复用严格 Streamable HTTP session 生命周期，`tools/list` 同时解析说明和 read-only/destructive annotations；阶段 25 后只连接全局 `/sdk/v1/mcp`。
 - Manager API 使用显式 `global`/`environment` scope；全局允许 `sdk.health/info`、`env.list/resolve/get`、`browser.status`、`task.list/get`、`mcp.endpoint`，环境级允许 7 个带参数上限的只读工具。
 - 单环境发现/调用要求缓存中的环境为 ready；全局 mutation、页面导航/交互/脚本/文件工具、全页截图和越界参数均在建立 MCP session 前拒绝。每次发现和调用都有独立 operation，响应继续脱敏并把 URL 降为 origin。
 - domain、MCP client、Manager 和 Tauri command 已接通动态发现；定向测试通过。真实隔离 smoke 发现 DLL 广告 16 个全局工具、Manager 放行 9 个，协议为 `2025-11-25`，并成功调用 `sdk.health`、`env.list`、`mcp.endpoint`；临时数据库与端口均已清理。
@@ -599,7 +599,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 启动/停止状态语义明确写入结果：accepted/starting 不等于 ready，必须等待 SDK callback 或 reconcile。
 - `npm run ai:smoke` 只输出模型名、只读标志和回答长度，不输出模型回答或密钥。
 - DLL MCP adapter 严格完成 Streamable HTTP lifecycle，只允许 ready 环境执行 `browser_state(get)` 与 `tabs(list/current)`；调用有 operation，URL 降为 origin，响应脱敏。
-- `npm run e2e:environment` 在设置 `BROSDK_EMBEDDED_PORT` 时会实际调用 `/sdk/v1/mcp/env/{envId}` 的 `tabs(list)`，不再只检查 TCP 监听。
+- `npm run e2e:environment` 在设置 `BROSDK_EMBEDDED_PORT` 时会实际调用全局 `/sdk/v1/mcp` 的 `env.tabs(list)`，不再只检查 TCP 监听。
 - 2026-07-25 使用真实测试配置完成 DeepSeek smoke 和环境 E2E；报告确认 `readySource=sdk_callback`、`runtimeEvaluateVerified=true`、`embeddedMcpToolVerified=true`、`manualCloseVerified=true`。
 - Dashboard AI/MCP 页面通过 1440x900 与 390x844 Playwright 检查：导航与 Chat/Agent 模式切换有效、预览态写按钮保持禁用、控制台无应用错误、页面无横向溢出。
 
@@ -744,7 +744,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 任务：
 
-- MCP client 增加统一 `Option<envId>` 入口，使用 `/sdk/v1/mcp?envId=...` 路由单环境，保留原 global/env Rust 函数兼容调用方。
+- MCP client 增加统一 `Option<envId>` 入口；该阶段先使用查询参数兼容路由，阶段 25 已升级为全局 endpoint 的 `env.* + arguments.envId`。
 - 全局 mutation 继续走 Manager operation；单环境允许当次 DLL `tools/list` 广告的全部工具，参数实施总大小、深度和字符串长度门禁。
 - MCP 页面常用读取工具继续使用结构化控件，其余工具使用高级 JSON 参数区；目录和数量不得写死。
 - Agent 新增 `mcp.call`，Manager 继续重写 envId、expectedState 和幂等键，并在执行时验证环境 ready 与工具仍被广告。
@@ -756,13 +756,13 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - `mcp-client` 单元测试确认无 envId 为全局 URL，有 envId 时查询参数正确编码，并完成完整 Streamable HTTP session。
 - 真实 ready 环境的 `allowedTools` 与 `advertisedTools` 数量一致，当前 DLL 每环境实测至少 18 个；未广告工具仍由 client fail closed。
 - Agent 在错误关联环境下仍根据文本精确 envId 启停目标；手动与自动模式分别覆盖，失败计划不可复用同一批准按钮。
-- Agent 自己规划并执行 `mcp.call -> tabs(list)`，operation 绑定正确 envId。
+- Agent 自己规划并执行 `mcp.call -> env.tabs(list)`，operation 绑定正确 envId。
 - 两个临时环境最终 stopped、本地清理、服务端删除，测试前后账号环境总数一致。
 - Dashboard 组件、桌面/移动 Playwright、Rust、production build 和敏感信息扫描通过。
 
 实现结果（2026-07-26）：
 
-- MCP transport 已统一为可选 envId；查询别名在真实 DLL 上完成 discovery 和 call。全局保持 9 个读取策略，ready 单环境目录完全跟随 `tools/list`，当前发现 18/18。
+- MCP transport 在该阶段通过查询别名完成 discovery 和 call；阶段 25 已改为只连接全局 endpoint。全局保持 9 个读取策略，ready 单环境目录完全跟随 `tools/list`，当前发现 18/18。
 - MCP 控制台显示动态目录，已知读取工具用表单，其余工具用 64 KiB JSON 参数区；Agent 支持 `mcp.call`，旧 `mcp.read` 保留严格读取兼容。
 - 每个 AI 会话独立持久化执行方式，自动模式直接执行新计划；首次尝试后计划按钮锁定，防止状态不确定时重放幂等键。
 - 真实 E2E 创建两个临时环境，Agent 手动/自动启停、显式 envId 覆盖错误上下文、Agent MCP tabs 调用、指纹详情和 2/2 清理均通过，环境数 1 -> 1。
@@ -814,3 +814,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - Tauri single-instance 插件作为首个插件注册，锁定应用标识 `com.brosdk.dashboard`。第二次启动不会创建第二个 Manager/sdk-host，而是显示、取消最小化并聚焦已有窗口。
 - DLL 的后端 appId 锁仍是跨客户端的第二层保护：同一 Dashboard 的重复启动由桌面单实例提前拦截，其它产品若占用同 appId，则由隔离 sdk-host 承担初始化冲突，桌面 UI 不随 DLL 退出。
 - Store 重启场景测试、Rust workspace 101 项测试和目标 Clippy 通过；真实 Windows 托盘 E2E 报告 `secondInstanceRedirected=true`，并继续完成隐藏、托盘恢复和菜单退出。
+
+## 28. 阶段 25：新版全局多环境 MCP
+
+目标：跟随新版 DLL 的推荐接入方式，让 Dashboard 和 Agent 只建立全局 MCP 连接，并按每次调用的 envId 控制不同环境。
+
+实现结果（2026-07-27）：
+
+- `mcp-client` 不再为环境作用域构造 `?envId=` URL；发现和调用都连接 `/sdk/v1/mcp`，旧 `tabs` 等输入规范为 `env.tabs`，Manager 选择的 envId 覆盖写入 arguments，阻止跨环境参数伪造。
+- 环境目录从全局 `tools/list` 动态过滤。由于环境管理工具也使用 `env.` 前缀，策略显式排除 `env.list/resolve/get/create/update/destroy`，避免把创建、更新、删除误归入 ready 环境的页面工具白名单。
+- Dashboard 显示真实 `env.*` 工具名，结构化表单继续按基础工具语义工作；AI 提示要求使用 `env.tabs/env.snapshot/env.act`，旧计划里的无前缀名称仍可兼容规范化。
+- transport、Manager 和 MCP 页面测试通过；Dashboard 51 项、Rust workspace 101 项、Playwright 桌面/移动 16 项、check 与 Clippy 全部通过。真实 DLL 生命周期 E2E 发现并放行 18/18 个浏览器工具，经全局 endpoint 完成 `env.tabs(list)`、`env.read(page)`、指纹检查和停止，环境最终为 stopped。

@@ -51,13 +51,13 @@ const snapshot = {
       "global:task.list",
       "global:task.get",
       "global:mcp.endpoint",
-      "environment:browser_state",
-      "environment:tabs",
-      "environment:snapshot",
-      "environment:diff",
-      "environment:read",
-      "environment:grep",
-      "environment:screenshot",
+      "environment:env.browser_state",
+      "environment:env.tabs",
+      "environment:env.snapshot",
+      "environment:env.diff",
+      "environment:env.read",
+      "environment:env.grep",
+      "environment:env.screenshot",
     ],
   },
   environments: [{
@@ -93,7 +93,7 @@ describe("McpPage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "单环境" }));
     expect((screen.getByLabelText("运行环境") as HTMLSelectElement).value).toBe("10001");
-    expect((screen.getByLabelText("工具") as HTMLSelectElement).value).toBe("browser_state");
+    expect((screen.getByLabelText("工具") as HTMLSelectElement).value).toBe("env.browser_state");
   });
 
   it("shows the discovered Manager intersection and protects mutation tools", async () => {
@@ -134,10 +134,10 @@ describe("McpPage", () => {
   });
 
   it("builds a bounded environment grep call from dedicated controls", async () => {
-    api.call.mockResolvedValue(execution("environment", "10001", "grep"));
+    api.call.mockResolvedValue(execution("environment", "10001", "env.grep"));
     renderPage();
     fireEvent.click(screen.getByRole("button", { name: "单环境" }));
-    fireEvent.change(screen.getByLabelText("工具"), { target: { value: "grep" } });
+    fireEvent.change(screen.getByLabelText("工具"), { target: { value: "env.grep" } });
     fireEvent.change(screen.getByLabelText("Page"), { target: { value: "7" } });
     fireEvent.change(screen.getByLabelText("搜索范围"), { target: { value: "content" } });
     fireEvent.change(screen.getByLabelText("搜索文本"), { target: { value: "invoice" } });
@@ -146,7 +146,7 @@ describe("McpPage", () => {
     await waitFor(() => expect(api.call).toHaveBeenCalledWith(
       "environment",
       "10001",
-      "grep",
+      "env.grep",
       { page: 7, pattern: "invoice", over: "content" },
     ));
   });
@@ -158,18 +158,18 @@ describe("McpPage", () => {
       envId: "10001",
       protocolVersion: "2025-11-25",
       advertisedTools: [
-        { name: "browser_state", description: null, readOnlyHint: true, destructiveHint: false },
-        { name: "navigate", description: null, readOnlyHint: false, destructiveHint: false },
+        { name: "env.browser_state", description: null, readOnlyHint: true, destructiveHint: false },
+        { name: "env.navigate", description: null, readOnlyHint: false, destructiveHint: false },
       ],
-      allowedTools: ["browser_state", "navigate"],
+      allowedTools: ["env.browser_state", "env.navigate"],
     } satisfies McpToolDiscovery);
-    api.call.mockResolvedValue(execution("environment", "10001", "navigate"));
+    api.call.mockResolvedValue(execution("environment", "10001", "env.navigate"));
     renderPage();
 
     fireEvent.click(screen.getByRole("button", { name: "单环境" }));
     fireEvent.click(screen.getByRole("button", { name: "发现工具" }));
     await waitFor(() => expect(api.discover).toHaveBeenCalledWith("environment", "10001"));
-    fireEvent.change(screen.getByLabelText("工具"), { target: { value: "navigate" } });
+    fireEvent.change(screen.getByLabelText("工具"), { target: { value: "env.navigate" } });
     fireEvent.change(screen.getByLabelText("MCP JSON 参数"), {
       target: { value: '{"url":"https://example.com"}' },
     });
@@ -178,7 +178,7 @@ describe("McpPage", () => {
     await waitFor(() => expect(api.call).toHaveBeenCalledWith(
       "environment",
       "10001",
-      "navigate",
+      "env.navigate",
       { url: "https://example.com" },
     ));
   });

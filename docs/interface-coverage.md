@@ -11,7 +11,7 @@
 - API Key 安全初始化、`getUserSig(role=user)`、DLL 初始化与完整环境分页同步。
 - 环境创建、详情、元数据更新、删除、批量启停、callback 启动进度/browser info 对账和本地数据清理。
 - 指纹关键字段、代理、内核、操作记录、CDP/MCP 运行信息与诊断摘要。
-- DLL 全局和单环境 MCP 的可选 envId 路由、动态发现、严格 session lifecycle、Manager 策略与响应脱敏。
+- DLL 全局 MCP 的 `env.* + arguments.envId` 多环境路由、动态发现、严格 session lifecycle、Manager 策略与响应脱敏。
 - AI Provider、持久化会话历史、关联环境、受控计划、会话级手动/自动执行、幂等 reservation 和真实状态校验。
 
 仍需产品化的主要能力：Cookie 读取/导入导出、userSig 在线刷新、扩展选择与启动参数、服务端专家指纹选项/全局指纹配置，以及面向高风险 MCP 工具的专用参数 UI。跨平台仍等待对应动态库。
@@ -62,12 +62,12 @@ Capability 只能报告实际绑定能力。阶段 19 已移除未绑定 cookie/
 
 ## DLL MCP
 
-DLL 不缺少单环境 MCP。当前源码和真实运行时的单环境 catalog 包含 `browser_state`、`tabs`、`bookmarks`、`history`、`tab_groups`、`navigate`、`snapshot`、`diff`、`act`、`download`、`upload`、`read`、`grep`、`screenshot`、`pdf`、`wait`、`windows`、`evaluate` 等工具。具体数量以当次 `tools/list` 为准，当前实测为 18，不在 Dashboard 写死。
+DLL 不缺少单环境 MCP。当前全局 catalog 包含 `env.browser_state`、`env.tabs`、`env.bookmarks`、`env.history`、`env.tab_groups`、`env.navigate`、`env.snapshot`、`env.diff`、`env.act`、`env.download`、`env.upload`、`env.read`、`env.grep`、`env.screenshot`、`env.pdf`、`env.wait`、`env.windows`、`env.evaluate` 等工具。具体数量以当次 `tools/list` 为准，当前实测为 18，不在 Dashboard 写死。
 
 Manager 当前策略：
 
 - 全局允许 9 个只读工具：`sdk.health`、`sdk.info`、`env.list`、`env.resolve`、`env.get`、`browser.status`、`task.list`、`task.get`、`mcp.endpoint`。
-- 单环境请求必须提供一个已同步且 `ready` 的 envId。client 将 `None/Some(envId)` 统一映射到 `/sdk/v1/mcp` 与 `/sdk/v1/mcp?envId=...`，原有 global/env Rust 函数入口继续兼容调用方。
+- 单环境请求必须选择一个已同步且 `ready` 的 envId。client 始终连接 `/sdk/v1/mcp`，把工具规范为 `env.*` 并覆盖写入 arguments.envId；原有 global/env Rust 函数入口继续兼容调用方，但不再使用查询参数路由。
 - 单环境允许 DLL 当次广告的全部工具；Manager 在调用前要求参数为 JSON object，并限制总大小 64 KiB、嵌套 16 层、单字符串 16 KiB。DLL schema 仍是字段级事实来源。
 - Dashboard 为常用读取工具提供结构化表单，其余工具提供高级 JSON 参数入口。Agent 使用 `mcp.call` 调用任意单环境广告工具；`mcp.read` 保留旧的 7 工具严格参数策略作兼容。
 - 环境 CRUD 和浏览器启停不从全局 MCP 直通，继续使用有状态校验和 operation 追踪的 Manager API。单环境导航、点击、输入、脚本、上传下载等只在用户进入 MCP 控制台或 Agent 执行模式后调用。

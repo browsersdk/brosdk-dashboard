@@ -149,12 +149,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
             mcp_browser_state_present = discovery
                 .allowed_tools
                 .iter()
-                .any(|tool| tool == "browser_state");
+                .any(|tool| tool == "env.browser_state");
             failed_stage = "environment-mcp-catalog";
             if mcp_advertised_count < 17
                 || mcp_allowed_count != mcp_advertised_count
                 || !mcp_browser_state_present
-                || !discovery.allowed_tools.iter().any(|tool| tool == "tabs")
+                || !discovery
+                    .allowed_tools
+                    .iter()
+                    .any(|tool| tool == "env.tabs")
             {
                 return Err(
                     "single-environment MCP did not expose its runtime tool catalog".into(),
@@ -164,13 +167,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
             failed_stage = "environment-mcp-call";
             let plan = manager
                 .ai_plan_agent(AiAgentPlanRequest {
-                    prompt: format!("Use mcp.call with tabs action list for environment {env_id}"),
+                    prompt: format!(
+                        "Use mcp.call with env.tabs action list for environment {env_id}"
+                    ),
                     context_env_id: None,
                     history: Vec::new(),
                 })
                 .await?;
             validate_agent_plan(&plan, "mcp.call", env_id, "ready")?;
-            if plan.arguments.get("tool").and_then(Value::as_str) != Some("tabs")
+            if plan.arguments.get("tool").and_then(Value::as_str) != Some("env.tabs")
                 || plan
                     .arguments
                     .get("arguments")
@@ -270,7 +275,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             "agentExplicitEnvIdOverridesContext": true,
             "independentStartOperations": true,
             "bothReady": true,
-            "environmentMcpOptionalEnvId": true,
+            "environmentMcpGlobalRouting": true,
             "agentMcpCallCovered": true,
             "minimumDiscoveredEnvironmentTools": discovered_tool_counts.into_iter().min(),
             "fingerprintDetailsReady": true,

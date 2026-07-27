@@ -7,6 +7,14 @@ use url::Url;
 
 const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+const GLOBAL_ENVIRONMENT_MANAGEMENT_TOOLS: &[&str] = &[
+    "env.list",
+    "env.resolve",
+    "env.get",
+    "env.create",
+    "env.update",
+    "env.destroy",
+];
 
 #[derive(Debug, Error)]
 pub enum McpClientError {
@@ -28,6 +36,10 @@ pub enum McpClientError {
     Rpc(String),
     #[error("embedded MCP tool returned isError=true")]
     ToolFailed,
+    #[error("embedded MCP environment tool name is invalid: {0}")]
+    InvalidEnvironmentTool(String),
+    #[error("embedded MCP environment arguments must be a JSON object")]
+    InvalidEnvironmentArguments,
 }
 
 #[derive(Debug, Clone)]
@@ -56,7 +68,7 @@ pub async fn call_global_tool(
     tool: &str,
     arguments: Value,
 ) -> Result<McpToolResult, McpClientError> {
-    call_scoped_tool(port, None, tool, arguments).await
+    call_tool(global_endpoint(port)?, tool, arguments).await
 }
 
 pub async fn call_env_tool(
@@ -65,18 +77,28 @@ pub async fn call_env_tool(
     tool: &str,
     arguments: Value,
 ) -> Result<McpToolResult, McpClientError> {
-    call_scoped_tool(port, Some(env_id), tool, arguments).await
+    let tool = global_environment_tool_name(tool)?;
+    let arguments = with_environment_id(arguments, env_id)?;
+    let mut result = call_tool(global_endpoint(port)?, &tool, arguments).await?;
+    result
+        .advertised_tools
+        .retain(|tool| is_environment_browser_tool(&tool.name));
+    Ok(result)
 }
 
 pub async fn discover_global_tools(port: u16) -> Result<McpToolDiscovery, McpClientError> {
-    discover_scoped_tools(port, None).await
+    discover_tools(global_endpoint(port)?).await
 }
 
 pub async fn discover_env_tools(
     port: u16,
-    env_id: &str,
+    _env_id: &str,
 ) -> Result<McpToolDiscovery, McpClientError> {
-    discover_scoped_tools(port, Some(env_id)).await
+    let mut discovery = discover_tools(global_endpoint(port)?).await?;
+    discovery
+        .advertised_tools
+        .retain(|tool| is_environment_browser_tool(&tool.name));
+    Ok(discovery)
 }
 
 pub async fn call_scoped_tool(
@@ -85,14 +107,20 @@ pub async fn call_scoped_tool(
     tool: &str,
     arguments: Value,
 ) -> Result<McpToolResult, McpClientError> {
-    call_tool(scoped_endpoint(port, env_id)?, tool, arguments).await
+    match env_id {
+        Some(env_id) => call_env_tool(port, env_id, tool, arguments).await,
+        None => call_global_tool(port, tool, arguments).await,
+    }
 }
 
 pub async fn discover_scoped_tools(
     port: u16,
     env_id: Option<&str>,
 ) -> Result<McpToolDiscovery, McpClientError> {
-    discover_tools(scoped_endpoint(port, env_id)?).await
+    match env_id {
+        Some(env_id) => discover_env_tools(port, env_id).await,
+        None => discover_global_tools(port).await,
+    }
 }
 
 async fn call_tool(
@@ -151,12 +179,34 @@ fn global_endpoint(port: u16) -> Result<Url, McpClientError> {
     Ok(Url::parse(&format!("http://127.0.0.1:{port}/sdk/v1/mcp"))?)
 }
 
-fn scoped_endpoint(port: u16, env_id: Option<&str>) -> Result<Url, McpClientError> {
-    let mut endpoint = global_endpoint(port)?;
-    if let Some(env_id) = env_id.filter(|value| !value.is_empty()) {
-        endpoint.query_pairs_mut().append_pair("envId", env_id);
+fn global_environment_tool_name(tool: &str) -> Result<String, McpClientError> {
+    let tool = tool.trim();
+    let base = tool.strip_prefix("env.").unwrap_or(tool);
+    if base.is_empty()
+        || base.chars().count() > 124
+        || !base
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Err(McpClientError::InvalidEnvironmentTool(tool.into()));
     }
-    Ok(endpoint)
+    let tool = format!("env.{base}");
+    if GLOBAL_ENVIRONMENT_MANAGEMENT_TOOLS.contains(&tool.as_str()) {
+        return Err(McpClientError::InvalidEnvironmentTool(tool));
+    }
+    Ok(tool)
+}
+
+fn is_environment_browser_tool(tool: &str) -> bool {
+    tool.starts_with("env.") && !GLOBAL_ENVIRONMENT_MANAGEMENT_TOOLS.contains(&tool)
+}
+
+fn with_environment_id(mut arguments: Value, env_id: &str) -> Result<Value, McpClientError> {
+    let object = arguments
+        .as_object_mut()
+        .ok_or(McpClientError::InvalidEnvironmentArguments)?;
+    object.insert("envId".into(), Value::String(env_id.into()));
+    Ok(arguments)
 }
 
 async fn initialize(client: &Client, endpoint: &Url) -> Result<(String, String), McpClientError> {
@@ -396,16 +446,20 @@ mod tests {
     };
 
     #[test]
-    fn scoped_endpoint_uses_optional_encoded_environment_id() {
+    fn environment_tools_use_global_names_and_explicit_arguments() {
         assert_eq!(
-            scoped_endpoint(9222, Some("env/one two"))
-                .expect("endpoint")
-                .as_str(),
-            "http://127.0.0.1:9222/sdk/v1/mcp?envId=env%2Fone+two"
+            global_environment_tool_name("tabs").expect("legacy tool"),
+            "env.tabs"
         );
         assert_eq!(
-            scoped_endpoint(9222, None).expect("endpoint").as_str(),
-            "http://127.0.0.1:9222/sdk/v1/mcp"
+            global_environment_tool_name("env.snapshot").expect("global tool"),
+            "env.snapshot"
+        );
+        assert!(global_environment_tool_name("env.create").is_err());
+        assert_eq!(
+            with_environment_id(json!({ "envId": "spoofed", "action": "list" }), "env-1")
+                .expect("arguments"),
+            json!({ "envId": "env-1", "action": "list" })
         );
     }
 
@@ -458,11 +512,13 @@ mod tests {
                         http_response(
                             "200 OK",
                             &[],
-                            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"tabs"}]}}"#,
+                            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"sdk.health"},{"name":"env.get"},{"name":"env.create"},{"name":"env.tabs"}]}}"#,
                         )
                     }
                     3 => {
                         assert!(request.contains("tools/call"));
+                        assert!(request.contains(r#""name":"env.tabs""#));
+                        assert!(request.contains(r#""envId":"env-1""#));
                         http_response(
                             "200 OK",
                             &[],
@@ -479,11 +535,12 @@ mod tests {
             .await
             .expect("tool call");
         assert_eq!(result.protocol_version, MCP_PROTOCOL_VERSION);
-        assert_eq!(result.advertised_tools[0].name, "tabs");
+        assert_eq!(result.advertised_tools.len(), 1);
+        assert_eq!(result.advertised_tools[0].name, "env.tabs");
         server.await.expect("server");
         let methods = methods.lock().expect("methods");
         assert_eq!(methods.len(), 5);
-        assert!(methods[0].starts_with("POST /sdk/v1/mcp?envId=env-1 "));
+        assert!(methods[0].starts_with("POST /sdk/v1/mcp "));
         assert!(methods[4].starts_with("DELETE "));
     }
 

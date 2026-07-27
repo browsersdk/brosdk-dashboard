@@ -89,9 +89,9 @@ API Key 输入 -> Manager 候选验证 -> sdk-host 子进程环境 -> sdk_get_us
 
 补充：当前 DLL 已自带 MCP 功能，和内嵌 HTTP/WS 服务同属 `sdk_init` 的 `port` 启用路径。新客户端首版把它标记为 `embedded_mcp` capability；需要 smoke 或后续自动化验证时，由 `sdk-host` 在隔离进程中传入端口。Manager 仍然是 Dashboard 与自动化工具的策略边界，负责 envId 路由、operation 追踪和敏感信息脱敏。
 
-源码审计确认 DLL 的真实 MCP 分层并不缺少单环境操作：全局管理端点 `/sdk/v1/mcp` 已注册 `env.list/resolve/get/create/update/destroy`、`browser.open/close/cleanup/status/install`、`task.list/get` 和 `mcp.endpoint`；同一端点提供可选 `?envId=` 单环境路由，路径别名 `/sdk/v1/mcp/env/{envId}` 也可用。单环境 catalog 已注册 `browser_state`、`tabs`、`snapshot/diff/read/grep/screenshot/pdf/wait` 及导航、交互、上传下载等工具。Manager client 统一使用可选 envId，并负责严格 lifecycle、动态工具发现、ready 状态校验、operation 追踪、URL 降级和响应脱敏；Dashboard/Agent 不直接持有 MCP session。
+源码审计确认 DLL 的全局 MCP 不缺少单环境操作：`/sdk/v1/mcp` 同时注册管理工具和带 `env.` 前缀的浏览器工具（例如 `env.tabs`、`env.snapshot`、`env.act`），后者要求每次调用在 arguments 中显式提供 envId。`?envId=` 与 `/sdk/v1/mcp/env/{envId}` 继续兼容旧客户端，但不再是本项目的接入面。Manager 只连接全局 endpoint，动态发现 `env.*` 浏览器目录、强制注入 ready 环境 envId，并负责严格 lifecycle、operation 追踪、URL 降级和响应脱敏；Dashboard/Agent 不直接持有 MCP session。
 
-Manager 的全局只读策略允许 `sdk.health`、`sdk.info`、`env.list`、`env.resolve`、`env.get`、`browser.status`、`task.list`、`task.get`、`mcp.endpoint`；全局环境 mutation 继续走 Manager API。ready 单环境策略允许当次 DLL `tools/list` 广告的全部工具，参数须为有界 JSON object，DLL schema 做字段级校验。2026-07-26 真实 DLL smoke 使用协议 `2025-11-25` 发现 16 个全局工具；双环境 Agent E2E 在每个环境发现 18 个单环境工具，并通过 `mcp.call -> tabs(list)` 验证可选 envId 路由。
+Manager 的全局只读策略允许 `sdk.health`、`sdk.info`、`env.list`、`env.resolve`、`env.get`、`browser.status`、`task.list`、`task.get`、`mcp.endpoint`；全局环境 mutation 继续走 Manager API。ready 单环境策略允许当次全局 `tools/list` 广告的 `env.*` 浏览器工具，但明确排除 `env.list/resolve/get/create/update/destroy` 管理集合；参数须为有界 JSON object，Manager 覆盖写入 envId，DLL schema 再做字段级校验。2026-07-27 真实 DLL 生命周期 E2E 使用协议 `2025-11-25` 发现并放行 18/18 个浏览器工具，通过全局 endpoint 执行 `env.tabs(list)` 与 `env.read(page)`，最后恢复 stopped。
 
 ## 4. 进程锁风险
 

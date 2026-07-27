@@ -93,7 +93,7 @@ test("environment pickers expose envId instead of relying on names", async ({ pa
   ]);
   await runtimeEnvironment.selectOption("env-demo-02");
   await expect(runtimeEnvironment).toHaveValue("env-demo-02");
-  await page.getByLabel("工具", { exact: true }).selectOption("navigate");
+  await page.getByLabel("工具", { exact: true }).selectOption("env.navigate");
   await expect(page.getByLabel("MCP JSON 参数")).toHaveValue("{}");
   await page.getByLabel("MCP JSON 参数").fill('{"url":"https://example.com"}');
   await expect(page.getByRole("button", { name: "运行工具" })).toBeDisabled();
@@ -163,7 +163,7 @@ test("Agent approval mode and MCP runtime controls fit the viewport", async ({ p
   await page.goto(`/?${scenario}&page=mcp`);
   await expectHealthyDashboard(page, "MCP");
   await page.getByRole("button", { name: "单环境" }).click();
-  await page.getByLabel("工具", { exact: true }).selectOption("navigate");
+  await page.getByLabel("工具", { exact: true }).selectOption("env.navigate");
   await page.getByLabel("MCP JSON 参数").fill('{"url":"https://example.com"}');
   await expect(page.getByText("18 个可用工具")).toBeVisible();
   await expectHealthyDashboard(page, "MCP");
