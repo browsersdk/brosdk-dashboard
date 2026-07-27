@@ -907,4 +907,5 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - Manager 继续负责批准、状态前置条件、幂等 reservation 和 lifecycle operation；Host 新增 MCP lifecycle 预绑定，使 DLL HTTP 工具产生的 callback 能映射到已有 operation。
 - Agent 等待 callback 的同时轮询 `browser.status`，可在 callback 缺失时确认 open/close 终态，并保持“重启”严格 stop 后 start。
 - 真实 DeepSeek 回归先把目标环境保持 stopped，再询问“环境是否已经启动”；模型使用实时工具结果回答未启动，且没有产生启停步骤。随后 Agent 启动与自动重启均报告 `transport=dll-global-mcp`，测试结束恢复初始状态。
+- 真实运行期间 DLL 从仓库原版本更新为 2.1.0.0；该版本已纳入 Git，且 NSIS 与便携包内 DLL 哈希和源码目录一致。
 - Dashboard 53 项、Rust workspace 120 项、Playwright 桌面/移动 20 项、TypeScript/Rust check、Clippy、production build 和真实 AI E2E 全部通过。

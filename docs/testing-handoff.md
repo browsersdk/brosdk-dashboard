@@ -498,4 +498,4 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - Agent 工具目录必须来自 DLL 动态发现的 `browser.open/browser.close`。全局会话 schema 要求 envId；单环境会话 schema 不暴露 envId，并拒绝文本中的其它已知环境。
 - `npm run e2e:ai-assistant` 必须先在目标实际 stopped 时询问“是否已经启动”，断言回复不声称 ready、没有生命周期写步骤且环境仍 stopped；后续启动和重启的执行摘要必须包含 `transport=dll-global-mcp`。
 
-2026-07-27 阶段 31 真实结果：DeepSeek `deepseek-v4-flash` 在目标环境实际 stopped 时调用实时状态工具并明确回答未启动，随后全局 MCP 启动和自动重启通过，最终恢复初始状态。报告包含 `stoppedStatusReplyVerified=true`、`agentLifecycleUsedGlobalMcp=true`；Dashboard 53 项、Rust workspace 120 项、Playwright 20 项、check/Clippy、production build 全部通过，凭据和目标 envId 未写入报告。
+2026-07-27 阶段 31 真实结果：DeepSeek `deepseek-v4-flash` 在目标环境实际 stopped 时调用实时状态工具并明确回答未启动，随后全局 MCP 启动和自动重启通过，最终恢复初始状态。报告包含 `stoppedStatusReplyVerified=true`、`agentLifecycleUsedGlobalMcp=true`；实测并交付的 DLL 为 2.1.0.0，源码目录与发布包哈希一致。Dashboard 53 项、Rust workspace 120 项、Playwright 20 项、check/Clippy、production build 全部通过，凭据和目标 envId 未写入报告。

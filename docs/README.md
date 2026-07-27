@@ -117,7 +117,7 @@ brosdk-dashboard/
 
 阶段 30 MCP 自动激活与 AI 运行态强对账已完成：正式客户端未设置固定端口时自动选择可用环回端口并在 `sdk_init` 中启用 DLL 全局 MCP，设置页空值语义改为“自动选择”。首次 snapshot、托盘恢复和第二实例唤醒都会读取 `sdk_browser_info`；Chat 状态读取、Agent 规划、自动 Agent 和批准执行前也再次严格对账，杜绝窗口隐藏期间或客户端重启后使用遗留 `ready` 状态。真实 DeepSeek/DLL E2E 不再注入 MCP 端口，验证自动激活、stopped 环境 Agent 启动、两轮自动重启和最终状态恢复。Dashboard 53 项、Rust workspace 115 项、Playwright 20 项、check/Clippy、production build 和托盘 E2E 全部通过。
 
-阶段 31 AI 生命周期全局 MCP 统一已完成：AI 的实时状态前置查询改为 DLL 全局 `browser.status`，环境不在返回列表时立即对账为 stopped；查询失败或 MCP 未激活时 fail closed，不回退 SQLite。Agent 不再向模型暴露 Manager/C API 启停工具，而是动态绑定 DLL 的 `browser.open/browser.close`，由 Manager 注入或校验 envId、预注册 callback operation 映射并轮询 `browser.status` 确认终态。真实 DeepSeek 回归在环境实际 stopped 时询问“是否已经启动”，确认回复 stopped 且没有生命周期写操作；随后全局 MCP 启动和重启均通过并恢复初始状态。Dashboard 53 项、Rust workspace 120 项、Playwright 20 项、check/Clippy 和 production build 全部通过。
+阶段 31 AI 生命周期全局 MCP 统一已完成：AI 的实时状态前置查询改为 DLL 全局 `browser.status`，环境不在返回列表时立即对账为 stopped；查询失败或 MCP 未激活时 fail closed，不回退 SQLite。Agent 不再向模型暴露 Manager/C API 启停工具，而是动态绑定 DLL 的 `browser.open/browser.close`，由 Manager 注入或校验 envId、预注册 callback operation 映射并轮询 `browser.status` 确认终态。真实 DeepSeek 回归在环境实际 stopped 时询问“是否已经启动”，确认回复 stopped 且没有生命周期写操作；随后全局 MCP 启动和重启均通过并恢复初始状态。仓库与发布包同步升级到本轮实测的 DLL 2.1.0.0。Dashboard 53 项、Rust workspace 120 项、Playwright 20 项、check/Clippy 和 production build 全部通过。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 
