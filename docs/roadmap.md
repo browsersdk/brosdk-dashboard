@@ -25,6 +25,7 @@
 | 18. Windows 安装交付闭环 | P0 | 已完成 | NSIS、便携包、可选 MSI、哈希清单、安装版 Dashboard E2E 与静默卸载 |
 | 19. AI 会话与 Agent 执行可靠性 | P0 | 已完成 | 会话历史、新建/清空、envId 目标校正、真实状态前置条件和接口覆盖审计 |
 | 20. 多环境 Agent 与完整单环境 MCP | P0 | 已完成 | 可选 envId 路由、运行时全工具目录、会话级自动执行和双环境 Agent/MCP E2E |
+| 21. Windows Runtime Host 后台化 | P0 | 已完成 | sdk-host 全部启动路径不创建终端窗口，保留 IPC 与诊断输出捕获 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -764,3 +765,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 每个 AI 会话独立持久化执行方式，自动模式直接执行新计划；首次尝试后计划按钮锁定，防止状态不确定时重放幂等键。
 - 真实 E2E 创建两个临时环境，Agent 手动/自动启停、显式 envId 覆盖错误上下文、Agent MCP tabs 调用、指纹详情和 2/2 清理均通过，环境数 1 -> 1。
 - Dashboard 49 项组件测试、Playwright 14 项、Rust workspace 93 项、check 与 production build 通过；桌面和 390x844 截图无重叠或横向溢出。
+
+## 24. 阶段 21：Windows Runtime Host 后台化
+
+目标：让 Dashboard 启动的 `sdk-host` 作为受监督后台子进程运行，不显示独立终端窗口，同时保留 IPC、诊断输出和退出监督能力。
+
+实现结果（2026-07-27）：
+
+- `sdk-client` 使用统一的后台进程工厂创建长期 `serve` 和一次性 `capabilities/smoke` 子进程，避免启动路径遗漏 Windows 隐藏标志。
+- Windows 为所有子进程设置 `CREATE_NO_WINDOW`；不改变 `sdk-host` 的 CLI 输出协议，stdout/stderr 仍可由自动化和错误处理捕获。
+- Windows 行为测试在按生产方式创建的子进程内调用 `GetConsoleWindow()`，结果为 0，并同时验证 stdout 管道可读。
+- 真实 runtime-host smoke 覆盖启动、health、capabilities、优雅停止和 supervisor 强制退出；Rust workspace 94 项与 Clippy 全部通过，退出后无 `sdk-host` 残留。

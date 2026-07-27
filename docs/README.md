@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-26，阶段 0-20 已完成：
+截至 2026-07-27，阶段 0-21 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-20 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/会话与关联环境、Agent 手动/自动执行、DLL MCP 全单环境工具路由、CDP 运行态回填和 Windows 安装交付已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
+[roadmap.md](roadmap.md) 中阶段 0-21 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、AI Provider/会话与关联环境、Agent 手动/自动执行、DLL MCP 全单环境工具路由、CDP 运行态回填和 Windows 安装交付已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -96,6 +96,8 @@ brosdk-dashboard/
 阶段 19 AI 会话与批准执行修复已完成：AI 工作台提供本地会话历史、新建、切换、清空和删除，“关联环境”不再与会话混为一谈。Chat/Agent 请求携带有界历史；用户文本中明确出现的已同步 envId 优先于旧选择，Manager 根据最新镜像写入计划的真实 `expectedState` 和幂等键。批准时仍做二次状态校验，Tauri 字符串错误会显示具体原因。真实 Tauri 已用目标 `2044366881367789568` 完成 Agent 计划、批准、operation、ready 和恢复 stopped 验收；Dashboard 46 项、Rust 92 项、Playwright 12 项及 production build 通过。服务端、DLL C API 与 MCP 的覆盖矩阵见 [interface-coverage.md](interface-coverage.md)，项目不再把未接 Cookie callback、token update 等能力误报为已完成。
 
 阶段 20 多环境 Agent 与完整单环境 MCP 已完成：MCP client 统一使用 `/sdk/v1/mcp`，可选 `envId` 通过 `?envId=` 路由到对应环境；全局仍只开放 9 个管理读取，ready 单环境则以 DLL 运行时 `tools/list` 为准开放全部广告工具，不写死 17/18。MCP 页面为常用读取保留结构化表单，其余工具提供 64 KiB 上限的 JSON 参数入口；Agent 新增 `mcp.call`，并允许每个会话选择默认“每次批准”或显式“自动执行”。真实隔离 E2E 创建两个临时环境，覆盖 Agent 手动/自动启停、错误关联环境下的精确 envId 解析、每环境 18 个工具发现、Agent 自动 `mcp.call -> tabs(list)`、指纹刷新及 2/2 清理，测试前后账号环境数均为 1。Dashboard 49 项组件测试、Playwright 14 项、Rust workspace 93 项、production build 全部通过。
+
+阶段 21 Windows Runtime Host 后台化已完成：Dashboard 发起的长期 `serve` 与一次性 `capabilities/smoke` 统一通过同一进程工厂启动，Windows 使用 `CREATE_NO_WINDOW`，不会再为 `sdk-host` 创建终端窗口；stdin/stdout/stderr 管道语义保持不变，诊断和自动化仍可读取 JSON。Windows 行为测试在子进程内确认 `GetConsoleWindow()` 返回空句柄，真实 runtime-host smoke 的启动、健康检查、优雅停止和强制退出降级通过；Rust workspace 94 项与 Clippy 全部通过。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 

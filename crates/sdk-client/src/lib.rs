@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::Stdio,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
@@ -76,7 +76,10 @@ impl SdkHostClient {
     where
         T: serde::de::DeserializeOwned,
     {
-        let output = Command::new(&self.host_path).args(args).output().await?;
+        let output = background_host_command(&self.host_path)
+            .args(args)
+            .output()
+            .await?;
         if !output.status.success() {
             return Err(SdkClientError::Exit {
                 code: output.status.code(),
@@ -114,7 +117,7 @@ impl RuntimeHost {
         let generation = HOST_GENERATION.fetch_add(1, Ordering::Relaxed);
         let endpoint = unique_endpoint();
         prepare_endpoint(&endpoint)?;
-        let mut command = Command::new(&host_path);
+        let mut command = background_host_command(&host_path);
         command
             .arg("serve")
             .arg("--endpoint")
@@ -126,7 +129,6 @@ impl RuntimeHost {
         if let Some(api_key) = api_key {
             command.env("BROSDK_API_KEY", api_key);
         }
-        hide_process_window(&mut command);
         let mut child = command.spawn()?;
         let pid = child.id();
         let stream = match runtime_ipc::connect(&endpoint, START_TIMEOUT).await {
@@ -535,10 +537,19 @@ fn prepare_endpoint(endpoint: &str) -> Result<(), SdkClientError> {
     Ok(())
 }
 
+fn background_host_command(host_path: &Path) -> Command {
+    let mut command = Command::new(host_path);
+    hide_process_window(&mut command);
+    command
+}
+
 #[cfg(windows)]
 fn hide_process_window(command: &mut Command) {
     use std::os::windows::process::CommandExt;
-    command.as_std_mut().creation_flags(0x0800_0000);
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    command.as_std_mut().creation_flags(CREATE_NO_WINDOW);
 }
 
 #[cfg(not(windows))]
@@ -561,6 +572,26 @@ mod tests {
 "#;
         let parsed: Tiny = parse_host_json(stdout).expect("parse final object");
         assert_eq!(parsed, Tiny { ok: true });
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn background_host_command_has_no_console_and_keeps_output_pipe() {
+        let mut command = background_host_command(Path::new("powershell.exe"));
+        let output = command
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                r#"Add-Type -MemberDefinition '[DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();' -Name ConsoleProbe -Namespace Native; [Native.ConsoleProbe]::GetConsoleWindow().ToInt64()"#,
+            ])
+            .output()
+            .await
+            .expect("run background console probe");
+
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "0");
     }
 
     #[test]

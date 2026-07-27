@@ -404,3 +404,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - `npm run e2e:multi-environment` 从当前用户安全存储复制 SDK/AI 加密 secret 到唯一临时数据目录，不把明文放入命令行；创建两个临时环境，结束时停止、清理、删除并核对账号环境总数恢复。
 
 2026-07-26 阶段 20 结果：真实双环境 E2E 覆盖 Agent 手动和自动启停、错误关联环境下的精确 envId 解析、两个环境均 ready/stopped、每环境最少 18 个工具、Agent 自动 `mcp.call -> tabs(list)`、远端指纹刷新和补偿清理。成功报告为 `agentManualModeCovered/agentAutomaticModeCovered/agentMcpCallCovered/environmentMcpOptionalEnvId=true`，临时环境清理 2/2，账号环境数 1 -> 1，无 `sdk-host` 残留。Dashboard 49 项组件测试、Playwright 桌面/移动 14 项、Rust workspace 93 项和 production build 通过；视觉截图确认 Agent 双模式控制和 MCP JSON 参数区无重叠或横向溢出。
+
+## 24. 阶段 21 Windows Runtime Host 后台化验收
+
+- Dashboard 发起的 `sdk-host serve`、`capabilities` 和 `smoke` 必须使用同一后台进程配置，Windows 不得创建可见终端窗口。
+- `CREATE_NO_WINDOW` 不能破坏 stdout/stderr 重定向；一次性 JSON 命令、启动错误和 supervisor 状态必须继续可观测。
+- Windows 行为测试必须在子进程内部验证 `GetConsoleWindow() == 0`，不能只断言配置常量存在。
+- `cargo run -p sdk-client --bin runtime-host-smoke` 必须覆盖运行、health、优雅停止和强制退出，结束后不得残留 `sdk-host`。
+
+2026-07-27 阶段 21 结果：长期和一次性 Host 启动均通过统一后台进程工厂设置 `CREATE_NO_WINDOW`。Windows 子进程行为测试确认无 console handle 且 stdout 捕获正常；真实 runtime-host smoke 通过，Rust workspace 94 项和 Clippy 全部通过，退出后无 `sdk-host` 残留。
