@@ -8,6 +8,8 @@ BroSDK Dashboard 是基于 BroSDK 的 Windows 多指纹浏览器桌面控制台�
 
 当前版本面向 Windows x64。仓库已包含运行所需的 `libs/windows_x64/brosdk.dll` 和 C API 头文件 `brosdk.h`；服务端接口快照 `doc.json` / `docs.json` 仅作本地参考，不进入版本库。
 
+后续产品方向会围绕跨境电商多店铺运营扩展：不是直接做传统大 ERP，而是在多环境指纹浏览器之上增加店铺环境绑定、订单发货、商品/SKU 同步、平台连接器和受控 Commerce Agent。详见 [跨境电商运营中台规划](docs/commerce-roadmap.md)。
+
 ## 核心能力
 
 - 首次启动输入 API Key，按 `getUserSig(role=user) -> sdk_init` 完成初始化；API Key 使用 Windows DPAPI 保护，不写入 SQLite、日志或发布清单。
@@ -205,6 +207,7 @@ Chat 与 Agent 都通过 OpenAI-compatible 原生 `tools/tool_calls` 接入。Ch
 - [架构与进程边界](docs/architecture.md)
 - [DLL C API 接入](docs/dll-integration.md)
 - [接口覆盖矩阵](docs/interface-coverage.md)
+- [跨境电商运营中台规划](docs/commerce-roadmap.md)
 - [Manager 领域模型](docs/manager-domain.md)
 - [实施路线图](docs/roadmap.md)
 - [Windows 发布与回滚](docs/windows-release.md)

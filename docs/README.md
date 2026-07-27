@@ -22,7 +22,8 @@
 3. 再读 [dll-integration.md](dll-integration.md)，确认 `brosdk.dll` 的调用方式、回调、状态和风险。
 4. 再读 [roadmap.md](roadmap.md)，按阶段实施。
 5. 读 [manager-domain.md](manager-domain.md)，确认 SQLite、operation、generation 和事件规则。
-6. 最后读 [testing-handoff.md](testing-handoff.md)，按约定设置测试密钥并跑 E2E。
+6. 如需继续跨境电商方向，读 [commerce-roadmap.md](commerce-roadmap.md)，确认店铺、订单、SKU 和平台连接器边界。
+7. 最后读 [testing-handoff.md](testing-handoff.md)，按约定设置测试密钥并跑 E2E。
 
 ## 当前实现状态
 
@@ -54,6 +55,8 @@ brosdk-dashboard/
 - Windows 首版基于 `libs/windows_x64/brosdk.dll` 管理环境、内核、代理、Cookie/Storage 和运行状态。
 - 跨平台能力通过平台 adapter 演进：Windows 先用 DLL，macOS/Linux 等对应动态库和进程/密钥库/IPC adapter 准备好后再接。
 - AI Agent 已接入受控规划/审批链路，Provider 配置与环境上下文由 Manager 统一管理。
+
+后续跨境电商方向不直接做传统大 ERP，而是把当前多环境能力扩展成轻量运营中台：店铺账号绑定 `envId`，订单、发货、SKU、库存、价格和平台刊登通过 connector 同步；平台 API 缺口由绑定浏览器环境打开后台补位，AI Agent 只在 Manager 暴露的受控 commerce tools 内执行。详细边界见 [commerce-roadmap.md](commerce-roadmap.md)。
 
 ## 重要约束
 
@@ -124,6 +127,8 @@ brosdk-dashboard/
 阶段 33 Dashboard UI/交互审查已完成：使用浏览器插件逐页检查总览、环境、指纹、代理、内核、MCP、AI、操作和设置，验证页面非空、无框架错误覆盖、无控制台 warning/error、无横向溢出，并补齐失败交互的回归。主导航切换会同步 `page` 查询参数并支持浏览器后退；AI 输入的按钮点击与 Enter 键共用同一个可提交条件，预览态或缺少 Key 时不会提交到 Tauri API；总览 MCP 状态区分“能力存在”和“端口已连接”，MCP 控制台禁用按钮提供悬停原因。最终 Dashboard 56 项、Playwright 桌面/移动 24 项、TypeScript/Rust check、Clippy 全部通过。
 
 阶段 34 全界面动作状态收口已完成：总览、环境、指纹、代理、内核、MCP、AI、操作和设置中的禁用按钮都提供明确悬停原因，桌面预览、忙碌、缺少目标环境、缺少 URL、未配置凭据等状态不再只表现为灰色按钮。新增共享 `actionTitle/desktopActionReason` 帮助器，统一桌面能力和忙碌态提示；表格动作列和 AI 会话列表的图标按钮固定为可点击尺寸，内核安装/卸载双按钮不会被表格压缩。Playwright 新增桌面/移动守护，逐页断言禁用动作有原因、图标按钮不小于 30px、无横向溢出；浏览器插件再次覆盖 9 个主要页面。最终 Dashboard 56 项、Playwright 桌面/移动 26 项、TypeScript/Rust check、Rustfmt 和 Clippy 全部通过。
+
+阶段 35-39 已规划为跨境电商轻量运营中台方向，按店铺环境绑定、订单发货、SKU/库存、商品刊登和 Commerce Agent 递进实施。该方向继续复用 envId 唯一主键、Manager operation、安全凭据、DLL MCP 和 AI 审批链路；平台订单、库存和刊登状态仍以平台 API 为事实来源，本地只保存可删除同步缓存和审计记录。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 
