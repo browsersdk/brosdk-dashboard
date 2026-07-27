@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   execute: vi.fn(),
   run: vi.fn(),
 }));
+const scrollTo = vi.fn();
 
 vi.mock("../../api", () => ({
   aiChat: api.chat,
@@ -55,6 +56,11 @@ afterEach(cleanup);
 
 beforeEach(() => {
   localStorage.clear();
+  scrollTo.mockReset();
+  Object.defineProperty(HTMLElement.prototype, "scrollTo", {
+    configurable: true,
+    value: scrollTo,
+  });
   api.chat.mockReset();
   api.plan.mockReset();
   api.execute.mockReset();
@@ -103,6 +109,37 @@ describe("AiPage", () => {
     renderPage();
     expect(screen.getAllByText("第一轮问题").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("第二轮回答")).toBeTruthy();
+  });
+
+  it("scrolls the active conversation to the latest AI reply", async () => {
+    let resolveChat!: (value: { answer: string; model: string; readOnly: boolean }) => void;
+    api.chat.mockImplementation(() => new Promise((resolve) => {
+      resolveChat = resolve;
+    }));
+    renderPage();
+    const messageList = screen.getByLabelText("当前会话消息");
+    Object.defineProperty(messageList, "scrollHeight", {
+      configurable: true,
+      value: 720,
+    });
+    scrollTo.mockClear();
+
+    submitPrompt("滚动到最新消息");
+    await waitFor(() => expect(scrollTo).toHaveBeenCalled());
+    scrollTo.mockClear();
+    resolveChat({
+      answer: "这是最新回复",
+      model: "deepseek-v4-flash",
+      readOnly: true,
+    });
+    await screen.findByText("这是最新回复");
+
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenLastCalledWith({
+        top: 720,
+        behavior: "smooth",
+      });
+    });
   });
 
   it("creates, switches, clears, and deletes local conversations", async () => {

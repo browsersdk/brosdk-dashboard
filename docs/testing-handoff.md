@@ -245,7 +245,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-28 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-29 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -472,3 +472,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - Dashboard 单元测试验证 Enter 发送、Shift+Enter 换行；Playwright 在 1440x900 与 390x844 验证会话弹窗、不可变作用域、输入区和发送按钮无溢出。
 
 2026-07-27 阶段 28 结果：真实 DeepSeek 报告 `globalChatReplyVerified/environmentChatReplyVerified/chatMutationReplyVerified=true`，自动重启观察到 stop、start 和最终 ready，使用 2 个工具回合并恢复初始状态。真实 Tauri 报告初始化、自检、ready/stopped、单环境上下文、Provider 设置、全局 Chat Enter 回复和 operation 身份均通过；DLL 未暴露 TCP CDP，`cdpEndpointObserved=false`。Dashboard 52 项、Rust workspace 114 项、Playwright 18 项、check/Clippy、production build、三张 README 截图、NSIS/便携构建和 release verify 全部通过；无 Dashboard、sdk-host 或临时 UI E2E 目录残留。
+
+## 31. 阶段 29 AI 会话最新消息跟随验收
+
+- Dashboard 组件测试必须在追加 AI 回复后验证消息容器滚动到当前 `scrollHeight`，不能只检查回复文本存在。
+- Playwright 必须预置足够长的本地会话，先确认 `scrollHeight > clientHeight`，再等待底部距离不超过 2px。
+- 桌面 1440x900 与移动 390x844 都必须覆盖；页面不得出现 console error、pageerror 或请求失败。
+- 会话 id 切换和消息集合变化都应触发滚动，以覆盖历史会话、Chat 回复及 Agent 执行状态更新。
+
+2026-07-27 阶段 29 结果：Dashboard 53 项、Playwright 桌面/移动 20 项、TypeScript check 和 production build 通过。48 条历史消息在两个视口均形成真实滚动区域并自动到达底部。

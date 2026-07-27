@@ -179,6 +179,47 @@ test("AI conversations keep an immutable global or environment MCP scope", async
   expect(issues).toEqual([]);
 });
 
+test("AI message history opens at the latest reply", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  const createdAt = "2026-07-27T04:00:00.000Z";
+  const messages = Array.from({ length: 48 }, (_, index) => ({
+    id: `message-${index}`,
+    role: index % 2 === 0 ? "user" : "assistant",
+    mode: "chat",
+    content: `${index % 2 === 0 ? "用户问题" : "AI 回复"} ${index + 1}：用于验证长会话会自动显示最新回复。`,
+    createdAt,
+  }));
+  await page.addInitScript((storedMessages) => {
+    localStorage.setItem("brosdk-dashboard.ai-conversations.v1", JSON.stringify({
+      activeConversationId: "conversation-scroll-e2e",
+      conversations: [{
+        id: "conversation-scroll-e2e",
+        title: "长会话滚动验证",
+        mode: "chat",
+        executionMode: "manual",
+        contextEnvId: null,
+        createdAt: "2026-07-27T04:00:00.000Z",
+        updatedAt: "2026-07-27T04:01:00.000Z",
+        messages: storedMessages,
+      }],
+    }));
+  }, messages);
+
+  await page.goto(`/?${scenario}&page=ai`);
+  await expectHealthyDashboard(page, "AI 助手");
+  const messageList = page.getByLabel("当前会话消息");
+  await expect(messageList).toContainText("AI 回复 48");
+  const dimensions = await messageList.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+  await expect.poll(() => messageList.evaluate((element) => (
+    element.scrollHeight - element.scrollTop - element.clientHeight
+  ))).toBeLessThanOrEqual(2);
+  expect(issues).toEqual([]);
+});
+
 test("Agent approval mode and MCP runtime controls fit the viewport", async ({ page }, testInfo) => {
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=ai`);

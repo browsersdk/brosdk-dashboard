@@ -33,6 +33,7 @@
 | 26. GitHub 首页与发布产物收口 | P1 | 已完成 | README、DLL/头文件、构建命令和 Windows 发布产物闭环 |
 | 27. AI 原生工具与安全自检 | P0 | 已完成 | Chat/Agent 按模式绑定原生 tools，自检迁入空闲期诊断，README 产品截图 |
 | 28. AI 会话作用域与自动 Agent 闭环 | P0 | 已完成 | 创建时固定全局/单环境目录，原生多轮工具完成重启，AI 输入区重排 |
+| 29. AI 会话最新消息跟随 | P1 | 已完成 | 新消息、Agent 状态和会话切换后自动滚动到最新内容 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -868,3 +869,14 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - AI composer 改为常见的居中多行输入框和右下发送图标；Enter 发送、Shift+Enter 换行，桌面和 390x844 移动视口均无溢出。
 - 真实 DeepSeek E2E 分别验证全局 Chat、单环境 Chat、Chat mutation guard 和自动重启 stop/start/ready，2 个工具回合完成，环境恢复初始状态。
 - 真实 Windows Tauri E2E 验证首次初始化、SDK 自检、单环境会话 envId 选择、CDP/内部通道、全局 Chat Enter 发送、停止和操作中心；Dashboard 52 项、Rust workspace 114 项、Playwright 18 项、check/Clippy、production build、截图与 Windows release 构建验证全部通过。
+
+## 32. 阶段 29：AI 会话最新消息跟随
+
+目标：保证长会话在发送、回复、执行状态更新和历史切换后始终展示最新内容，避免用户手动寻找新回复。
+
+实现结果（2026-07-27）：
+
+- AI 消息容器以当前会话 id 和消息集合变化为触发源，在下一动画帧调用平滑滚动，覆盖用户消息、AI 回复、Agent 计划/执行结果和会话切换。
+- 滚动发生在 React 提交并完成列表布局之后，不改变本地历史结构、MCP 作用域或消息数量上限。
+- Dashboard 组件测试验证最新 AI 回复触发 `scrollHeight` 目标滚动；Playwright 用 48 条历史消息在桌面和移动视口验证真实溢出列表最终到达底部。
+- Dashboard 53 项、Playwright 20 项、TypeScript check 和 production build 全部通过。

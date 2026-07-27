@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Bot,
   BrainCircuit,
@@ -67,6 +67,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
   const [conversationState, setConversationState] = useState(() => (
     loadConversationState(null)
   ));
+  const messageListRef = useRef<HTMLDivElement>(null);
   const activeConversation = conversationState.conversations.find(
     (conversation) => conversation.id === conversationState.activeConversationId,
   ) ?? conversationState.conversations[0];
@@ -77,6 +78,19 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
   useEffect(() => {
     saveConversationState(conversationState);
   }, [conversationState]);
+
+  useEffect(() => {
+    const messageList = messageListRef.current;
+    if (!messageList) return;
+
+    const frame = window.requestAnimationFrame(() => {
+      messageList.scrollTo({
+        top: messageList.scrollHeight,
+        behavior: "smooth",
+      });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeConversation.id, activeConversation.messages]);
 
   function updateConversation(
     conversationId: string,
@@ -356,7 +370,7 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
             ) : null}
           </section>
 
-          <div className="ai-message-list" aria-label="当前会话消息">
+          <div ref={messageListRef} className="ai-message-list" aria-label="当前会话消息">
             {activeConversation.messages.map((message) => (
               <article
                 className={`ai-message ${message.role} ${message.error ? "error" : ""}`}
