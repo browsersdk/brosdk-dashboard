@@ -1446,7 +1446,8 @@ impl ManagerStore {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
         let mut statement = transaction.prepare(
-            r#"SELECT e.env_id, e.status, e.cdp, o.kind, o.status
+            r#"SELECT e.env_id, e.status, e.cdp, o.kind, o.status,
+                      e.current_operation_id
                FROM environments e
                LEFT JOIN operations o ON o.id = e.current_operation_id"#,
         )?;
@@ -1458,23 +1459,34 @@ impl ManagerStore {
                     row.get::<_, String>(2)?,
                     row.get::<_, Option<String>>(3)?,
                     row.get::<_, Option<String>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
                 ))
             })?
             .collect::<Result<Vec<_>, _>>()?;
         drop(statement);
-        for (env_id, previous, previous_cdp, operation_kind, operation_status) in candidates {
+        for (env_id, previous, previous_cdp, operation_kind, operation_status, operation_id) in
+            candidates
+        {
             let active_lifecycle =
                 matches!(
                     operation_kind.as_deref(),
                     Some("environment.start" | "environment.stop")
                 ) && matches!(operation_status.as_deref(), Some("queued" | "running"));
+            let observed_running = running.contains_key(&env_id) || observed.contains(&env_id);
+            let lifecycle_completed = match operation_kind.as_deref() {
+                Some("environment.start") if active_lifecycle && observed_running => true,
+                Some("environment.stop") if active_lifecycle && !observed_running => true,
+                _ => false,
+            };
+            if active_lifecycle && !lifecycle_completed {
+                continue;
+            }
             let (status, cdp, event) = match running.get(&env_id) {
                 Some(cdp) => (
                     "ready",
                     cdp.as_str(),
                     "sdk_browser_info reconciliation: running",
                 ),
-                None if active_lifecycle => continue,
                 None if observed.contains(&env_id) => (
                     "ready",
                     "-",
@@ -1493,6 +1505,13 @@ impl ManagerStore {
                 }
                 None => continue,
             };
+            if lifecycle_completed && let Some(operation_id) = operation_id.as_deref() {
+                transaction.execute(
+                    r#"UPDATE operations SET status = 'succeeded', message = ?1,
+                              error_code = NULL, updated_at = ?2 WHERE id = ?3"#,
+                    params![event, timestamp(), operation_id],
+                )?;
+            }
             if previous != status || previous_cdp != cdp {
                 transaction.execute(
                     r#"UPDATE environments SET status = ?1, cdp = ?2, last_event = ?3,
@@ -2303,6 +2322,152 @@ mod tests {
         let environment = store.list_environments().expect("environments").remove(0);
         assert_eq!(environment.status, "ready");
         assert_eq!(environment.cdp, "ws://127.0.0.1/devtools/browser/1");
+    }
+
+    #[test]
+    fn mcp_status_reconciliation_completes_an_active_open_operation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("upsert environment");
+        let generation = store.next_generation("env-1").expect("generation");
+        let operation = store
+            .create_operation(
+                "environment.start",
+                Some("env-1"),
+                "启动环境",
+                generation,
+                None,
+            )
+            .expect("operation");
+        store
+            .transition_operation(&operation.id, "running", "calling MCP", None)
+            .expect("running");
+        store
+            .set_environment_runtime(RuntimeUpdate {
+                env_id: "env-1",
+                generation,
+                status: "starting",
+                request_id: None,
+                operation_id: Some(&operation.id),
+                cdp: "-",
+                last_event: "calling DLL global MCP",
+            })
+            .expect("starting");
+
+        store
+            .reconcile_running_environments(&HashMap::new(), &HashSet::new())
+            .expect("opening remains pending while absent");
+        assert_eq!(
+            store
+                .environment("env-1")
+                .expect("query")
+                .expect("environment")
+                .status,
+            "starting"
+        );
+        assert_eq!(
+            store
+                .operation(&operation.id)
+                .expect("query")
+                .expect("operation")
+                .status,
+            "running"
+        );
+
+        store
+            .reconcile_running_environments(&HashMap::new(), &HashSet::from(["env-1".into()]))
+            .expect("MCP status reconciliation");
+
+        let environment = store
+            .environment("env-1")
+            .expect("query")
+            .expect("environment");
+        let operation = store
+            .operation(&operation.id)
+            .expect("query")
+            .expect("operation");
+        assert_eq!(environment.status, "ready");
+        assert_eq!(environment.current_operation_id, None);
+        assert_eq!(operation.status, "succeeded");
+    }
+
+    #[test]
+    fn mcp_status_reconciliation_completes_an_active_close_operation() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("upsert environment");
+        let generation = store.next_generation("env-1").expect("generation");
+        let operation = store
+            .create_operation(
+                "environment.stop",
+                Some("env-1"),
+                "停止环境",
+                generation,
+                None,
+            )
+            .expect("operation");
+        store
+            .transition_operation(&operation.id, "running", "calling MCP", None)
+            .expect("running");
+        store
+            .set_environment_runtime(RuntimeUpdate {
+                env_id: "env-1",
+                generation,
+                status: "stopping",
+                request_id: None,
+                operation_id: Some(&operation.id),
+                cdp: "-",
+                last_event: "calling DLL global MCP",
+            })
+            .expect("stopping");
+
+        store
+            .reconcile_running_environments(&HashMap::new(), &HashSet::from(["env-1".into()]))
+            .expect("closing remains pending while observed");
+        assert_eq!(
+            store
+                .environment("env-1")
+                .expect("query")
+                .expect("environment")
+                .status,
+            "stopping"
+        );
+        assert_eq!(
+            store
+                .operation(&operation.id)
+                .expect("query")
+                .expect("operation")
+                .status,
+            "running"
+        );
+
+        store
+            .reconcile_running_environments(&HashMap::new(), &HashSet::new())
+            .expect("MCP status reconciliation");
+
+        let environment = store
+            .environment("env-1")
+            .expect("query")
+            .expect("environment");
+        let operation = store
+            .operation(&operation.id)
+            .expect("query")
+            .expect("operation");
+        assert_eq!(environment.status, "stopped");
+        assert_eq!(environment.current_operation_id, None);
+        assert_eq!(operation.status, "succeeded");
     }
 
     #[test]

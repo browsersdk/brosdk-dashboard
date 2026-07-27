@@ -91,7 +91,7 @@ DLL 内嵌 HTTP/WS/MCP 由 `sdk_init.port` 启用。正式客户端若未配置�
 
 源码审计确认 DLL 的全局 MCP 不缺少单环境操作：`/sdk/v1/mcp` 同时注册管理工具和带 `env.` 前缀的浏览器工具（例如 `env.tabs`、`env.snapshot`、`env.act`），后者要求每次调用在 arguments 中显式提供 envId。`?envId=` 与 `/sdk/v1/mcp/env/{envId}` 继续兼容旧客户端，但不再是本项目的接入面。Manager 只连接全局 endpoint，动态发现 `env.*` 浏览器目录、强制注入 ready 环境 envId，并负责严格 lifecycle、operation 追踪、URL 降级和响应脱敏；Dashboard/Agent 不直接持有 MCP session。
 
-Manager 的全局只读策略允许 `sdk.health`、`sdk.info`、`env.list`、`env.resolve`、`env.get`、`browser.status`、`task.list`、`task.get`、`mcp.endpoint`；全局环境 mutation 继续走 Manager API。ready 单环境策略允许当次全局 `tools/list` 广告的 `env.*` 浏览器工具，但明确排除 `env.list/resolve/get/create/update/destroy` 管理集合；参数须为有界 JSON object，Manager 覆盖写入 envId，DLL schema 再做字段级校验。2026-07-27 真实 DLL 生命周期 E2E 使用协议 `2025-11-25` 发现并放行 18/18 个浏览器工具，通过全局 endpoint 执行 `env.tabs(list)` 与 `env.read(page)`，最后恢复 stopped。
+Manager 的 Dashboard 控制台全局只读策略允许 `sdk.health`、`sdk.info`、`env.list`、`env.resolve`、`env.get`、`browser.status`、`task.list`、`task.get`、`mcp.endpoint`。AI Agent 额外动态绑定全局 `browser.open/browser.close`，但 Manager 在调用前创建 lifecycle operation、校验 envId/状态/幂等并把 callback 预绑定到该 operation；环境 CRUD 继续走 Manager API。ready 单环境策略允许当次全局 `tools/list` 广告的 `env.*` 浏览器工具，但明确排除 `env.list/resolve/get/create/update/destroy` 管理集合；参数须为有界 JSON object，Manager 覆盖写入 envId，DLL schema 再做字段级校验。2026-07-27 真实 DLL 生命周期 E2E 使用协议 `2025-11-25` 发现并放行 18/18 个浏览器工具，通过全局 endpoint 执行 `env.tabs(list)` 与 `env.read(page)`，最后恢复 stopped。
 
 ## 4. 进程锁风险
 
@@ -161,6 +161,8 @@ Manager 内部统一转换为：
 ```
 
 当前实现使用 host 内部 `request_operations` 映射保存异步调用返回的 reqId。callback 即使早于同步函数返回，也会先进入原始字节队列，等调用返回并建立映射后再归一化，因此不会因早到事件丢失 operation 关联。
+
+Agent 通过 MCP HTTP 调用 `browser.open/browser.close` 时不会经过 Host 的同步 C API handler，因此 Manager 会在 `tools/call` 前发送内部 TrackMcpLifecycle 命令，用 `(open|close, envId)` 预注册 operation；工具调用失败时显式清理该映射。执行等待期间每秒调用 `browser.status` 对账，既能补偿缺失 callback，也能防止把历史 SQLite `ready` 当成当前运行事实。
 
 如果 SDK 事件没有明确 `envId`，Manager 要用 reqId 与 operation 映射补齐；补不齐时保留为全局事件并进入诊断日志。
 

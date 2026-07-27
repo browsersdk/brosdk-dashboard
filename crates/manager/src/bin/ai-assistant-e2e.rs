@@ -55,6 +55,38 @@ async fn main() -> Result<(), Box<dyn Error>> {
             wait_for_state(&manager, &env_id, "stopped", STOP_TIMEOUT).await?;
         }
 
+        failed_stage = "agent-stopped-status";
+        let stopped_status = manager
+            .ai_run_agent(AiAgentRunRequest {
+                prompt: format!(
+                    "只查询环境 {env_id} 是否已经启动，不执行启动、停止或其它写操作。请根据当前实时状态回答。"
+                ),
+                context_env_id: Some(env_id.clone()),
+                history: Vec::new(),
+                approved: true,
+            })
+            .await?;
+        let stopped_answer = stopped_status.answer.to_ascii_lowercase();
+        let no_lifecycle_steps = stopped_status.steps.iter().all(|step| {
+            !matches!(
+                step.plan.action.as_str(),
+                "environment.start" | "environment.stop"
+            )
+        });
+        let remained_stopped = environment(&manager, &env_id).await?.status == "stopped";
+        let claims_ready = ["ready", "运行中", "已经启动", "已启动成功"]
+            .iter()
+            .any(|phrase| stopped_answer.contains(phrase));
+        let reports_stopped = ["stopped", "未启动", "没有启动", "未运行", "已停止"]
+            .iter()
+            .any(|phrase| stopped_answer.contains(phrase));
+        if !no_lifecycle_steps || !remained_stopped || claims_ready || !reports_stopped {
+            return Err(format!(
+                "Agent stopped-status mismatch: noLifecycleSteps={no_lifecycle_steps}, remainedStopped={remained_stopped}, claimsReady={claims_ready}, reportsStopped={reports_stopped}"
+            )
+            .into());
+        }
+
         failed_stage = "agent-automatic-start";
         let start_run = manager
             .ai_run_agent(AiAgentRunRequest {
@@ -68,9 +100,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
             .steps
             .iter()
             .any(|step| step.plan.action == "environment.start")
+            || !start_run.steps.iter().any(|step| {
+                step.plan.action == "environment.start"
+                    && step
+                        .execution
+                        .response
+                        .as_ref()
+                        .is_some_and(|value| contains_key_string(value, "transport", "dll-global-mcp"))
+            })
             || environment(&manager, &env_id).await?.status != "ready"
         {
-            return Err("automatic Agent did not start the stopped environment".into());
+            return Err(
+                "automatic Agent did not start through DLL global MCP or reach ready".into(),
+            );
         }
 
         failed_stage = "chat-mutation-guard";
@@ -151,6 +193,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }) {
             return Err("automatic Agent produced a failed operation".into());
         }
+        if !run.steps.iter().filter(|step| {
+            matches!(
+                step.plan.action.as_str(),
+                "environment.start" | "environment.stop"
+            )
+        }).all(|step| {
+            step.execution.response.as_ref().is_some_and(|value| {
+                contains_key_string(value, "transport", "dll-global-mcp")
+            })
+        }) {
+            return Err("automatic restart did not use DLL global MCP for every lifecycle step".into());
+        }
         let final_environment = environment(&manager, &env_id).await?;
         if final_environment.status != "ready" {
             return Err("automatic Agent did not leave the environment ready".into());
@@ -159,7 +213,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         Ok::<Value, Box<dyn Error>>(json!({
             "status": "passed",
             "automaticMcpActivated": true,
+            "stoppedStatusReplyVerified": true,
+            "stoppedStatusToolRounds": stopped_status.steps.len(),
             "agentStartObserved": true,
+            "agentLifecycleUsedGlobalMcp": true,
             "chatMutationReplyVerified": true,
             "globalChatReplyVerified": true,
             "environmentChatReplyVerified": true,
@@ -299,4 +356,22 @@ fn non_empty_env(name: &str) -> Option<String> {
 
 fn env_flag(name: &str) -> bool {
     non_empty_env(name).is_some_and(|value| matches!(value.as_str(), "1" | "true" | "yes"))
+}
+
+fn contains_key_string(value: &Value, key: &str, expected: &str) -> bool {
+    match value {
+        Value::Object(object) => {
+            object.get(key).and_then(Value::as_str) == Some(expected)
+                || object
+                    .values()
+                    .any(|value| contains_key_string(value, key, expected))
+        }
+        Value::Array(values) => values
+            .iter()
+            .any(|value| contains_key_string(value, key, expected)),
+        Value::String(text) => serde_json::from_str::<Value>(text)
+            .ok()
+            .is_some_and(|value| contains_key_string(&value, key, expected)),
+        _ => false,
+    }
 }

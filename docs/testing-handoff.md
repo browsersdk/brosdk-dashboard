@@ -245,7 +245,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
 3. 运行 `git status --short --branch`，确认是否存在未提交工作。
 4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-30 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
+5. 当前阶段 0-31 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
 6. 产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
@@ -485,8 +485,17 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 ## 32. 阶段 30 MCP 自动激活与 AI 状态强对账验收
 
 - `embeddedMcpPort=null` 且 DLL capability 可用时，初始化必须获得非零自动端口并让 snapshot 报告 `mcp.active=true`；显式端口仍优先于环境变量和自动端口。
-- AI Chat 状态读取、Agent 规划、自动运行和批准执行都必须在读取环境状态前调用真实 `sdk_browser_info`；对账失败时返回错误，不能回退到 SQLite 缓存继续决策。
+- AI Chat 状态读取、Agent 规划、自动运行和批准执行都必须在读取环境状态前调用 DLL 全局 MCP `browser.status`；对账失败时返回错误，不能回退到 SQLite 缓存继续决策。Dashboard 启动/恢复对账仍使用 `sdk_browser_info`。
 - `npm run e2e:ai-assistant` 不得设置 `BROSDK_EMBEDDED_PORT`，必须报告 `automaticMcpActivated/agentStartObserved=true`，并继续验证自动重启和状态恢复。
 - 设置页在桌面与移动 Playwright 中必须显示“留空则自动选择”，不能再暗示空值会关闭 Agent 所需的 MCP。
 
 2026-07-27 阶段 30 真实结果：DeepSeek `deepseek-v4-flash` 与当前 DLL 报告自动 MCP 激活、stopped 环境启动、重启 stop/start/ready、全局/单环境 Chat 和初始状态恢复全部通过；未向 runner 注入固定端口。Dashboard 53 项、Rust workspace 115 项、Playwright 20 项、check/Clippy、production build 和托盘/单实例 E2E 通过，无 Dashboard、sdk-host 或隔离测试目录残留。
+
+## 33. 阶段 31 AI 全局 MCP 生命周期与停止状态验收
+
+- 单元测试必须覆盖全局 `browser.status` 的 `structuredContent`/文本 payload 解析，以及运行列表中不存在的环境被对账为 stopped。
+- 活跃 open operation 在状态列表中出现目标前保持 starting，出现后成功；活跃 close operation 在目标消失前保持 stopping，消失后成功，不能被中间轮询提前完成。
+- Agent 工具目录必须来自 DLL 动态发现的 `browser.open/browser.close`。全局会话 schema 要求 envId；单环境会话 schema 不暴露 envId，并拒绝文本中的其它已知环境。
+- `npm run e2e:ai-assistant` 必须先在目标实际 stopped 时询问“是否已经启动”，断言回复不声称 ready、没有生命周期写步骤且环境仍 stopped；后续启动和重启的执行摘要必须包含 `transport=dll-global-mcp`。
+
+2026-07-27 阶段 31 真实结果：DeepSeek `deepseek-v4-flash` 在目标环境实际 stopped 时调用实时状态工具并明确回答未启动，随后全局 MCP 启动和自动重启通过，最终恢复初始状态。报告包含 `stoppedStatusReplyVerified=true`、`agentLifecycleUsedGlobalMcp=true`；Dashboard 53 项、Rust workspace 120 项、Playwright 20 项、check/Clippy、production build 全部通过，凭据和目标 envId 未写入报告。

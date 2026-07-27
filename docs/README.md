@@ -26,7 +26,7 @@
 
 ## 当前实现状态
 
-截至 2026-07-27，阶段 0-30 已完成：
+截至 2026-07-27，阶段 0-31 已完成：
 
 ```text
 brosdk-dashboard/
@@ -67,7 +67,7 @@ brosdk-dashboard/
 
 ## 当前实施状态
 
-[roadmap.md](roadmap.md) 中阶段 0-30 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、不可变作用域 AI 会话、原生 tools 驱动的 Chat/Agent、DLL 全局多环境 MCP、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复和桌面单实例已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
+[roadmap.md](roadmap.md) 中阶段 0-31 已完成。首次 API Key 激活、安全凭据持久化、环境工作台、多环境生命周期、远端指纹对比、Dashboard envId 身份、操作中心、不可变作用域 AI 会话、原生 tools 驱动的 Chat/Agent、DLL 全局多环境 MCP、CDP 运行态回填、Windows 安装交付、托盘生命周期、启动进度回调、客户端重启状态恢复和桌面单实例已经形成完整桌面流程。环境配置继续以 SDK 服务端为唯一事实来源，SQLite 只保留可删除、带新鲜度状态的脱敏缓存；API Key 使用平台安全存储，userSig 只进入隔离 Host/DLL 生命周期。接口产品化边界与剩余缺口见 [interface-coverage.md](interface-coverage.md)。
 
 `doc.json` 与服务端源码确认：`/api/v2/browser/*` 是 API Key 认证的环境管理契约，`/api/v2/sdk/*` 是 DLL 使用 userSig 的内部契约。Dashboard 不让用户配置 userSig，也不直接调用内部 SDK HTTP 接口。普通环境创建仍只有代理和内核版本；环境详情、指纹、代理和内核实际值从 `sdk_env_getinfo` 获取并以脱敏缓存支持离线只读。
 
@@ -117,13 +117,15 @@ brosdk-dashboard/
 
 阶段 30 MCP 自动激活与 AI 运行态强对账已完成：正式客户端未设置固定端口时自动选择可用环回端口并在 `sdk_init` 中启用 DLL 全局 MCP，设置页空值语义改为“自动选择”。首次 snapshot、托盘恢复和第二实例唤醒都会读取 `sdk_browser_info`；Chat 状态读取、Agent 规划、自动 Agent 和批准执行前也再次严格对账，杜绝窗口隐藏期间或客户端重启后使用遗留 `ready` 状态。真实 DeepSeek/DLL E2E 不再注入 MCP 端口，验证自动激活、stopped 环境 Agent 启动、两轮自动重启和最终状态恢复。Dashboard 53 项、Rust workspace 115 项、Playwright 20 项、check/Clippy、production build 和托盘 E2E 全部通过。
 
+阶段 31 AI 生命周期全局 MCP 统一已完成：AI 的实时状态前置查询改为 DLL 全局 `browser.status`，环境不在返回列表时立即对账为 stopped；查询失败或 MCP 未激活时 fail closed，不回退 SQLite。Agent 不再向模型暴露 Manager/C API 启停工具，而是动态绑定 DLL 的 `browser.open/browser.close`，由 Manager 注入或校验 envId、预注册 callback operation 映射并轮询 `browser.status` 确认终态。真实 DeepSeek 回归在环境实际 stopped 时询问“是否已经启动”，确认回复 stopped 且没有生命周期写操作；随后全局 MCP 启动和重启均通过并恢复初始状态。Dashboard 53 项、Rust workspace 120 项、Playwright 20 项、check/Clippy 和 production build 全部通过。
+
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。
 
 Manager/Runtime Host 创建链路、Dashboard 双字段交互和真实创建/删除验收均已完成：FFI 已加载 `sdk_env_create`/`sdk_env_destroy`，Runtime Host 继续统一脱敏，Manager 校验本地内核、后端业务 `code=200`、创建结果 `data.envId`，并把结果写入本地镜像和 operation。环境页的创建带只显示代理与内核版本，默认本机网络并预选最新本地内核；无可用内核时跳转内核页。`getUserSig` 请求固定使用 `role=user`。真实 DLL 验收使用 Chrome 134 和本机网络完成创建、镜像确认、删除及 `env_page` 对账，测试环境已清理。
 
 阶段 11 的缓存边界：API Key 只用于换取 userSig，环境列表和详情仍由 DLL 向 SDK 服务端读取；SQLite 环境数据不是可独立编辑的本地事实，只是完整分页成功后的可丢弃缓存。Manager 首次 snapshot 在 API Key 可用时自动刷新，按 `page/pageSize` 拉取完整集合，全部成功才原子替换；失败保留旧值并标记 stale。旧 `local_label/tags_json` 会在迁移时清空，Dashboard 只显示服务端名称、envId 和缓存状态；本机 generation、reqId、CDP 和 ready 状态继续作为运行态叠加。DLL 全局 `/sdk/v1/mcp` 同时提供管理工具和完整 `env.*` 页面工具。
 
-当前 MCP 边界：Manager 按 `global`/`environment` 显式授权，但 transport 统一连接 `/sdk/v1/mcp`，复用严格的 `initialize -> initialized -> tools/list -> tools/call -> DELETE` 生命周期，并把工具发现与调用写入 operation。全局仅放行 9 个健康、环境查询、浏览器状态和任务查询工具；环境创建、更新、删除和浏览器启停继续走 Manager 状态机。ready 单环境从 DLL 当次 `tools/list` 选取 `env.*` 浏览器工具，排除 6 个环境管理工具，并由 Manager 注入 envId；参数必须是有界 JSON object，响应继续脱敏并降低 URL 精度。真实 DLL 当前发现并放行 18/18 个单环境浏览器工具，协议为 `2025-11-25`，数量不作为产品常量。
+当前 MCP 边界：Manager 按 `global`/`environment` 显式授权，但 transport 统一连接 `/sdk/v1/mcp`，复用严格的 `initialize -> initialized -> tools/list -> tools/call -> DELETE` 生命周期，并把工具发现与调用写入 operation。Dashboard MCP 控制台全局视图只放行 9 个健康、环境查询、浏览器状态和任务查询工具；环境创建、更新、删除继续走 Manager API。AI Agent 额外从全局目录动态绑定 `browser.open/browser.close`，但必须经过 Manager 审批、状态、幂等和 operation 包装。ready 单环境从 DLL 当次 `tools/list` 选取 `env.*` 浏览器工具，排除 6 个环境管理工具，并由 Manager 注入 envId；参数必须是有界 JSON object，响应继续脱敏并降低 URL 精度。真实 DLL 当前发现并放行 18/18 个单环境浏览器工具，协议为 `2025-11-25`，数量不作为产品常量。
 
 Dashboard MCP 页面使用“全局/单环境”授权视图、ready 环境选择和动态工具状态；常用读取工具使用最小表单，其余 DLL 工具使用受大小限制的 JSON 参数区。工具列表显示真实 `env.*` 名称，Agent 使用 `mcp.call -> env.tabs(list)`；1440x900 和 390x844 交互/视觉验收无应用控制台错误、重叠或横向溢出。
 

@@ -191,6 +191,12 @@ impl HostRuntime {
                 "sdk_browser_close",
                 |sdk| sdk.browser_close(body),
             ),
+            HostCommand::TrackMcpLifecycle { env_id, opening } => {
+                self.track_mcp_lifecycle(request, env_id, *opening)
+            }
+            HostCommand::ClearMcpLifecycle { env_id, opening } => {
+                self.clear_mcp_lifecycle(request, env_id, *opening)
+            }
             HostCommand::BrowserCommand { request } => self
                 .with_initialized("sdk_browser_command", |sdk| {
                     sdk.browser_command(request).map(|output| output.value)
@@ -338,6 +344,59 @@ impl HostRuntime {
                 .insert(accepted_code, operation_id.clone());
         }
         Ok(json!({ "acceptedCode": accepted_code, "state": "accepted" }))
+    }
+
+    fn track_mcp_lifecycle(
+        &mut self,
+        request: &HostRequest,
+        env_id: &str,
+        opening: bool,
+    ) -> HostResult<Value> {
+        if !self.initialized {
+            return Err(host_error(
+                "HOST_NOT_INITIALIZED",
+                "SDK must be initialized before this call",
+            ));
+        }
+        if env_id.is_empty() {
+            return Err(host_error("HOST_INVALID_REQUEST", "envId is required"));
+        }
+        let operation_id = request.operation_id.as_ref().ok_or_else(|| {
+            host_error(
+                "HOST_INVALID_REQUEST",
+                "operationId is required for MCP lifecycle tracking",
+            )
+        })?;
+        let direction = if opening {
+            LifecycleDirection::Open
+        } else {
+            LifecycleDirection::Close
+        };
+        self.pending_lifecycle
+            .insert((direction, env_id.into()), operation_id.clone());
+        Ok(json!({ "tracked": true }))
+    }
+
+    fn clear_mcp_lifecycle(
+        &mut self,
+        request: &HostRequest,
+        env_id: &str,
+        opening: bool,
+    ) -> HostResult<Value> {
+        let direction = if opening {
+            LifecycleDirection::Open
+        } else {
+            LifecycleDirection::Close
+        };
+        let key = (direction, env_id.to_string());
+        let should_remove = request
+            .operation_id
+            .as_ref()
+            .is_none_or(|operation_id| self.pending_lifecycle.get(&key) == Some(operation_id));
+        if should_remove {
+            self.pending_lifecycle.remove(&key);
+        }
+        Ok(json!({ "tracked": false }))
     }
 
     fn normalize_event(&mut self, raw: RawSdkEvent) -> HostEvent {
@@ -609,6 +668,42 @@ mod tests {
                 "operation-1".into(),
             )]),
         };
+        let event = runtime.normalize_event(RawSdkEvent {
+            kind: RawEventKind::Result,
+            code: 0,
+            bytes: br#"{"type":"browser-open-success","reqId":42,"envId":"env-1"}"#.to_vec(),
+            received_at: Utc::now(),
+        });
+
+        assert_eq!(event.operation_id.as_deref(), Some("operation-1"));
+        assert_eq!(
+            runtime.request_operations.get(&42).map(String::as_str),
+            Some("operation-1")
+        );
+        assert!(runtime.pending_lifecycle.is_empty());
+    }
+
+    #[test]
+    fn mcp_lifecycle_tracking_binds_callbacks_before_the_http_tool_call() {
+        let mut runtime = HostRuntime {
+            sdk: None,
+            load_error: None,
+            initialized: true,
+            sequence: 0,
+            request_operations: HashMap::new(),
+            pending_lifecycle: HashMap::new(),
+        };
+        let request = HostRequest {
+            id: "request-1".into(),
+            operation_id: Some("operation-1".into()),
+            command: HostCommand::TrackMcpLifecycle {
+                env_id: "env-1".into(),
+                opening: true,
+            },
+        };
+        runtime
+            .track_mcp_lifecycle(&request, "env-1", true)
+            .expect("track lifecycle");
         let event = runtime.normalize_event(RawSdkEvent {
             kind: RawEventKind::Result,
             code: 0,

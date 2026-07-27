@@ -63,6 +63,7 @@ const GLOBAL_MCP_READ_TOOLS: &[&str] = &[
     "task.get",
     "mcp.endpoint",
 ];
+const GLOBAL_MCP_LIFECYCLE_TOOLS: &[&str] = &["browser.open", "browser.close"];
 const GLOBAL_ENVIRONMENT_MANAGEMENT_TOOLS: &[&str] = &[
     "env.list",
     "env.resolve",
@@ -90,6 +91,11 @@ struct AiBoundTool {
 #[derive(Debug, Clone)]
 enum AiBoundToolTarget {
     ManagerAction(&'static str),
+    McpLifecycle {
+        action: &'static str,
+        env_id: Option<String>,
+        tool: String,
+    },
     Mcp {
         scope: McpToolScope,
         env_id: Option<String>,
@@ -801,6 +807,72 @@ impl Manager {
         Ok(tools)
     }
 
+    async fn refresh_ai_runtime_state(&self) -> Result<usize, ManagerError> {
+        let host = self.runtime_handle().await?;
+        self.ensure_sdk_initialized(&host).await?;
+        let port = self
+            .inner
+            .active_mcp_port
+            .read()
+            .await
+            .ok_or(ManagerError::McpNotConfigured)?;
+        let result = mcp_client::call_global_tool(port, "browser.status", json!({})).await?;
+        let payload = mirror::mcp_tool_payload(&result.result).ok_or_else(|| {
+            ManagerError::InvalidHostResponse(
+                "DLL global MCP browser.status did not return JSON content".into(),
+            )
+        })?;
+        if payload.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
+            return Err(ManagerError::InvalidHostResponse(
+                "DLL global MCP browser.status did not confirm success".into(),
+            ));
+        }
+        let environments = payload
+            .get("environments")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| {
+                ManagerError::InvalidHostResponse(
+                    "DLL global MCP browser.status omitted environments".into(),
+                )
+            })?;
+        if payload
+            .get("count")
+            .and_then(serde_json::Value::as_u64)
+            .is_none_or(|count| count != environments.len() as u64)
+        {
+            return Err(ManagerError::InvalidHostResponse(
+                "DLL global MCP browser.status returned an inconsistent count".into(),
+            ));
+        }
+        let running = mirror::running_environments(&payload);
+        let observed = mirror::observed_environment_ids(&payload);
+        self.inner
+            .store
+            .reconcile_running_environments(&running, &observed)?;
+        Ok(observed.len())
+    }
+
+    async fn ai_agent_tools(
+        &self,
+        context_env_id: Option<&str>,
+    ) -> Result<Vec<AiBoundTool>, ManagerError> {
+        let mut tools = manager_agent_tools();
+        tools.extend(self.ai_mcp_tools(context_env_id, true).await?);
+        let port = self
+            .inner
+            .active_mcp_port
+            .read()
+            .await
+            .ok_or(ManagerError::McpNotConfigured)?;
+        tools.extend(ai_lifecycle_bindings_from_discovery(
+            mcp_client::discover_global_tools(port).await?,
+            context_env_id,
+        ));
+        let mut names = HashSet::new();
+        tools.retain(|tool| names.insert(tool.definition.name.clone()));
+        Ok(tools)
+    }
+
     pub async fn ai_chat(&self, request: AiChatRequest) -> Result<AiChatResponse, ManagerError> {
         let prompt = require_prompt(&request.prompt)?;
         validate_ai_history(&request.history)?;
@@ -811,7 +883,7 @@ impl Manager {
                 read_only: true,
             });
         }
-        self.refresh_runtime_state(None).await?;
+        self.refresh_ai_runtime_state().await?;
         let context = self.ai_context(request.context_env_id.as_deref()).await?;
         let tools = self
             .ai_mcp_tools(request.context_env_id.as_deref(), false)
@@ -893,16 +965,14 @@ impl Manager {
     ) -> Result<AiAgentPlan, ManagerError> {
         let prompt = require_prompt(&request.prompt)?;
         validate_ai_history(&request.history)?;
-        self.refresh_runtime_state(None).await?;
+        self.refresh_ai_runtime_state().await?;
         let environments = self.inner.store.list_environments()?;
         let target_env_id =
             resolve_agent_target(prompt, request.context_env_id.as_deref(), &environments)?;
         let context = self.ai_context(target_env_id.as_deref()).await?;
-        let mut tools = manager_agent_tools();
-        tools.extend(
-            self.ai_mcp_tools(request.context_env_id.as_deref(), true)
-                .await?,
-        );
+        let tools = self
+            .ai_agent_tools(request.context_env_id.as_deref())
+            .await?;
         let definitions = tools
             .iter()
             .map(|tool| tool.definition.clone())
@@ -942,7 +1012,7 @@ impl Manager {
             return replay_agent_execution(previous, &plan_hash);
         }
 
-        self.refresh_runtime_state(None).await?;
+        self.refresh_ai_runtime_state().await?;
         self.validate_expected_state(&request.plan)?;
         let reservation = AiAgentExecution {
             action: request.plan.action.clone(),
@@ -984,22 +1054,29 @@ impl Manager {
                 replayed: false,
             },
             "environment.start" => {
-                let operation = self.start_environment(required_env_id(&request.plan)?).await?;
+                let result = self
+                    .execute_environment_mcp_operation(required_env_id(&request.plan)?, true)
+                    .await?;
                 AiAgentExecution {
                     action: request.plan.action.clone(),
-                    operation: Some(operation),
-                    response: None,
-                    status_semantics: "The operation may be accepted or starting; ready requires browser-open-success or a ready browser_info reconciliation.".into(),
+                    operation: Some(result.operation),
+                    response: Some(result.response),
+                    status_semantics: "DLL global MCP browser.open accepted the operation; ready still requires callback or browser.status reconciliation.".into(),
                     replayed: false,
                 }
             }
-            "environment.stop" => AiAgentExecution {
-                action: request.plan.action.clone(),
-                operation: Some(self.stop_environment(required_env_id(&request.plan)?).await?),
-                response: None,
-                status_semantics: "The operation may be accepted or stopping; stopped requires browser-close-success or reconciliation.".into(),
-                replayed: false,
-            },
+            "environment.stop" => {
+                let result = self
+                    .execute_environment_mcp_operation(required_env_id(&request.plan)?, false)
+                    .await?;
+                AiAgentExecution {
+                    action: request.plan.action.clone(),
+                    operation: Some(result.operation),
+                    response: Some(result.response),
+                    status_semantics: "DLL global MCP browser.close accepted the operation; stopped still requires callback or browser.status reconciliation.".into(),
+                    replayed: false,
+                }
+            }
             "environment.sync" => AiAgentExecution {
                 action: request.plan.action.clone(),
                 operation: Some(self.sync_environments().await?),
@@ -1173,7 +1250,7 @@ impl Manager {
         }
         let prompt = require_prompt(&request.prompt)?;
         validate_ai_history(&request.history)?;
-        self.refresh_runtime_state(None).await?;
+        self.refresh_ai_runtime_state().await?;
         let environments = self.inner.store.list_environments()?;
         let target_env_id =
             resolve_agent_target(prompt, request.context_env_id.as_deref(), &environments)?;
@@ -1187,11 +1264,7 @@ impl Manager {
 
         loop {
             let environments = self.inner.store.list_environments()?;
-            let mut tools = manager_agent_tools();
-            tools.extend(
-                self.ai_mcp_tools(mcp_context_env_id.as_deref(), true)
-                    .await?,
-            );
+            let tools = self.ai_agent_tools(mcp_context_env_id.as_deref()).await?;
             let definitions = tools
                 .iter()
                 .map(|tool| tool.definition.clone())
@@ -1266,7 +1339,13 @@ impl Manager {
         let env_id = required_env_id(plan)?;
         let deadline = tokio::time::Instant::now()
             + std::time::Duration::from_secs(AGENT_ENVIRONMENT_WAIT_SECONDS);
+        let mut next_reconciliation = tokio::time::Instant::now();
         loop {
+            if tokio::time::Instant::now() >= next_reconciliation {
+                let _ = self.refresh_ai_runtime_state().await;
+                next_reconciliation =
+                    tokio::time::Instant::now() + std::time::Duration::from_secs(1);
+            }
             let environment = self
                 .inner
                 .store
@@ -1284,6 +1363,7 @@ impl Manager {
                     execution.operation = Some(operation);
                 }
                 execution.response = Some(json!({
+                    "mcp": execution.response,
                     "environment": {
                         "envId": environment.env_id,
                         "status": environment.status,
@@ -3151,6 +3231,157 @@ impl Manager {
         }
     }
 
+    async fn execute_environment_mcp_operation(
+        &self,
+        env_id: &str,
+        start: bool,
+    ) -> Result<OperationExecution, ManagerError> {
+        let host = self.runtime_handle().await?;
+        self.ensure_sdk_initialized(&host).await?;
+        let port = self
+            .inner
+            .active_mcp_port
+            .read()
+            .await
+            .ok_or(ManagerError::McpNotConfigured)?;
+        let environment = self
+            .inner
+            .store
+            .environment(env_id)?
+            .ok_or(ManagerError::EnvironmentNotFound)?;
+        let action = if start {
+            EnvironmentBatchAction::Start
+        } else {
+            EnvironmentBatchAction::Stop
+        };
+        if !environment_action_state_allowed(action, &environment.status) {
+            return Err(ManagerError::InvalidEnvironmentTransition {
+                action: format!("{action:?}").to_ascii_lowercase(),
+                state: environment.status,
+            });
+        }
+
+        let operation = self.prepare_environment_operation(env_id, start)?;
+        let _execution = self.inner.operations.acquire().await;
+        self.inner
+            .operations
+            .start(&operation.id, "calling DLL global MCP")?;
+        let preparing_status = if start { "preparing" } else { "stopping" };
+        self.inner.store.set_environment_runtime(RuntimeUpdate {
+            env_id,
+            generation: operation.generation,
+            status: preparing_status,
+            request_id: None,
+            operation_id: Some(&operation.id),
+            cdp: "-",
+            last_event: "calling DLL global MCP",
+        })?;
+        let tool = if start {
+            "browser.open"
+        } else {
+            "browser.close"
+        };
+        let result = async {
+            host.call(
+                HostCommand::TrackMcpLifecycle {
+                    env_id: env_id.into(),
+                    opening: start,
+                },
+                Some(operation.id.clone()),
+            )
+            .await?;
+            let result =
+                mcp_client::call_global_tool(port, tool, json!({ "envId": env_id })).await?;
+            let payload = mirror::mcp_tool_payload(&result.result).ok_or_else(|| {
+                ManagerError::InvalidHostResponse(format!(
+                    "DLL global MCP {tool} did not return JSON content"
+                ))
+            })?;
+            if payload.get("accepted").and_then(serde_json::Value::as_bool) != Some(true) {
+                return Err(ManagerError::InvalidHostResponse(format!(
+                    "DLL global MCP {tool} did not accept the request"
+                )));
+            }
+            let task_id = payload
+                .get("taskId")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| {
+                    ManagerError::InvalidHostResponse(format!(
+                        "DLL global MCP {tool} omitted taskId"
+                    ))
+                })?;
+            let request_id = payload
+                .get("sdkReqId")
+                .and_then(serde_json::Value::as_i64)
+                .filter(|value| *value > 0)
+                .and_then(|value| i32::try_from(value).ok());
+            let operation = self.accept_environment_operation(&operation.id, request_id)?;
+            Ok::<OperationExecution, ManagerError>(OperationExecution {
+                operation,
+                response: json!({
+                    "transport": "dll-global-mcp",
+                    "tool": tool,
+                    "accepted": true,
+                    "taskId": task_id,
+                    "sdkReqId": request_id,
+                }),
+            })
+        }
+        .await;
+
+        match result {
+            Ok(result) => Ok(result),
+            Err(error) => {
+                let _ = host
+                    .call(
+                        HostCommand::ClearMcpLifecycle {
+                            env_id: env_id.into(),
+                            opening: start,
+                        },
+                        Some(operation.id.clone()),
+                    )
+                    .await;
+                if let Some(current) = self.inner.store.operation(&operation.id)?
+                    && current.status == "succeeded"
+                {
+                    return Ok(OperationExecution {
+                        operation: current,
+                        response: json!({
+                            "transport": "dll-global-mcp",
+                            "tool": tool,
+                            "accepted": true,
+                            "callbackConfirmed": true,
+                        }),
+                    });
+                }
+                let failed = self.inner.operations.fail(
+                    &operation.id,
+                    manager_error_code(&error),
+                    &error.to_string(),
+                )?;
+                let message = error.to_string();
+                self.inner.store.set_environment_runtime(RuntimeUpdate {
+                    env_id,
+                    generation: operation.generation,
+                    status: "failed",
+                    request_id: None,
+                    operation_id: None,
+                    cdp: "-",
+                    last_event: &message,
+                })?;
+                Ok(OperationExecution {
+                    operation: failed,
+                    response: json!({
+                        "transport": "dll-global-mcp",
+                        "tool": tool,
+                        "accepted": false,
+                    }),
+                })
+            }
+        }
+    }
+
     async fn execute_environment_operation(
         &self,
         env_id: &str,
@@ -3999,6 +4230,54 @@ fn ai_bindings_from_discovery(
         .collect()
 }
 
+fn ai_lifecycle_bindings_from_discovery(
+    discovery: mcp_client::McpToolDiscovery,
+    bound_env_id: Option<&str>,
+) -> Vec<AiBoundTool> {
+    discovery
+        .advertised_tools
+        .into_iter()
+        .filter(|tool| GLOBAL_MCP_LIFECYCLE_TOOLS.contains(&tool.name.as_str()))
+        .map(|tool| {
+            let action = if tool.name == "browser.open" {
+                "environment.start"
+            } else {
+                "environment.stop"
+            };
+            let parameters = if bound_env_id.is_some() {
+                json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false,
+                })
+            } else {
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "envId": { "type": "string", "description": "Target environment ID" }
+                    },
+                    "required": ["envId"],
+                    "additionalProperties": false,
+                })
+            };
+            AiBoundTool {
+                definition: ai_agent::AiToolDefinition {
+                    name: ai_mcp_function_name(McpToolScope::Global, &tool.name),
+                    description: tool.description.unwrap_or_else(|| {
+                        format!("Execute {} through the DLL global MCP", tool.name)
+                    }),
+                    parameters,
+                },
+                target: AiBoundToolTarget::McpLifecycle {
+                    action,
+                    env_id: bound_env_id.map(str::to_string),
+                    tool: tool.name,
+                },
+            }
+        })
+        .collect()
+}
+
 fn ai_environment_tool_is_read_only(tool: &str) -> bool {
     tool.strip_prefix("env.")
         .is_some_and(|base| ENVIRONMENT_MCP_READ_TOOLS.contains(&base))
@@ -4057,28 +4336,6 @@ fn ai_tool_parameters(
 
 fn manager_agent_tools() -> Vec<AiBoundTool> {
     [
-        (
-            "manager_environment_start",
-            "Start one browser environment. An envId is required.",
-            "environment.start",
-            json!({
-                "type": "object",
-                "properties": { "envId": { "type": "string" } },
-                "required": ["envId"],
-                "additionalProperties": false
-            }),
-        ),
-        (
-            "manager_environment_stop",
-            "Stop one browser environment. An envId is required.",
-            "environment.stop",
-            json!({
-                "type": "object",
-                "properties": { "envId": { "type": "string" } },
-                "required": ["envId"],
-                "additionalProperties": false
-            }),
-        ),
         (
             "manager_environment_sync",
             "Synchronize the environment list from the SDK server.",
@@ -4172,6 +4429,23 @@ fn agent_plan_from_turn(
                 object.remove("envId");
             }
             ((*action).to_string(), env_id, arguments)
+        }
+        AiBoundToolTarget::McpLifecycle {
+            action,
+            env_id,
+            tool,
+        } => {
+            let requested_env_id = env_id.clone().or_else(|| {
+                call.arguments
+                    .get("envId")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_string)
+            });
+            (
+                (*action).to_string(),
+                requested_env_id,
+                json!({ "tool": tool }),
+            )
         }
         AiBoundToolTarget::Mcp { env_id, tool, .. } => (
             "mcp.call".into(),
@@ -6045,17 +6319,33 @@ mod tests {
             .await
             .expect_err("inactive port must fail");
         assert!(matches!(error, ManagerError::McpNotConfigured));
+        assert!(matches!(
+            manager.ai_agent_tools(Some("env-1")).await,
+            Err(ManagerError::McpNotConfigured)
+        ));
     }
 
     #[test]
-    fn native_agent_tool_call_becomes_a_manager_plan() {
-        let tools = manager_agent_tools();
+    fn global_mcp_lifecycle_tool_call_becomes_an_environment_plan() {
+        let tools = ai_lifecycle_bindings_from_discovery(
+            mcp_client::McpToolDiscovery {
+                protocol_version: "2025-11-25".into(),
+                advertised_tools: vec![mcp_client::McpToolDefinition {
+                    name: "browser.open".into(),
+                    description: Some("Open an environment".into()),
+                    input_schema: json!({ "type": "object" }),
+                    read_only_hint: Some(false),
+                    destructive_hint: Some(false),
+                }],
+            },
+            None,
+        );
         let plan = agent_plan_from_turn(
             ai_agent::AiModelTurn {
                 content: Some("启动指定环境".into()),
                 tool_calls: vec![ai_agent::AiToolCall {
                     id: "call-1".into(),
-                    name: "manager_environment_start".into(),
+                    name: "mcp_global_browser_open".into(),
                     arguments: json!({ "envId": "2044366881367789568" }),
                 }],
             },
@@ -6064,7 +6354,48 @@ mod tests {
         .expect("plan");
         assert_eq!(plan.action, "environment.start");
         assert_eq!(plan.env_id.as_deref(), Some("2044366881367789568"));
-        assert_eq!(plan.arguments, json!({}));
+        assert_eq!(plan.arguments, json!({ "tool": "browser.open" }));
+        assert!(manager_agent_tools().iter().all(|tool| !matches!(
+            tool.target,
+            AiBoundToolTarget::ManagerAction("environment.start" | "environment.stop")
+        )));
+    }
+
+    #[test]
+    fn single_environment_mcp_lifecycle_schema_hides_and_fixes_env_id() {
+        let tools = ai_lifecycle_bindings_from_discovery(
+            mcp_client::McpToolDiscovery {
+                protocol_version: "2025-11-25".into(),
+                advertised_tools: vec![mcp_client::McpToolDefinition {
+                    name: "browser.close".into(),
+                    description: None,
+                    input_schema: json!({
+                        "type": "object",
+                        "properties": { "envId": { "type": "string" } },
+                    }),
+                    read_only_hint: Some(false),
+                    destructive_hint: Some(true),
+                }],
+            },
+            Some("env-bound"),
+        );
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].definition.name, "mcp_global_browser_close");
+        assert_eq!(tools[0].definition.parameters["properties"], json!({}));
+        let plan = agent_plan_from_turn(
+            ai_agent::AiModelTurn {
+                content: None,
+                tool_calls: vec![ai_agent::AiToolCall {
+                    id: "call-close".into(),
+                    name: "mcp_global_browser_close".into(),
+                    arguments: json!({ "envId": "spoofed" }),
+                }],
+            },
+            &tools,
+        )
+        .expect("bound plan");
+        assert_eq!(plan.action, "environment.stop");
+        assert_eq!(plan.env_id.as_deref(), Some("env-bound"));
     }
 
     #[test]

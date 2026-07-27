@@ -140,7 +140,7 @@ DLL 的 `/sdk/v1/env/create` 与第三方服务端 `/api/v2/browser/create` 复�
 
 `brosdk.dll` 本身已经包含内嵌 MCP / HTTP 能力。新客户端把它作为 `sdk-host` 的 platform capability 暴露：Manager 使用固定或自动选择的环回端口，由 `sdk_init` 的 `port` 字段启用 DLL 内嵌端点；Dashboard 不直接依赖该端点，仍通过 Manager 统一处理 envId 路由、operation 状态、安全策略和未来审批。
 
-Manager MCP adapter 只连接 DLL Streamable HTTP 全局端点 `/sdk/v1/mcp`。全局 session 的浏览器工具使用 `env.*` 名称，每次调用由 Manager 在 arguments 中强制写入已选择的 `envId`；`?envId=` 和 `/sdk/v1/mcp/env/{envId}` 只属于 DLL 向旧客户端保留的兼容面，本项目不再使用。adapter 严格执行 `initialize -> notifications/initialized -> tools/list -> tools/call -> DELETE`；仅发现工具时省略 `tools/call`。全局写工具仍由 Manager 对应 operation 代替；单环境目录从同一次全局 `tools/list` 中选取 `env.*` 浏览器工具，并显式排除 `env.create/update/destroy` 等环境管理工具。每次发现与调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。固定端口设置只代表下次 init 的配置；留空时 Manager 自动选择可用环回端口。只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。
+Manager MCP adapter 只连接 DLL Streamable HTTP 全局端点 `/sdk/v1/mcp`。全局 session 的浏览器工具使用 `env.*` 名称，每次调用由 Manager 在 arguments 中强制写入已选择的 `envId`；`?envId=` 和 `/sdk/v1/mcp/env/{envId}` 只属于 DLL 向旧客户端保留的兼容面，本项目不再使用。adapter 严格执行 `initialize -> notifications/initialized -> tools/list -> tools/call -> DELETE`；仅发现工具时省略 `tools/call`。Dashboard MCP 控制台不直通全局写工具；AI Agent 可动态绑定全局 `browser.open/browser.close`，但 Manager 会先建立 lifecycle operation、预注册 Host callback 映射并校验状态与幂等键。环境 CRUD 仍使用 Manager API。单环境目录从同一次全局 `tools/list` 中选取 `env.*` 浏览器工具，并显式排除 `env.create/update/destroy` 等环境管理工具。每次发现与调用都有 operation，页面 URL 降为 origin，响应经过 SDK 通用脱敏后才返回 Dashboard/Agent。固定端口设置只代表下次 init 的配置；留空时 Manager 自动选择可用环回端口。只有本次 `sdk_init` 成功后 Manager 才把 adapter 标记为 active，host 停止或 degraded 会立即清空 active port。
 
 ## 8. 运行状态语义
 
@@ -157,6 +157,7 @@ stopped -> preparing -> starting -> ready -> stopping -> stopped
 - `sdk_browser_open` 返回 reqId 只表示 accepted。
 - `browser-open-success` 表示 SDK 认为 CDP ready，是进入产品 ready 的必要条件。
 - `sdk_browser_info` 用于重连、手动关闭浏览器后的对账。
+- AI 每次读取状态、规划或执行前调用全局 MCP `browser.status`；`environments` 列表中不存在的 envId 按 stopped 对账，协议错误时不回退本地缓存。
 - callback、`sdk_env_getinfo` 和 `sdk_browser_info` 都可补充外部 CDP endpoint；endpoint 缺失或端口为 0 时保持 ready，但标记为 DLL 内部控制通道。
 - 手动关闭浏览器必须触发状态从 `ready` 变为 `stopped` 或 `failed`，不能长期停留在运行中。
 - 启动期间看到窗口闪退时，不靠固定短超时判断；以 SDK 回调、进程退出事实和 `sdk_browser_info` 对账。
@@ -248,11 +249,11 @@ Windows x64 是首个完成平台。macOS/Linux 不在没有动态库和平台�
 AI Agent 边界：
 
 - Chat 除了读取 Manager 生成的脱敏快照，还会把 DLL 当次 `tools/list` 中允许的全局读取工具，以及所选 ready 环境的显式读取白名单，作为 OpenAI-compatible function tools 绑定给模型。Chat 不绑定 `env.navigate`、`env.act`、脚本、上传、下载等 mutation，也没有本地文件工具。
-- Agent 把 Manager 生命周期/诊断动作和所选 ready 环境当次广告的 MCP 工具作为 function tools 绑定给模型。模型必须选择一个函数；Manager 将函数调用转换为现有 `AiAgentPlan`，再补写真实 `envId`、`expectedState` 和 UUID `idempotencyKey`，不会直接信任模型参数。
+- Agent 把 DLL 全局 `browser.open/browser.close`、Manager 诊断动作和所选 ready 环境当次广告的 MCP 工具作为 function tools 绑定给模型。模型必须选择一个函数；Manager 将函数调用转换为现有 `AiAgentPlan`，再补写真实 `envId`、`expectedState` 和 UUID `idempotencyKey`，不会直接信任模型参数。
 - MCP `inputSchema` 从 DLL `tools/list` 原样进入模型工具定义；环境 schema 中的 `envId/env_id` 会移除，调用时始终由 Manager 强制注入。Chat 每轮最多执行 4 个只读工具并只允许一轮工具回填，结果限制为 64 KiB 且继续脱敏。
 - AI 会话历史保存在 WebView 本地存储，与服务端环境缓存分离；请求只发送有界 user/assistant 历史。Dashboard 不主动注入 API Key、userSig 和 SDK 原始响应，但用户手动输入的文本会保存在未加密会话中。
 - Chat/Agent 的关联环境只包含用户选中或文本明确指定的精确 `envId`。外部 CDP endpoint 只发送 origin；pipe-only 环境只发送 `sdk-browser-command` 控制通道类型。完整 CDP 地址仅在本地 Dashboard 显示。
 - Agent 模型通过原生函数调用提出结构化动作；Manager 同时解析文本中的已知 envId，并根据最新镜像写入 `expectedState` 和 UUID `idempotencyKey`，再校验 action 白名单。会话默认逐次批准，用户可显式选择自动执行；两种方式都通过同一个 Manager reservation 与二次状态校验。
-- Agent 写操作统一复用现有 operation 队列，返回 operation id 和 accepted/ready 的状态语义。
+- Agent 生命周期通过全局 MCP 执行，同时复用现有 operation 队列；Manager 在 HTTP 工具调用前把 envId/open-close 与 operation 绑定给 Host，最终以 callback 或后续 `browser.status` 对账完成，返回 operation id 和 accepted/ready 的状态语义。
 - `mcp.call` 使用计划 envId 选择全局读取或 `env.*` 浏览器工具；单环境必须 ready，Manager 注入 envId，并在执行时再次用 DLL `tools/list` 验证工具存在。旧 `mcp.read` 继续提供严格的 7 工具读取兼容策略。
 - DLL 内嵌 MCP 仍是 `sdk-host` capability，由 Manager 配置生命周期和路由，不把 DLL 端口暴露为 Dashboard 的直接写入口。

@@ -70,7 +70,7 @@ Manager 当前策略：
 - 单环境请求必须选择一个已同步且 `ready` 的 envId。client 始终连接 `/sdk/v1/mcp`，把工具规范为 `env.*` 并覆盖写入 arguments.envId；原有 global/env Rust 函数入口继续兼容调用方，但不再使用查询参数路由。
 - 单环境允许 DLL 当次广告的全部工具；Manager 在调用前要求参数为 JSON object，并限制总大小 64 KiB、嵌套 16 层、单字符串 16 KiB。DLL schema 仍是字段级事实来源。
 - Dashboard 为常用读取工具提供结构化表单，其余工具提供高级 JSON 参数入口。Agent 使用 `mcp.call` 调用任意单环境广告工具；`mcp.read` 保留旧的 7 工具严格参数策略作兼容。
-- 环境 CRUD 和浏览器启停不从全局 MCP 直通，继续使用有状态校验和 operation 追踪的 Manager API。单环境导航、点击、输入、脚本、上传下载等只在用户进入 MCP 控制台或 Agent 执行模式后调用。
+- Dashboard MCP 控制台不直通环境 mutation。环境 CRUD 继续使用 Manager API；AI Agent 的浏览器启停改为全局 `browser.open/browser.close`，外层仍使用 Manager 的状态校验、审批、幂等和 operation 追踪。单环境导航、点击、输入、脚本、上传下载等只在用户进入 MCP 控制台或 Agent 执行模式后调用。
 - `tools/list.inputSchema` 会保留到 Manager 和 AI tool 定义。环境工具对模型隐藏 `envId/env_id` 字段，实际调用仍由 Manager 绑定当前关联环境，模型不能通过参数跨环境。
 
 所有 MCP 调用仍执行动态 `tools/list` 校验、operation 追踪和响应脱敏。`browser_state` 依赖扩展桥时可能返回 `BRIDGE_NOT_READY`；真实 E2E 因此使用可由 CDP 后端完成的 `tabs(list)` 验证环境路由，并不把工具“已广告”误报成其所有后端能力都已就绪。
@@ -83,7 +83,7 @@ Manager 当前策略：
 - 会话保存在 WebView 本地存储，最多 20 个会话、每个 80 条消息；请求只携带最近 40 条，Manager 再限制单条 16 KiB、总计 128 KiB。
 - 支持新建、切换、清空和删除；Dashboard 不主动注入 API Key、userSig、完整 CDP URL 或 SDK 原始响应。用户手动输入的文本会原样进入本地会话，因此不应在对话框粘贴凭据。
 - 用户文本中只出现一个已同步 envId 时，该 envId 优先于旧关联环境。Manager 在计划返回 UI 前写入真实 `expectedState` 和 UUID 幂等键。
-- Chat/Agent 都使用 Provider 的 OpenAI-compatible `tools/tool_calls` 协议，不再要求模型在普通文本中输出计划 JSON。Chat 绑定全局读取和所选 ready 环境的 `env.browser_state/tabs/snapshot/diff/read/grep/screenshot`；Agent 额外绑定 Manager 生命周期/诊断动作及所选环境当次广告的全部页面工具。
+- Chat/Agent 都使用 Provider 的 OpenAI-compatible `tools/tool_calls` 协议，不再要求模型在普通文本中输出计划 JSON。Chat 绑定全局读取和所选 ready 环境的 `env.browser_state/tabs/snapshot/diff/read/grep/screenshot`；Agent 额外绑定 DLL 全局 `browser.open/browser.close`、Manager 诊断动作及所选环境当次广告的全部页面工具。AI 请求前先调用 `browser.status` 对账，不允许回退 SQLite 状态做结论。
 - Chat 最多执行一轮、每轮最多 4 个只读工具，并把 64 KiB 内的脱敏结果以 `role=tool` 回填模型。Agent 每次计划只接受一个函数调用；未知工具、非 object 参数、多工具计划和第二轮工具请求全部 fail closed。
 - 每个会话保存独立执行方式，默认“每次批准”；用户可显式切换“自动执行”，计划生成后立即调用 Manager。两种方式执行前都再次比较当前状态；如果状态在计划后发生变化，会显示具体错误且不会调用 DLL。
 - 执行一旦尝试，无论成功或失败都不会再次显示同一计划的批准按钮，避免复用状态不确定的幂等键。

@@ -207,6 +207,14 @@ pub enum HostCommand {
     BrowserClose {
         request: Value,
     },
+    TrackMcpLifecycle {
+        env_id: String,
+        opening: bool,
+    },
+    ClearMcpLifecycle {
+        env_id: String,
+        opening: bool,
+    },
     BrowserCommand {
         request: Value,
     },

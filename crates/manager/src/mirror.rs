@@ -83,6 +83,21 @@ pub fn observed_environment_ids(value: &Value) -> HashSet<String> {
         .collect()
 }
 
+pub fn mcp_tool_payload(value: &Value) -> Option<Value> {
+    if let Some(payload) = value.get("structuredContent")
+        && payload.is_object()
+    {
+        return Some(payload.clone());
+    }
+    value
+        .get("content")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .find_map(|text| serde_json::from_str::<Value>(text).ok())
+}
+
 fn environment_items(value: &Value) -> Vec<&Value> {
     if let Value::Array(items) = value {
         return items.iter().collect();
@@ -94,6 +109,7 @@ fn environment_items(value: &Value) -> Vec<&Value> {
         "/data/records",
         "/data/rows",
         "/data/data/list",
+        "/environments",
         "/envList",
         "/list",
         "/items",
@@ -214,6 +230,23 @@ mod tests {
         assert_eq!(rows[0].0, "env-1");
         assert_eq!(rows[0].1, "Primary");
         assert_eq!(rows[1].0, "2");
+    }
+
+    #[test]
+    fn extracts_global_mcp_status_payload_and_running_ids() {
+        let result = json!({
+            "content": [{
+                "type": "text",
+                "text": "{\"ok\":true,\"environments\":[{\"envId\":\"env-1\",\"status\":\"unknown\"}],\"count\":1}"
+            }]
+        });
+        let payload = mcp_tool_payload(&result).expect("MCP JSON payload");
+        assert_eq!(payload["count"], 1);
+        assert_eq!(
+            observed_environment_ids(&payload),
+            HashSet::from(["env-1".into()])
+        );
+        assert!(running_environments(&payload).is_empty());
     }
 
     #[test]

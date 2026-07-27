@@ -35,6 +35,7 @@
 | 28. AI 会话作用域与自动 Agent 闭环 | P0 | 已完成 | 创建时固定全局/单环境目录，原生多轮工具完成重启，AI 输入区重排 |
 | 29. AI 会话最新消息跟随 | P1 | 已完成 | 新消息、Agent 状态和会话切换后自动滚动到最新内容 |
 | 30. MCP 自动激活与 AI 运行态强对账 | P0 | 已完成 | 自动环回端口启用全局 MCP，AI 决策前强制刷新 BrowserInfo |
+| 31. AI 生命周期统一到 DLL 全局 MCP | P0 | 已完成 | `browser.status/open/close`、operation/callback 关联和 stopped 状态真实 AI 回归 |
 
 ## 2. 阶段 0：项目骨架
 
@@ -894,3 +895,16 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 设置页明确显示“留空则自动选择”，MCP panel 只在成功初始化后显示 active；Host 停止或 degraded 仍立即清空 active port。
 - 真实 SDK/DeepSeek E2E 不设置 `BROSDK_EMBEDDED_PORT`，验证自动 MCP 激活、Agent 启动 stopped 环境、重启 stop/start/ready 和初始状态恢复。
 - Dashboard 53 项、Rust workspace 115 项、Playwright 20 项、check/Clippy、production build 和 Windows 托盘/单实例 E2E 全部通过。
+
+## 34. 阶段 31：AI 生命周期统一到 DLL 全局 MCP
+
+目标：让 AI 的状态读取和环境启停使用 DLL 已提供的全局 MCP，消除 Manager/C API 旁路和本地历史状态误判。
+
+实现结果（2026-07-27）：
+
+- AI Chat、Agent 规划、自动运行和批准执行前统一调用全局 `browser.status`；响应必须包含合法 `environments/count`，目标 envId 不在运行列表时对账为 stopped，失败时不回退 SQLite。
+- 模型工具目录移除 `manager_environment_start/stop`，改为从 DLL `tools/list` 动态绑定 `browser.open/browser.close`。全局会话校验模型给出的精确 envId，单环境会话隐藏该参数并强制使用创建时绑定的环境。
+- Manager 继续负责批准、状态前置条件、幂等 reservation 和 lifecycle operation；Host 新增 MCP lifecycle 预绑定，使 DLL HTTP 工具产生的 callback 能映射到已有 operation。
+- Agent 等待 callback 的同时轮询 `browser.status`，可在 callback 缺失时确认 open/close 终态，并保持“重启”严格 stop 后 start。
+- 真实 DeepSeek 回归先把目标环境保持 stopped，再询问“环境是否已经启动”；模型使用实时工具结果回答未启动，且没有产生启停步骤。随后 Agent 启动与自动重启均报告 `transport=dll-global-mcp`，测试结束恢复初始状态。
+- Dashboard 53 项、Rust workspace 120 项、Playwright 桌面/移动 20 项、TypeScript/Rust check、Clippy、production build 和真实 AI E2E 全部通过。
