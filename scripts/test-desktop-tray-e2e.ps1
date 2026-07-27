@@ -39,6 +39,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 $dataDir = [IO.Path]::Combine($tempRoot, "brosdk-dashboard-tray-e2e-" + [guid]::NewGuid().ToString("N"))
 $desktopProcess = $null
+$secondProcess = $null
 $viteProcess = $null
 $ownsVite = $false
 $originalDataDir = $env:BROSDK_DATA_DIR
@@ -184,6 +185,19 @@ try {
         throw "Dashboard process exited after the main window was closed"
     }
 
+    $secondProcess = Start-Process -FilePath $DesktopExecutable -PassThru
+    Wait-ForValue {
+        $secondProcess.Refresh()
+        $secondProcess.HasExited
+    } "second Dashboard instance exit" 15 | Out-Null
+    if ($secondProcess.ExitCode -ne 0) {
+        throw "Second Dashboard instance exited with code $($secondProcess.ExitCode)"
+    }
+    Wait-ForValue { [BroSdkTrayNative]::IsWindowVisible($windowHandle) } "existing Dashboard restored by second launch" | Out-Null
+
+    [BroSdkTrayNative]::PostMessage($windowHandle, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero) | Out-Null
+    Wait-ForValue { -not [BroSdkTrayNative]::IsWindowVisible($windowHandle) } "Dashboard hidden before tray restore" | Out-Null
+
     $trayButton = Get-BroSdkTrayButton
     Invoke-Element $trayButton
     Wait-ForValue { [BroSdkTrayNative]::IsWindowVisible($windowHandle) } "Dashboard restored from tray" | Out-Null
@@ -230,6 +244,7 @@ try {
         status = "passed"
         closeHidWindow = $true
         processStayedRunning = $true
+        secondInstanceRedirected = $true
         trayRestoredWindow = $true
         trayMenuExitedProcess = $true
     } | ConvertTo-Json
@@ -241,6 +256,10 @@ finally {
     if ($desktopProcess -and -not $desktopProcess.HasExited) {
         Stop-Process -Id $desktopProcess.Id -Force -ErrorAction SilentlyContinue
         $desktopProcess.WaitForExit()
+    }
+    if ($secondProcess -and -not $secondProcess.HasExited) {
+        Stop-Process -Id $secondProcess.Id -Force -ErrorAction SilentlyContinue
+        $secondProcess.WaitForExit()
     }
     if ($ownsVite -and $viteProcess -and -not $viteProcess.HasExited) {
         Stop-Process -Id $viteProcess.Id -Force -ErrorAction SilentlyContinue

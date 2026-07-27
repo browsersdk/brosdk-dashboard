@@ -252,6 +252,7 @@ impl Manager {
     }
 
     fn with_store(store: ManagerStore) -> Result<Self, ManagerError> {
+        store.recover_interrupted_session()?;
         let operations = OperationQueue::new(store.clone());
         Ok(Self {
             inner: Arc::new(ManagerInner {
@@ -321,9 +322,9 @@ impl Manager {
     }
 
     pub async fn apply_startup_policy(&self) -> Result<(), ManagerError> {
-        if self.inner.store.settings()?.startup_policy == "reconcile" {
-            let _ = self.reconcile_runtimes().await?;
-        }
+        // Reconciliation only observes SDK state; it never restores or opens a browser.
+        // It is therefore required for every startup policy after an unclean client exit.
+        let _ = self.reconcile_runtimes().await?;
         Ok(())
     }
 
@@ -5106,7 +5107,10 @@ mod tests {
                 json!({ "envId": "env-focused" }),
             )])
             .expect("environment");
-        store
+        let manager = Manager::with_store(store).expect("manager");
+        manager
+            .inner
+            .store
             .set_environment_runtime(RuntimeUpdate {
                 env_id: "env-focused",
                 generation: 0,
@@ -5117,7 +5121,6 @@ mod tests {
                 last_event: "browser-open-success",
             })
             .expect("runtime");
-        let manager = Manager::with_store(store).expect("manager");
         let context = manager
             .ai_context(Some("env-focused"))
             .await

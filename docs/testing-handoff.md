@@ -431,3 +431,12 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - 终态仍只由 `browser-open-success`/失败事件决定，progress callback 不替代 ready 语义。
 
 2026-07-27 阶段 23 结果：真实唯一环境报告 `startProgressCallbackObserved=true`、`readySource=sdk_callback`，随后 CDP evaluate、18 个 MCP 工具、指纹检查和停止均通过。Dashboard 51 项、Playwright 桌面/移动 16 项、Rust workspace 99 项、check、Clippy、runtime smoke、production/release 构建通过；测试结束目标环境已恢复 stopped，无进程或本轮临时目录残留。
+
+## 27. 阶段 24 客户端重启状态与单实例验收
+
+- Store 测试必须构造遗留 `environment.start` running operation 和 starting 环境，重开后 operation 变为 `CLIENT_RESTARTED`，BrowserInfo 只返回 envId/端口 0 时环境恢复 ready。
+- 同一遗留环境不在 BrowserInfo 列表时必须恢复 stopped；两种情况都清除旧 operation 绑定和过期 CDP 地址。
+- `npm run e2e:tray` 在首个窗口隐藏后启动同一可执行文件，第二个进程必须正常退出并唤醒首个窗口；随后仍须完成托盘恢复和菜单退出，测试结束无 Dashboard/sdk-host 残留。
+- 应用单实例使用 Tauri identifier，不替代 DLL appId 锁；必须确认 single-instance 插件先于会初始化 Manager/runtime 的其它插件注册。
+
+2026-07-27 阶段 24 结果：遗留 starting/ready 的有/无 BrowserInfo 两条恢复路径均由 Store 测试通过，Rust workspace 共 101 项测试及目标 Clippy 通过。`npm run e2e:tray` 真实启动第二个相同进程，报告 `secondInstanceRedirected=true`，随后托盘恢复和菜单退出通过；测试后无 Dashboard、sdk-host 或临时目录残留。

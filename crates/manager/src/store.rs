@@ -1404,6 +1404,40 @@ impl ManagerStore {
         Ok(())
     }
 
+    pub fn recover_interrupted_session(&self) -> Result<(), StoreError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction()?;
+        let now = timestamp();
+        let message = "previous client session ended before operation completed";
+        let interrupted_operations = transaction.execute(
+            r#"UPDATE operations SET status = 'failed', message = ?1,
+                      error_code = 'CLIENT_RESTARTED', updated_at = ?2
+               WHERE status IN ('queued', 'running')"#,
+            params![message, now],
+        )?;
+        let uncertain_environments = transaction.execute(
+            r#"UPDATE environments SET status = 'unknown', cdp = '-',
+                      last_event = 'awaiting SDK runtime reconciliation',
+                      current_operation_id = NULL, updated_at = ?1
+               WHERE status IN ('preparing', 'starting', 'ready', 'stopping', 'unknown')"#,
+            [now],
+        )?;
+        if interrupted_operations > 0 || uncertain_environments > 0 {
+            append_event_tx(
+                &transaction,
+                "runtime.session-recovered",
+                None,
+                None,
+                &json!({
+                    "interruptedOperations": interrupted_operations,
+                    "uncertainEnvironments": uncertain_environments,
+                }),
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn reconcile_running_environments(
         &self,
         running: &HashMap<String, String>,
@@ -1429,21 +1463,23 @@ impl ManagerStore {
             .collect::<Result<Vec<_>, _>>()?;
         drop(statement);
         for (env_id, previous, previous_cdp, operation_kind, operation_status) in candidates {
-            let active_start = operation_kind.as_deref() == Some("environment.start")
-                && matches!(operation_status.as_deref(), Some("queued" | "running"));
+            let active_lifecycle =
+                matches!(
+                    operation_kind.as_deref(),
+                    Some("environment.start" | "environment.stop")
+                ) && matches!(operation_status.as_deref(), Some("queued" | "running"));
             let (status, cdp, event) = match running.get(&env_id) {
                 Some(cdp) => (
                     "ready",
                     cdp.as_str(),
                     "sdk_browser_info reconciliation: running",
                 ),
-                None if active_start => continue,
-                None if observed.contains(&env_id) && previous == "stopped" => (
-                    "unknown",
+                None if active_lifecycle => continue,
+                None if observed.contains(&env_id) => (
+                    "ready",
                     "-",
-                    "sdk_browser_info reconciliation: active, readiness unknown",
+                    "sdk_browser_info reconciliation: running via internal CDP",
                 ),
-                None if observed.contains(&env_id) => continue,
                 None if matches!(
                     previous.as_str(),
                     "preparing" | "starting" | "ready" | "stopping" | "unknown"
@@ -2267,6 +2303,101 @@ mod tests {
         let environment = store.list_environments().expect("environments").remove(0);
         assert_eq!(environment.status, "ready");
         assert_eq!(environment.cdp, "ws://127.0.0.1/devtools/browser/1");
+    }
+
+    #[test]
+    fn restart_recovery_resolves_interrupted_start_without_public_cdp() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("upsert environment");
+        let generation = store.next_generation("env-1").expect("generation");
+        let operation = store
+            .create_operation(
+                "environment.start",
+                Some("env-1"),
+                "启动环境",
+                generation,
+                None,
+            )
+            .expect("operation");
+        store
+            .transition_operation(&operation.id, "running", "calling SDK", None)
+            .expect("running operation");
+        store
+            .accept_environment_operation(
+                &operation.id,
+                Some(42),
+                "starting",
+                "-",
+                "SDK accepted request",
+            )
+            .expect("accepted operation");
+
+        store
+            .recover_interrupted_session()
+            .expect("recover interrupted session");
+        let environment = store.list_environments().expect("environments").remove(0);
+        assert_eq!(environment.status, "unknown");
+        assert_eq!(environment.current_operation_id, None);
+        let operation = store
+            .list_operations(10)
+            .expect("operations")
+            .into_iter()
+            .find(|candidate| candidate.id == operation.id)
+            .expect("interrupted operation");
+        assert_eq!(operation.status, "failed");
+        assert_eq!(operation.error_code.as_deref(), Some("CLIENT_RESTARTED"));
+
+        store
+            .reconcile_running_environments(&HashMap::new(), &HashSet::from(["env-1".into()]))
+            .expect("reconcile internal CDP runtime");
+        let environment = store.list_environments().expect("environments").remove(0);
+        assert_eq!(environment.status, "ready");
+        assert_eq!(environment.cdp, "-");
+        assert_eq!(
+            environment.last_event,
+            "sdk_browser_info reconciliation: running via internal CDP"
+        );
+    }
+
+    #[test]
+    fn restart_recovery_marks_unobserved_runtime_stopped() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        store
+            .upsert_remote_environments(&[(
+                "env-1".into(),
+                "Environment".into(),
+                json!({ "envId": "env-1" }),
+            )])
+            .expect("upsert environment");
+        store
+            .set_environment_runtime(RuntimeUpdate {
+                env_id: "env-1",
+                generation: 1,
+                status: "ready",
+                request_id: Some(7),
+                operation_id: None,
+                cdp: "127.0.0.1:9222",
+                last_event: "ready",
+            })
+            .expect("ready environment");
+
+        store
+            .recover_interrupted_session()
+            .expect("recover interrupted session");
+        store
+            .reconcile_running_environments(&HashMap::new(), &HashSet::new())
+            .expect("reconcile stopped runtime");
+        let environment = store.list_environments().expect("environments").remove(0);
+        assert_eq!(environment.status, "stopped");
+        assert_eq!(environment.cdp, "-");
     }
 
     #[test]

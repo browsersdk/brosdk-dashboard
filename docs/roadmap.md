@@ -802,3 +802,15 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 环境表在 `starting` 状态从精简事件文本读取百分比，显示固定宽度进度条和数值；完整 callback payload 不进入可见 UI。桌面和 390x844 视口没有重叠或横向溢出。
 - 真实生命周期 runner 在 ready 后回查 Manager 事件流，必须发现目标 envId 的 `browser-open` 中间回调和合法进度；报告只输出 `startProgressCallbackObserved` 布尔值。
 - 真实 E2E 得到 `startProgressCallbackObserved=true`，并完成 callback ready、CDP evaluate、18 个 MCP 工具、指纹检查和停止；Dashboard 51 项、Playwright 16 项、Rust workspace 99 项、check、Clippy、runtime smoke 和 release 构建通过。
+
+## 27. 阶段 24：客户端重启状态恢复与单实例
+
+目标：客户端异常退出后不沿用过期的 starting/ready 状态，并确保同一个 Dashboard 只初始化一份 SDK runtime。
+
+实现结果（2026-07-27）：
+
+- Manager 新会话会原子终止上次遗留的 queued/running operation，错误码为 `CLIENT_RESTARTED`；可能仍运行的环境先变为 unknown，再以新 Runtime Host 的 `sdk_browser_info` 为事实恢复 ready 或 stopped。
+- BrowserInfo 返回的是当前 DLL 跟踪的运行列表，因此 envId 存在且调试端口为 0 时也恢复 ready；CDP 继续显示为内部通道，不伪造 TCP 地址。每次客户端启动都执行状态对账，`startupPolicy` 只决定是否恢复动作，不再阻止只读对账。
+- Tauri single-instance 插件作为首个插件注册，锁定应用标识 `com.brosdk.dashboard`。第二次启动不会创建第二个 Manager/sdk-host，而是显示、取消最小化并聚焦已有窗口。
+- DLL 的后端 appId 锁仍是跨客户端的第二层保护：同一 Dashboard 的重复启动由桌面单实例提前拦截，其它产品若占用同 appId，则由隔离 sdk-host 承担初始化冲突，桌面 UI 不随 DLL 退出。
+- Store 重启场景测试、Rust workspace 101 项测试和目标 Clippy 通过；真实 Windows 托盘 E2E 报告 `secondInstanceRedirected=true`，并继续完成隐藏、托盘恢复和菜单退出。

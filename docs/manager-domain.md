@@ -63,7 +63,7 @@ queued -> running -> succeeded
 
 非终态 `browser-open`/`browser-close` callback 只在事件方向与当前 lifecycle operation 一致且 generation 未变化时更新运行摘要。Manager 从 payload 读取 0-100 的 `percent/progress` 和受限 `statusName/stateName/statusText`，写成 `event · status · N%` 的 operation message/环境 last event；不会把原始 payload 暴露到 Dashboard，也不会提前把环境标为 ready/stopped。
 
-`sdk_browser_info` 对账不会在活跃 start operation 期间因列表为空把环境提前改回 stopped；Starting/无 CDP 条目也不会被当作 ready。
+`sdk_browser_info` 对账不会在当前进程的活跃 lifecycle operation 期间抢先覆盖状态。Manager 启动时先把上次进程遗留的 queued/running operation 标记为 `CLIENT_RESTARTED`，将可能仍在运行的环境置为 unknown 并清除旧 CDP；Runtime Host 初始化后再无条件对账。此时 BrowserInfo 中出现的 envId 是 DLL 当前实例的运行事实，即使 `remoteDebuggingPort=0` 也恢复为 ready，但继续显示 DLL 内部 CDP/MCP 通道；列表中不存在才恢复为 stopped。
 
 ## 4. Snapshot 与增量事件
 
@@ -97,7 +97,7 @@ queued -> initialize SDK once -> sdk_env_page(page=1..N) -> atomic replace -> su
 
 `browser-open-success` 首先完成 lifecycle operation 并把环境置为 ready；如果事件 payload 含明确 DevTools URL 或非零调试端口，同一事务直接保存 CDP。若 callback 没有 endpoint，Manager 随后查询一次 `sdk_env_getinfo`，未命中再短时轮询 `sdk_browser_info`。三路数据共用严格解析器，只接受 CDP/Debugger 专用地址键和端口键，兼容数值、数字字符串、命名变体与 JSON 编码子对象，不接受普通 `port`。
 
-`manager_reconcile_runtimes` 调用 `sdk_browser_info`，把带明确 CDP endpoint 的环境对账为 ready，并可为已经 ready 的环境补充后到的 `remoteDebuggingPort`；把本地活动但不再存在的环境改为 stopped。只包含 envId 且端口为 0 的条目代表 DLL 仍跟踪该环境，但不能伪造 TCP 地址；已由 callback 确认 ready 的环境保持 ready，并在 Dashboard 标记为 DLL 内部 CDP/MCP 控制通道。该路径用于手动关闭浏览器后的状态恢复。
+`manager_reconcile_runtimes` 调用 `sdk_browser_info`，把当前运行列表中的环境对账为 ready，并可补充后到的 `remoteDebuggingPort`；把本地活动但不再存在的环境改为 stopped。只包含 envId 且端口为 0 的条目仍是有效运行事实，但不能伪造 TCP 地址，Dashboard 标记为 DLL 内部 CDP/MCP 控制通道。对账在每次客户端启动时执行，不受“恢复环境”设置影响，因为它只观察状态、不会打开浏览器；该路径同时覆盖客户端异常退出和手动关闭浏览器后的状态恢复。
 
 AI Chat/Agent 的环境上下文按选中的精确 `envId` 构造。Dashboard 可以显示本地完整 CDP 地址，但 Manager 发送给模型前只保留安全 origin；`ready`、`-` 和其它非地址值不会被当成 endpoint。pipe-only ready 环境发送 `controlChannel=sdk-browser-command`、`cdpAvailable=false`，外部模型不能据此获得本地 DevTools 控制路径。
 

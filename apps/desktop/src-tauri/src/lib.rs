@@ -577,6 +577,11 @@ fn sdk_host_path() -> Result<String, String> {
 pub fn run() {
     let manager = manager::Manager::new();
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _cwd| {
+                show_main_window(app);
+            },
+        ))
         .plugin(tauri_plugin_dialog::init())
         .manage(manager.clone())
         .setup(move |app| {
