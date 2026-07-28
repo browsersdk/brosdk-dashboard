@@ -1470,6 +1470,43 @@ h2 {
   white-space: nowrap;
 }
 
+.kernel-progress-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: min(260px, 100%);
+  height: 16px;
+  overflow: hidden;
+  border: 1px solid #d6e2f1;
+  border-radius: 4px;
+  background: #edf3fb;
+}
+
+.kernel-progress-bar.compact {
+  width: min(170px, 100%);
+  height: 14px;
+}
+
+.kernel-progress-bar > span {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  background: #2b6cb0;
+}
+
+.kernel-progress-bar > em {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #173a5e;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .status-badge.installed {
   color: #14754d;
   background: #e8f6ee;

@@ -859,12 +859,14 @@ function KernelPage({ snapshot, onRefresh, onError }: {
     ? {
       label: visibleInstallOperation.label,
       message: visibleInstallOperation.message || "等待 SDK 回调更新安装状态",
+      progress: kernelInstallProgress(visibleInstallOperation.message),
       status: visibleInstallOperation.status,
     }
     : pendingInstallKernel
       ? {
         label: "安装或更新内核",
         message: `${pendingInstallKernel.name} ${pendingInstallKernel.major ?? "未知版本"} · 已发送安装请求，等待 SDK 受理`,
+        progress: null,
         status: "queued",
       }
       : null;
@@ -900,6 +902,7 @@ function KernelPage({ snapshot, onRefresh, onError }: {
           <div>
             <strong>{visibleInstallPanel.label}</strong>
             <span>{visibleInstallPanel.message}</span>
+            {visibleInstallPanel.progress !== null && <KernelProgressBar value={visibleInstallPanel.progress} />}
           </div>
           <span className={`status-badge ${visibleInstallPanel.status}`}>
             {kernelInstallOperationStatus(visibleInstallPanel.status)}
@@ -917,6 +920,7 @@ function KernelPage({ snapshot, onRefresh, onError }: {
             const installProgressStatus = installOperation?.status ?? (locallyInstalling ? "queued" : "");
             const installProgressMessage = installOperation?.message ?? (locallyInstalling ? "已发送安装请求，等待 SDK 受理" : "");
             const installDisplay = kernelInstallDisplay(installProgressStatus);
+            const installProgress = kernelInstallProgress(installProgressMessage);
             const installReason = !desktop
               ? kernelActionReason
               : installing
@@ -929,6 +933,7 @@ function KernelPage({ snapshot, onRefresh, onError }: {
                 <td className="kernel-state-cell">
                   <span className={`status-badge ${installDisplay?.className ?? kernel.status}`}>{installDisplay?.label ?? kernelStatus(kernel.status)}</span>
                   {(installOperation || locallyInstalling) && <small>{installDisplay?.label ?? kernelInstallOperationStatus(installProgressStatus)} · {installProgressMessage}</small>}
+                  {installProgress !== null && <KernelProgressBar value={installProgress} compact />}
                 </td>
                 <td>{kernel.downloadAvailable ? "可用" : "未知"}</td>
                 <td className="row-actions inline-actions">
@@ -1043,11 +1048,26 @@ function JsonPreview({ label, value }: { label: string; value: unknown }) {
   return <div className="json-preview"><div><strong>{label}</strong><button className="icon-button" type="button" title="复制 JSON" aria-label={`复制${label}`} onClick={() => void navigator.clipboard?.writeText(JSON.stringify(value, null, 2))}><Copy size={14} /></button></div><pre>{JSON.stringify(value ?? null, null, 2)}</pre></div>;
 }
 
+function KernelProgressBar({ value, compact = false }: { value: number; compact?: boolean }) {
+  return (
+    <div className={`kernel-progress-bar${compact ? " compact" : ""}`} role="progressbar" aria-label="内核安装进度百分比" aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}>
+      <span style={{ width: `${value}%` }} />
+      <em>{value}%</em>
+    </div>
+  );
+}
+
 function errorMessage(error: unknown, fallback: string) { return error instanceof Error ? error.message : fallback; }
 function credentialSourceLabel(source?: string) { return ({ environment: "系统环境", "secure-storage": "系统安全存储", none: "未设置" } as Record<string, string>)[source ?? "none"] ?? "未知"; }
 function formatTime(value: string) { return new Date(value).toLocaleString("zh-CN"); }
 function proxyDisplayUrl(profile: ProxyProfile) { return `${profile.scheme}://${profile.username ? `${profile.username}@` : ""}${profile.host}:${profile.port}`; }
 function kernelStatus(status: string) { return ({ installed: "已安装", available: "可安装", "update-available": "可更新", unknown: "未知" } as Record<string, string>)[status] ?? status; }
+function kernelInstallProgress(message: string) {
+  const match = /(^|[^\d])(\d{1,3})%/.exec(message);
+  if (!match) return null;
+  const value = Number(match[2]);
+  return Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
+}
 function kernelInstallOperationStatus(status: string) {
   return ({ queued: "安装中", running: "安装中", succeeded: "安装完成", failed: "安装失败", cancelled: "已取消" } as Record<string, string>)[status]
     ?? statusLabel[status]

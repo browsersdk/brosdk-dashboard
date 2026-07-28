@@ -68,6 +68,7 @@ describe("App kernel page", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("内核安装进度").textContent).toContain("browser-install · Downloading · 42%");
     });
+    expect(screen.getAllByRole("progressbar", { name: "内核安装进度百分比" }).map((bar) => bar.getAttribute("aria-valuenow"))).toContain("42");
     expect(screen.getByRole("row", { name: /Chrome.*安装中.*browser-install.*Downloading.*42%/ })).toBeTruthy();
   });
 

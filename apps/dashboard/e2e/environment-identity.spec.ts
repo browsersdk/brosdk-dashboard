@@ -137,9 +137,11 @@ test("kernel install progress is visible on the kernel page", async ({ page }) =
   await page.goto("/?preview=workspace&scenario=kernel-installing&page=kernels");
   await expectHealthyDashboard(page, "内核");
 
-  await expect(page.getByLabel("内核安装进度")).toContainText("安装或更新内核");
-  await expect(page.getByLabel("内核安装进度")).toContainText("browser-install · Downloading · 42%");
-  await expect(page.getByLabel("内核安装进度")).toContainText("安装中");
+  const installPanel = page.getByLabel("内核安装进度", { exact: true });
+  await expect(installPanel).toContainText("安装或更新内核");
+  await expect(installPanel).toContainText("browser-install · Downloading · 42%");
+  await expect(installPanel).toContainText("安装中");
+  await expect(installPanel.getByRole("progressbar", { name: "内核安装进度百分比" })).toHaveAttribute("aria-valuenow", "42");
   const row = page.getByRole("row", { name: /Chrome\s+chrome.*142.*安装中.*browser-install.*Downloading.*42%/ });
   await expect(row).toBeVisible();
   await expect(row.getByRole("button", { name: "安装 Chrome" })).toBeDisabled();

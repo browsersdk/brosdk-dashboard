@@ -42,6 +42,8 @@ const MAX_ENVIRONMENTS: usize = 100_000;
 const KERNEL_CATALOG_PAGE_SIZE: u64 = 200;
 const MAX_KERNEL_CATALOG_PAGES: u64 = 100;
 const KERNEL_INSTALL_PROGRESS_TIMEOUT: Duration = Duration::from_secs(180);
+const SDK_REQID_MIN: i32 = 100_000;
+const SDK_REQID_MAX: i32 = i32::MAX;
 const DEFAULT_SDK_API_URL: &str = "https://api.brosdk.com";
 const MAX_ENVIRONMENT_BATCH_SIZE: usize = 20;
 const API_KEY_SECRET_ID: &str = "sdk-api-key";
@@ -3143,7 +3145,7 @@ impl Manager {
         .await;
         match result {
             Ok(response) => {
-                let request_id = accepted_code(&response);
+                let request_id = accepted_request_id(&response);
                 let message = request_id
                     .map(|request_id| {
                         format!(
@@ -4726,11 +4728,13 @@ fn select_embedded_mcp_port(
     Ok(Some(listener.local_addr()?.port()))
 }
 
-fn accepted_code(value: &serde_json::Value) -> Option<i32> {
+fn accepted_request_id(value: &serde_json::Value) -> Option<i32> {
     value
-        .get("acceptedCode")
+        .get("acceptedRequestId")
+        .or_else(|| value.get("acceptedCode"))
         .and_then(serde_json::Value::as_i64)
         .and_then(|value| i32::try_from(value).ok())
+        .filter(|value| (SDK_REQID_MIN..=SDK_REQID_MAX).contains(value))
 }
 
 fn require_prompt(prompt: &str) -> Result<&str, ManagerError> {

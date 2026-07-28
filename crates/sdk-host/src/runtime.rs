@@ -21,6 +21,9 @@ use tokio::sync::mpsc;
 static CALLBACK_SENDER: OnceLock<Mutex<Option<mpsc::UnboundedSender<RawSdkEvent>>>> =
     OnceLock::new();
 
+const SDK_REQID_MIN: i32 = 100_000;
+const SDK_REQID_MAX: i32 = i32::MAX;
+
 #[derive(Debug)]
 enum RawEventKind {
     Result,
@@ -76,7 +79,50 @@ struct HostRuntime {
     initialized: bool,
     sequence: u64,
     request_operations: HashMap<i32, String>,
+    pending_install_operations: Vec<PendingInstallOperation>,
     pending_lifecycle: HashMap<(LifecycleDirection, String), String>,
+}
+
+#[derive(Debug, Clone)]
+struct PendingInstallOperation {
+    operation_id: String,
+    major: Option<i32>,
+    kernel_type: Option<String>,
+}
+
+impl PendingInstallOperation {
+    fn from_request(operation_id: String, request: &Value) -> Option<Self> {
+        let core = request
+            .get("cores")
+            .and_then(Value::as_array)
+            .and_then(|cores| cores.first())?;
+        let major = find_i32(core, &["major", "majorVersion"]);
+        let kernel_type = normalized_text(find_string(core, &["type", "kernelType"]).as_deref());
+        if major.is_none() && kernel_type.is_none() {
+            return None;
+        }
+        Some(Self {
+            operation_id,
+            major,
+            kernel_type,
+        })
+    }
+
+    fn matches_payload(&self, payload: &Value) -> bool {
+        if let Some(major) = self.major
+            && install_payload_i32(payload, &["major", "majorVersion"]) != Some(major)
+        {
+            return false;
+        }
+        if let Some(kernel_type) = self.kernel_type.as_deref()
+            && normalized_text(install_payload_string(payload, &["type", "kernelType"]).as_deref())
+                .as_deref()
+                != Some(kernel_type)
+        {
+            return false;
+        }
+        true
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -97,6 +143,7 @@ impl HostRuntime {
             initialized: false,
             sequence: 0,
             request_operations: HashMap::new(),
+            pending_install_operations: Vec::new(),
             pending_lifecycle: HashMap::new(),
         };
         match BroSdk::load(default_library_path()) {
@@ -327,7 +374,7 @@ impl HostRuntime {
     fn call_async_operation<F>(
         &mut self,
         request: &HostRequest,
-        _name: &'static str,
+        name: &'static str,
         call: F,
     ) -> HostResult<Value>
     where
@@ -340,13 +387,20 @@ impl HostRuntime {
             ));
         }
         let accepted_code = call(self.sdk()?).map_err(sdk_error)?;
-        if accepted_code > 0
-            && let Some(operation_id) = request.operation_id.as_ref()
-        {
-            self.request_operations
-                .insert(accepted_code, operation_id.clone());
+        let accepted_request_id = sdk_request_id(accepted_code);
+        if let Some(operation_id) = request.operation_id.as_ref() {
+            if let Some(request_id) = accepted_request_id {
+                self.request_operations
+                    .insert(request_id, operation_id.clone());
+            } else if name == "sdk_browser_install" {
+                self.track_pending_install_operation(request, operation_id.clone());
+            }
         }
-        Ok(json!({ "acceptedCode": accepted_code, "state": "accepted" }))
+        Ok(json!({
+            "acceptedCode": accepted_code,
+            "acceptedRequestId": accepted_request_id,
+            "state": "accepted",
+        }))
     }
 
     fn track_mcp_lifecycle(
@@ -418,8 +472,15 @@ impl HostRuntime {
             });
         let env_id = find_string(&payload, &["envId", "env_id"]);
         let direction = lifecycle_direction(&event_name);
+        let install_event =
+            matches!(raw.kind, RawEventKind::Result) && is_install_event(&event_name);
         let operation_id = request_id
             .and_then(|id| self.request_operations.get(&id).cloned())
+            .or_else(|| {
+                install_event
+                    .then(|| self.pending_install_operation_for_payload(&payload))
+                    .flatten()
+            })
             .or_else(|| {
                 Some(
                     self.pending_lifecycle
@@ -430,6 +491,15 @@ impl HostRuntime {
         if let (Some(request_id), Some(operation_id)) = (request_id, operation_id.as_ref()) {
             self.request_operations
                 .insert(request_id, operation_id.clone());
+            if install_event {
+                self.remove_pending_install_operation(operation_id);
+            }
+        }
+        if install_event
+            && is_terminal_install_event(&event_name)
+            && let Some(operation_id) = operation_id.as_deref()
+        {
+            self.remove_pending_install_operation(operation_id);
         }
         if is_terminal_lifecycle_event(&event_name)
             && let (Some(direction), Some(env_id)) = (direction, env_id.as_ref())
@@ -478,6 +548,40 @@ impl HostRuntime {
             )
         })
     }
+
+    fn track_pending_install_operation(&mut self, request: &HostRequest, operation_id: String) {
+        let HostCommand::BrowserInstall {
+            request: install_request,
+        } = &request.command
+        else {
+            return;
+        };
+        let Some(pending) =
+            PendingInstallOperation::from_request(operation_id.clone(), install_request)
+        else {
+            return;
+        };
+        self.remove_pending_install_operation(&operation_id);
+        self.pending_install_operations.push(pending);
+        if self.pending_install_operations.len() > 16 {
+            let overflow = self.pending_install_operations.len() - 16;
+            self.pending_install_operations.drain(0..overflow);
+        }
+    }
+
+    fn pending_install_operation_for_payload(&self, payload: &Value) -> Option<String> {
+        let mut matches = self
+            .pending_install_operations
+            .iter()
+            .filter(|pending| pending.matches_payload(payload));
+        let first = matches.next()?;
+        matches.next().is_none().then(|| first.operation_id.clone())
+    }
+
+    fn remove_pending_install_operation(&mut self, operation_id: &str) {
+        self.pending_install_operations
+            .retain(|pending| pending.operation_id != operation_id);
+    }
 }
 
 fn lifecycle_env_ids(value: &Value) -> HashSet<String> {
@@ -509,6 +613,44 @@ fn lifecycle_direction(event_name: &str) -> Option<LifecycleDirection> {
 fn is_terminal_lifecycle_event(event_name: &str) -> bool {
     let event_name = event_name.to_ascii_lowercase();
     event_name.contains("success") || event_name.contains("failed") || event_name.contains("error")
+}
+
+fn is_install_event(event_name: &str) -> bool {
+    event_name.to_ascii_lowercase().contains("browser-install")
+}
+
+fn is_terminal_install_event(event_name: &str) -> bool {
+    let event_name = event_name.to_ascii_lowercase();
+    event_name.contains("browser-install-success")
+        || event_name.contains("browser-install-failed")
+        || event_name.contains("browser-install-error")
+}
+
+fn sdk_request_id(code: i32) -> Option<i32> {
+    (SDK_REQID_MIN..=SDK_REQID_MAX)
+        .contains(&code)
+        .then_some(code)
+}
+
+fn install_payload_i32(value: &Value, keys: &[&str]) -> Option<i32> {
+    value
+        .get("data")
+        .and_then(|data| find_i32(data, keys))
+        .or_else(|| find_i32(value, keys))
+}
+
+fn install_payload_string(value: &Value, keys: &[&str]) -> Option<String> {
+    value
+        .get("data")
+        .and_then(|data| find_string(data, keys))
+        .or_else(|| find_string(value, keys))
+}
+
+fn normalized_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
 }
 
 type HostResult<T> = std::result::Result<T, HostError>;
@@ -676,6 +818,7 @@ mod tests {
             initialized: false,
             sequence: 0,
             request_operations: HashMap::from([(42, "operation-1".into())]),
+            pending_install_operations: Vec::new(),
             pending_lifecycle: HashMap::new(),
         };
         let event = runtime.normalize_event(RawSdkEvent {
@@ -700,6 +843,7 @@ mod tests {
             initialized: false,
             sequence: 0,
             request_operations: HashMap::new(),
+            pending_install_operations: Vec::new(),
             pending_lifecycle: HashMap::from([(
                 (LifecycleDirection::Open, "env-1".into()),
                 "operation-1".into(),
@@ -721,6 +865,84 @@ mod tests {
     }
 
     #[test]
+    fn install_progress_binds_pending_operation_when_dispatch_returns_done() {
+        let mut runtime = HostRuntime {
+            sdk: None,
+            load_error: None,
+            initialized: false,
+            sequence: 0,
+            request_operations: HashMap::new(),
+            pending_install_operations: vec![PendingInstallOperation {
+                operation_id: "operation-install".into(),
+                major: Some(146),
+                kernel_type: Some("chrome".into()),
+            }],
+            pending_lifecycle: HashMap::new(),
+        };
+
+        assert_eq!(sdk_request_id(1), None);
+        assert_eq!(sdk_request_id(100_000), Some(100_000));
+        assert_eq!(sdk_request_id(100_001), Some(100_001));
+
+        let event = runtime.normalize_event(RawSdkEvent {
+            kind: RawEventKind::Result,
+            code: 0,
+            bytes: br#"{"type":"browser-install","reqId":100001,"data":{"major":146,"type":"chrome","percent":42}}"#.to_vec(),
+            received_at: Utc::now(),
+        });
+
+        assert_eq!(event.operation_id.as_deref(), Some("operation-install"));
+        assert_eq!(
+            runtime.request_operations.get(&100_001).map(String::as_str),
+            Some("operation-install")
+        );
+
+        let terminal = runtime.normalize_event(RawSdkEvent {
+            kind: RawEventKind::Result,
+            code: 0,
+            bytes: br#"{"type":"browser-install-success","reqId":100001,"data":{"major":146,"type":"chrome","percent":100}}"#
+                .to_vec(),
+            received_at: Utc::now(),
+        });
+        assert_eq!(terminal.operation_id.as_deref(), Some("operation-install"));
+        assert!(runtime.pending_install_operations.is_empty());
+    }
+
+    #[test]
+    fn install_progress_does_not_guess_when_pending_install_identity_is_ambiguous() {
+        let mut runtime = HostRuntime {
+            sdk: None,
+            load_error: None,
+            initialized: false,
+            sequence: 0,
+            request_operations: HashMap::new(),
+            pending_install_operations: vec![
+                PendingInstallOperation {
+                    operation_id: "operation-install-1".into(),
+                    major: Some(146),
+                    kernel_type: Some("chrome".into()),
+                },
+                PendingInstallOperation {
+                    operation_id: "operation-install-2".into(),
+                    major: Some(146),
+                    kernel_type: Some("chrome".into()),
+                },
+            ],
+            pending_lifecycle: HashMap::new(),
+        };
+
+        let event = runtime.normalize_event(RawSdkEvent {
+            kind: RawEventKind::Result,
+            code: 0,
+            bytes: br#"{"type":"browser-install","reqId":100001,"data":{"major":146,"type":"chrome","percent":42}}"#.to_vec(),
+            received_at: Utc::now(),
+        });
+
+        assert_eq!(event.operation_id, None);
+        assert!(runtime.request_operations.is_empty());
+    }
+
+    #[test]
     fn mcp_lifecycle_tracking_binds_callbacks_before_the_http_tool_call() {
         let mut runtime = HostRuntime {
             sdk: None,
@@ -728,6 +950,7 @@ mod tests {
             initialized: true,
             sequence: 0,
             request_operations: HashMap::new(),
+            pending_install_operations: Vec::new(),
             pending_lifecycle: HashMap::new(),
         };
         let request = HostRequest {
@@ -764,6 +987,7 @@ mod tests {
             initialized: false,
             sequence: 0,
             request_operations: HashMap::new(),
+            pending_install_operations: Vec::new(),
             pending_lifecycle: HashMap::new(),
         };
         let event = runtime.normalize_event(RawSdkEvent {
@@ -784,6 +1008,7 @@ mod tests {
             initialized: true,
             sequence: 0,
             request_operations: HashMap::new(),
+            pending_install_operations: Vec::new(),
             pending_lifecycle: HashMap::new(),
         };
         let error = runtime

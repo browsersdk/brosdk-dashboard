@@ -1326,6 +1326,21 @@ impl ManagerStore {
     pub fn apply_host_event(&self, event: &HostEvent) -> Result<ManagerEvent, StoreError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction()?;
+        let resolved_operation_id = event
+            .operation_id
+            .clone()
+            .or_else(|| {
+                event.request_id.and_then(|request_id| {
+                    operation_id_for_request_tx(&transaction, request_id)
+                        .ok()
+                        .flatten()
+                })
+            })
+            .or_else(|| {
+                operation_id_for_kernel_install_event_tx(&transaction, event)
+                    .ok()
+                    .flatten()
+            });
         let payload = json!({
             "hostSequence": event.sequence,
             "eventName": event.event_name,
@@ -1337,11 +1352,11 @@ impl ManagerStore {
             &transaction,
             &event.event_type,
             event.env_id.as_deref(),
-            event.operation_id.as_deref(),
+            resolved_operation_id.as_deref(),
             &payload,
         )?;
 
-        if let Some(operation_id) = event.operation_id.as_deref()
+        if let Some(operation_id) = resolved_operation_id.as_deref()
             && let Some(operation) = operation_tx(&transaction, operation_id)?
         {
             if let Some(request_id) = event.request_id {
@@ -1741,6 +1756,176 @@ fn operation_tx(
         )
         .optional()
         .map_err(Into::into)
+}
+
+fn operation_id_for_request_tx(
+    transaction: &Transaction<'_>,
+    request_id: i32,
+) -> Result<Option<String>, StoreError> {
+    transaction
+        .query_row(
+            r#"SELECT id FROM operations
+               WHERE request_id = ?1 AND status IN ('queued', 'running')
+               ORDER BY updated_at DESC LIMIT 1"#,
+            [request_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(Into::into)
+}
+
+fn operation_id_for_kernel_install_event_tx(
+    transaction: &Transaction<'_>,
+    event: &HostEvent,
+) -> Result<Option<String>, StoreError> {
+    if !event
+        .event_name
+        .to_ascii_lowercase()
+        .contains("browser-install")
+    {
+        return Ok(None);
+    }
+    let identity = KernelInstallEventIdentity::from_payload(&event.payload);
+    if identity.is_empty() {
+        return Ok(None);
+    }
+    let mut statement = transaction.prepare(
+        r#"SELECT id, kind, env_id, label, status, message, request_id,
+                  generation, error_code, request_json, created_at, updated_at
+           FROM operations
+           WHERE kind = 'kernel.install' AND status IN ('queued', 'running')
+           ORDER BY updated_at DESC"#,
+    )?;
+    let rows = statement.query_map([], operation_from_row)?;
+    for row in rows {
+        let operation = row?;
+        if identity.matches_operation(&operation) {
+            return Ok(Some(operation.id));
+        }
+    }
+    Ok(None)
+}
+
+struct KernelInstallEventIdentity {
+    kernel_id: Option<String>,
+    major: Option<u64>,
+    kernel_type: Option<String>,
+    platform: Option<String>,
+    arch: Option<String>,
+}
+
+impl KernelInstallEventIdentity {
+    fn from_payload(payload: &Value) -> Self {
+        Self {
+            kernel_id: callback_payload_string(payload, &["kernelId", "coreId", "id"]),
+            major: callback_payload_u64(payload, &["major", "majorVersion"]),
+            kernel_type: callback_payload_string(payload, &["kernelType", "type"]),
+            platform: callback_payload_string(payload, &["platform", "os", "system"]),
+            arch: callback_payload_string(payload, &["arch", "architecture"]),
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.kernel_id.is_none()
+            && self.major.is_none()
+            && self.kernel_type.is_none()
+            && self.platform.is_none()
+            && self.arch.is_none()
+    }
+
+    fn matches_operation(&self, operation: &OperationRecord) -> bool {
+        let Some(request) = operation.request.as_ref() else {
+            return false;
+        };
+        if let Some(kernel_id) = self.kernel_id.as_deref()
+            && json_string(request, "kernelId").as_deref() == Some(kernel_id)
+        {
+            return true;
+        }
+        let Some(core) = request
+            .get("cores")
+            .and_then(Value::as_array)
+            .and_then(|cores| cores.first())
+        else {
+            return false;
+        };
+        match self.major {
+            Some(major) if json_u64(core, "major") == Some(major) => {}
+            Some(_) | None => return false,
+        }
+        if let Some(kernel_type) = normalized_text(self.kernel_type.as_deref())
+            && normalized_text(json_string(core, "type").as_deref()).as_deref()
+                != Some(kernel_type.as_str())
+        {
+            return false;
+        }
+        if let Some(platform) = normalized_text(self.platform.as_deref()) {
+            let request_platform = json_string(request, "platform")
+                .or_else(|| json_string(core, "platform"))
+                .and_then(|value| normalized_text(Some(&value)));
+            if request_platform.as_deref() != Some(platform.as_str()) {
+                return false;
+            }
+        }
+        if let Some(arch) = normalized_text(self.arch.as_deref()) {
+            let request_arch = json_string(request, "arch")
+                .or_else(|| json_string(core, "arch"))
+                .and_then(|value| normalized_text(Some(&value)));
+            if request_arch.as_deref() != Some(arch.as_str()) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+fn callback_payload_string(payload: &Value, names: &[&str]) -> Option<String> {
+    payload
+        .get("data")
+        .and_then(|data| callback_field(data, names, 0))
+        .or_else(|| callback_field(payload, names, 0))
+        .and_then(value_to_string)
+}
+
+fn callback_payload_u64(payload: &Value, names: &[&str]) -> Option<u64> {
+    payload
+        .get("data")
+        .and_then(|data| callback_field(data, names, 0))
+        .or_else(|| callback_field(payload, names, 0))
+        .and_then(value_to_u64)
+}
+
+fn json_string(value: &Value, name: &str) -> Option<String> {
+    value.get(name).and_then(value_to_string)
+}
+
+fn json_u64(value: &Value, name: &str) -> Option<u64> {
+    value.get(name).and_then(value_to_u64)
+}
+
+fn value_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => {
+            let text = text.trim();
+            (!text.is_empty()).then(|| text.chars().take(128).collect())
+        }
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
+fn value_to_u64(value: &Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_i64().and_then(|value| u64::try_from(value).ok()))
+        .or_else(|| value.as_str()?.trim().parse::<u64>().ok())
+}
+
+fn normalized_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(|value| value.to_ascii_lowercase())
 }
 
 fn environment_from_row(row: &Row<'_>) -> rusqlite::Result<EnvironmentRecord> {
@@ -2795,6 +2980,74 @@ mod tests {
             finished.message,
             "browser-install-success · Installed · 100%"
         );
+    }
+
+    #[test]
+    fn kernel_install_callback_can_match_running_operation_by_kernel_fields() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        let operation = store
+            .create_operation(
+                "kernel.install",
+                None,
+                "安装内核",
+                0,
+                Some(&json!({
+                    "kernelId": "chrome-146-windows-x86_64",
+                    "platform": "windows",
+                    "arch": "x86_64",
+                    "cores": [{ "major": 146, "type": "chrome" }],
+                })),
+            )
+            .expect("operation");
+        store
+            .transition_operation(
+                &operation.id,
+                "running",
+                "SDK 已受理安装，等待下载进度回调",
+                None,
+            )
+            .expect("running");
+
+        let manager_event = store
+            .apply_host_event(&HostEvent {
+                sequence: 1,
+                event_type: "sdk.result".into(),
+                code: 0,
+                event_name: "browser-install".into(),
+                request_id: Some(100_001),
+                operation_id: None,
+                env_id: None,
+                payload: json!({
+                    "type": "browser-install",
+                    "reqId": 100001,
+                    "data": {
+                        "kernelId": "chrome-146-windows-x86_64",
+                        "kernelName": "YunBrowser.exe",
+                        "type": "chrome",
+                        "major": 146,
+                        "versionCode": 146,
+                        "platform": "windows",
+                        "arch": "x86_64",
+                        "progress": 42,
+                        "statusName": "Downloading"
+                    }
+                }),
+                received_at: Utc::now(),
+            })
+            .expect("install progress");
+
+        assert_eq!(
+            manager_event.operation_id.as_deref(),
+            Some(operation.id.as_str())
+        );
+        let progress = store
+            .operation(&operation.id)
+            .expect("operation")
+            .expect("stored operation");
+        assert_eq!(progress.status, "running");
+        assert_eq!(progress.request_id, Some(100_001));
+        assert_eq!(progress.message, "browser-install · Downloading · 42%");
     }
 
     #[test]
