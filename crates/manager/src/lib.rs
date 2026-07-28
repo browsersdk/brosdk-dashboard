@@ -41,6 +41,7 @@ const MAX_ENVIRONMENT_PAGES: usize = 500;
 const MAX_ENVIRONMENTS: usize = 100_000;
 const KERNEL_CATALOG_PAGE_SIZE: u64 = 200;
 const MAX_KERNEL_CATALOG_PAGES: u64 = 100;
+const KERNEL_INSTALL_PROGRESS_TIMEOUT: Duration = Duration::from_secs(180);
 const DEFAULT_SDK_API_URL: &str = "https://api.brosdk.com";
 const MAX_ENVIRONMENT_BATCH_SIZE: usize = 20;
 const API_KEY_SECRET_ID: &str = "sdk-api-key";
@@ -489,6 +490,7 @@ impl Manager {
         let configured_mcp_port = settings.embedded_mcp_port.or_else(embedded_port);
         let active_mcp_port = *self.inner.active_mcp_port.read().await;
         let automatic_mcp = configured_mcp_port.is_none() && capabilities.embedded_mcp;
+        self.expire_stale_kernel_installs()?;
         let environments = self.inner.store.list_environments()?;
         let fingerprints = self.inner.store.list_fingerprint_profiles()?;
         let proxies = self.inner.store.list_proxy_profiles()?;
@@ -555,6 +557,38 @@ impl Manager {
             latest_event_sequence: self.inner.store.latest_event_sequence()?,
             database_path: self.inner.store.path().display().to_string(),
         })
+    }
+
+    fn expire_stale_kernel_installs(&self) -> Result<(), ManagerError> {
+        self.expire_stale_kernel_installs_after(KERNEL_INSTALL_PROGRESS_TIMEOUT)
+    }
+
+    fn expire_stale_kernel_installs_after(&self, timeout: Duration) -> Result<(), ManagerError> {
+        let now = chrono::Utc::now();
+        for operation in self.inner.store.list_operations(200)? {
+            if operation.kind != "kernel.install" || operation.status != "running" {
+                continue;
+            }
+            let elapsed = now.signed_duration_since(operation.updated_at);
+            let timed_out = match elapsed.to_std() {
+                Ok(elapsed) => elapsed >= timeout,
+                Err(_) => false,
+            };
+            if !timed_out {
+                continue;
+            }
+            match self.inner.store.transition_operation(
+                &operation.id,
+                "failed",
+                "内核安装进度回调超时，请在操作中心重试或检查网络/下载缓存",
+                Some("SDK_INSTALL_TIMEOUT"),
+            ) {
+                Ok(_) => {}
+                Err(store::StoreError::InvalidTransition { .. }) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
     }
 
     pub fn api_key_status(&self) -> Result<ApiKeyStatus, ManagerError> {
@@ -1524,6 +1558,7 @@ impl Manager {
         Ok(json!({
             "capabilities": {
                 "platform": capabilities.platform,
+                "arch": capabilities.arch,
                 "supportStatus": capabilities.support_status,
                 "unsupportedReason": capabilities.unsupported_reason,
                 "embeddedMcp": capabilities.embedded_mcp,
@@ -2948,6 +2983,8 @@ impl Manager {
             .build()?;
         let mut items = Vec::new();
         let mut expected_total = None;
+        let platform = profiles::current_kernel_platform();
+        let arch = profiles::current_kernel_arch();
         for page in 1..=MAX_KERNEL_CATALOG_PAGES {
             let response = client
                 .post(endpoint.clone())
@@ -2956,6 +2993,8 @@ impl Manager {
                     "page": page,
                     "pageSize": KERNEL_CATALOG_PAGE_SIZE,
                     "status": 1,
+                    "platform": platform.as_str(),
+                    "arch": arch.as_str(),
                 }))
                 .send()
                 .await?
@@ -3060,15 +3099,30 @@ impl Manager {
         &self,
         input: KernelInstallInput,
     ) -> Result<OperationRecord, ManagerError> {
-        let request = json!({
-            "cores": [{ "major": input.major, "type": input.kernel_type }]
+        let kernel = self.resolve_install_kernel(&input)?;
+        let major = kernel
+            .major
+            .ok_or_else(|| ManagerError::KernelNotUsable("kernel version is missing".into()))?;
+        let label = format!("安装或更新 {}", kernel.name);
+        let kernel_id = kernel.id.clone();
+        let kernel_platform = kernel.platform.clone();
+        let kernel_arch = kernel.arch.clone();
+        let kernel_type = kernel.kernel_type.clone();
+        let sdk_request = json!({
+            "cores": [{ "major": major, "type": kernel_type.as_str() }]
+        });
+        let operation_request = json!({
+            "kernelId": kernel_id,
+            "platform": kernel_platform,
+            "arch": kernel_arch,
+            "cores": [{ "major": major, "type": kernel_type.as_str() }]
         });
         let operation = self.inner.operations.enqueue(
             "kernel.install",
             None,
-            "安装或更新内核",
+            &label,
             0,
-            Some(&request),
+            Some(&operation_request),
         )?;
         let _execution = self.inner.operations.acquire().await;
         self.inner
@@ -3078,7 +3132,9 @@ impl Manager {
             let host = self.runtime_handle().await?;
             self.ensure_sdk_initialized(&host).await?;
             host.call(
-                HostCommand::BrowserInstall { request },
+                HostCommand::BrowserInstall {
+                    request: sdk_request,
+                },
                 Some(operation.id.clone()),
             )
             .await
@@ -3088,10 +3144,19 @@ impl Manager {
         match result {
             Ok(response) => {
                 let request_id = accepted_code(&response);
+                let message = request_id
+                    .map(|request_id| {
+                        format!(
+                            "SDK 已受理安装请求 {request_id}，等待下载进度回调（3 分钟无回调将标记失败）"
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        "SDK 已受理安装，等待下载进度回调（3 分钟无回调将标记失败）".into()
+                    });
                 Ok(self.inner.store.update_operation_progress(
                     &operation.id,
                     request_id,
-                    "SDK accepted install; awaiting progress callback",
+                    &message,
                 )?)
             }
             Err(error) => Ok(self.inner.operations.fail(
@@ -3100,6 +3165,118 @@ impl Manager {
                 &error.to_string(),
             )?),
         }
+    }
+
+    fn resolve_install_kernel(
+        &self,
+        input: &KernelInstallInput,
+    ) -> Result<KernelRecord, ManagerError> {
+        let current_platform = profiles::current_kernel_platform();
+        let current_arch = profiles::current_kernel_arch();
+        if let Some(requested_platform) = input
+            .platform
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(profiles::normalize_kernel_platform)
+            && requested_platform != current_platform
+        {
+            return Err(ManagerError::KernelNotUsable(format!(
+                "kernel platform {requested_platform} does not match {current_platform}"
+            )));
+        }
+        if let Some(requested_arch) = input
+            .arch
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(profiles::normalize_kernel_arch)
+            && requested_arch != current_arch
+        {
+            return Err(ManagerError::KernelNotUsable(format!(
+                "kernel architecture {requested_arch} does not match {current_arch}"
+            )));
+        }
+
+        let kernels = self.inner.store.list_kernel_records()?;
+        let kernel = if let Some(kernel_id) = input
+            .kernel_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            kernels
+                .into_iter()
+                .find(|kernel| kernel.id == kernel_id)
+                .ok_or(ManagerError::KernelNotFound)?
+        } else {
+            let requested_type = input
+                .kernel_type
+                .as_deref()
+                .map(|value| value.trim().to_ascii_lowercase())
+                .filter(|value| !value.is_empty());
+            let mut matches = kernels
+                .into_iter()
+                .filter(|kernel| {
+                    kernel.major == Some(input.major)
+                        && profiles::normalize_kernel_platform(&kernel.platform) == current_platform
+                        && profiles::normalize_kernel_arch(&kernel.arch) == current_arch
+                        && requested_type.as_ref().is_none_or(|requested| {
+                            kernel.kernel_type.trim().eq_ignore_ascii_case(requested)
+                        })
+                })
+                .collect::<Vec<_>>();
+            match matches.len() {
+                0 => return Err(ManagerError::KernelNotFound),
+                1 => matches.remove(0),
+                _ => {
+                    return Err(ManagerError::KernelNotUsable(
+                        "kernel selection is ambiguous; refresh the catalog and select by kernelId"
+                            .into(),
+                    ));
+                }
+            }
+        };
+
+        if kernel.major != Some(input.major) {
+            return Err(ManagerError::KernelNotUsable(format!(
+                "kernel version {:?} does not match requested {}",
+                kernel.major, input.major
+            )));
+        }
+        if let Some(kernel_type) = input
+            .kernel_type
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            && !kernel.kernel_type.trim().eq_ignore_ascii_case(kernel_type)
+        {
+            return Err(ManagerError::KernelNotUsable(format!(
+                "kernel type {} does not match requested {kernel_type}",
+                kernel.kernel_type
+            )));
+        }
+        if profiles::normalize_kernel_platform(&kernel.platform) != current_platform {
+            return Err(ManagerError::KernelNotUsable(format!(
+                "kernel platform {} does not match {current_platform}",
+                kernel.platform
+            )));
+        }
+        if profiles::normalize_kernel_arch(&kernel.arch) != current_arch {
+            return Err(ManagerError::KernelNotUsable(format!(
+                "kernel architecture {} does not match {current_arch}",
+                kernel.arch
+            )));
+        }
+        if !kernel.download_available {
+            return Err(ManagerError::KernelNotUsable(
+                "kernel download source is unknown".into(),
+            ));
+        }
+        if kernel.kernel_type.trim().is_empty() {
+            return Err(ManagerError::KernelNotUsable(
+                "kernel type is missing".into(),
+            ));
+        }
+        Ok(kernel)
     }
 
     pub async fn cleanup_kernel_cache(
@@ -3220,6 +3397,10 @@ impl Manager {
                     .pointer("/cores/0")
                     .ok_or(ManagerError::OperationNotRetryable)?;
                 self.install_kernel(KernelInstallInput {
+                    kernel_id: request
+                        .get("kernelId")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
                     major: core
                         .get("major")
                         .and_then(serde_json::Value::as_u64)
@@ -3227,6 +3408,14 @@ impl Manager {
                         .ok_or(ManagerError::OperationNotRetryable)?,
                     kernel_type: core
                         .get("type")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    platform: request
+                        .get("platform")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    arch: request
+                        .get("arch")
                         .and_then(serde_json::Value::as_str)
                         .map(str::to_string),
                 })
@@ -4145,22 +4334,12 @@ fn backend_kernel_name(kernel_type: &str) -> Result<&'static str, ManagerError> 
     }
 }
 
-fn normalize_platform(value: &str) -> &str {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "win" | "win32" | "windows" => "windows",
-        "mac" | "macos" | "darwin" => "macos",
-        "linux" => "linux",
-        _ => "unknown",
-    }
+fn normalize_platform(value: &str) -> String {
+    profiles::normalize_kernel_platform(value)
 }
 
-fn normalize_arch(value: &str) -> &str {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "amd64" | "x64" | "x86_64" => "x86_64",
-        "aarch64" | "arm64" => "aarch64",
-        "x86" | "i386" | "i686" => "x86",
-        _ => "unknown",
-    }
+fn normalize_arch(value: &str) -> String {
+    profiles::normalize_kernel_arch(value)
 }
 
 fn ensure_backend_success(action: &str, response: &serde_json::Value) -> Result<(), ManagerError> {
@@ -6111,6 +6290,62 @@ mod tests {
             manager_error_code(&ManagerError::OperationNotCancellable),
             "OPERATION_NOT_CANCELLABLE"
         );
+    }
+
+    #[test]
+    fn stale_kernel_install_operation_becomes_retryable_failure() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = ManagerStore::open(
+            directory.path().join("manager.sqlite3"),
+            &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
+                work_dir: "work".into(),
+                extension_dir: "extensions".into(),
+                log_dir: "logs".into(),
+                sdk_api_url: None,
+                debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: None,
+                ai_base_url: None,
+                ai_model: None,
+            },
+        )
+        .expect("store");
+        let manager = Manager::with_store(store.clone()).expect("manager");
+        let operation = store
+            .create_operation(
+                "kernel.install",
+                None,
+                "安装或更新 YunBrowser.exe",
+                0,
+                Some(&json!({
+                    "kernelId": "chrome-146-windows-x86_64",
+                    "platform": "windows",
+                    "arch": "x86_64",
+                    "cores": [{ "major": 146, "type": "chrome" }]
+                })),
+            )
+            .expect("queued operation");
+        store
+            .transition_operation(
+                &operation.id,
+                "running",
+                "SDK 已受理安装，等待下载进度回调",
+                None,
+            )
+            .expect("running operation");
+
+        manager
+            .expire_stale_kernel_installs_after(Duration::ZERO)
+            .expect("expired stale install");
+
+        let operation = store
+            .operation(&operation.id)
+            .expect("operation lookup")
+            .expect("operation");
+        assert_eq!(operation.status, "failed");
+        assert_eq!(operation.error_code.as_deref(), Some("SDK_INSTALL_TIMEOUT"));
+        assert!(operation.message.contains("重试"));
     }
 
     #[test]

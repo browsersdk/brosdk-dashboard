@@ -2,6 +2,7 @@ export type SmokeStageStatus = "passed" | "failed" | "skipped";
 
 export interface SdkCapabilities {
   platform: string;
+  arch: string;
   supportStatus: string;
   unsupportedReason: string | null;
   cAbi: boolean;

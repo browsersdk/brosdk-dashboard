@@ -958,16 +958,18 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 - `sdk-host` 初始化响应增加 `sdkInit` 摘要、只包含内核对象的 `kernelCatalog` 和非敏感 `kernelListUrl`，Manager 不向 Dashboard 暴露完整 `sdk_init` 响应。
 - `ensure_sdk_initialized` 会把最近一次 init catalog、API Key `/api/v2/browser/kernelList` 响应和本地 cores 合并写入 `kernel_records`，因此首次初始化和首次 snapshot 后内核页不再只依赖本地目录扫描。
-- 内核刷新同时合并 init catalog、`sdk_info` catalog、API Key `kernelList` 和本地 cores；`kernelList` 请求固定发送 `page/pageSize/status=1`，显式 `sdkApiUrl` 优先，其次把 `sdk_init.config.kernelListUrl` 同源改写为 `/api/v2/browser/kernelList`，缺失时使用参考客户端默认 `https://api.brosdk.com`。
-- 解析器兼容 `/api/v2/browser/kernelList` 文档中的 `data.list` 分页结构以及 `items/records/rows` 别名，并优先展示服务端 `kernelVersion`；新增 Manager 单元测试覆盖浏览器内核列表分页、init/info 双 catalog 合并和 URL 改写。
+- 内核刷新同时合并 init catalog、`sdk_info` catalog、API Key `kernelList` 和本地 cores；`kernelList` 请求固定发送 `page/pageSize/status=1` 以及当前 `platform/arch`，显式 `sdkApiUrl` 优先，其次把 `sdk_init.config.kernelListUrl` 同源改写为 `/api/v2/browser/kernelList`，缺失时使用参考客户端默认 `https://api.brosdk.com`。
+- 解析器兼容 `/api/v2/browser/kernelList` 文档中的 `data.list` 分页结构以及 `items/records/rows` 别名，并优先展示服务端 `kernelVersion`；远端/本地记录归一化平台架构并过滤到当前机器，新增 Manager 单元测试覆盖浏览器内核列表分页、init/info 双 catalog 合并、跨平台同版本矩阵过滤和 URL 改写。
 - Dashboard workspace 预览同步扩展为服务端 catalog + 本地 cores 的合并样例，内核页至少覆盖可安装、可更新和未知下载源状态；Playwright 桌面/移动回归直接断言 5 行 catalog，避免预览只显示单个本地内核。
 
 内核安装反馈补丁（2026-07-28）：
 
 - 点击内核“安装或更新”后，Dashboard 不等待 SDK 返回就显示顶部进度面板和对应行内状态，文案为“已发送安装请求，等待 SDK 受理”，按钮保持禁用并显示旋转图标。
 - Manager 将 `kernel.install` 的非终态 SDK/DLL 回调写入 operation message；`browser-install-success` 与失败事件继续切换终态，不把原始 payload 暴露给 Dashboard。
-- 组件测试覆盖真实桌面点击后 `installKernel` Promise 未返回时的即时反馈；Playwright 桌面/移动覆盖 `browser-install · Downloading · 42%` 的顶部/行内可见状态、安装按钮禁用、无横向溢出和控制台健康。
-- 本轮验证通过 Dashboard 57 项组件测试、Playwright 桌面/移动 30 项、Rust workspace 测试、Rustfmt、Clippy、production build、Windows NSIS/便携构建和 release verify。
+- 安装 operation request 保存 `kernelId/platform/arch`，UI 优先按 `kernelId` 绑定行级进度，重试也按同一 kernel 重放；传给 DLL 的 `sdk_browser_install` 请求仍保持 `cores: [{ type, major }]`。
+- SDK 已受理但 3 分钟没有任何下载进度回调时，Manager 会把 operation 标记为 `failed / SDK_INSTALL_TIMEOUT`，操作中心显示可重试，而不是让内核页无限转圈。
+- 组件测试覆盖真实桌面点击后 `installKernel` Promise 未返回时的即时反馈和跨平台同版本 catalog 过滤；Playwright 桌面/移动覆盖 `browser-install · Downloading · 42%` 的顶部/行内可见状态、当前平台过滤、安装按钮禁用、无横向溢出和控制台健康。
+- 本轮验证通过 Dashboard 58 项组件测试、Playwright 桌面/移动 32 项、Rust workspace 测试、Rustfmt、Clippy、production build、Browser 插件内核矩阵可视验证、Windows NSIS/便携构建和 release verify。
 
 ## 38. 阶段 35：跨境店铺与环境绑定
 

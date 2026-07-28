@@ -17,6 +17,7 @@ import type {
   EnvironmentMetadataUpdateInput,
   FingerprintProfile,
   FingerprintProfileInput,
+  KernelRecord,
   ManagerEvent,
   ManagerSettings,
   McpToolCallExecution,
@@ -180,8 +181,19 @@ export async function refreshKernels(): Promise<OperationRecord> {
   return invoke<OperationRecord>("manager_refresh_kernels");
 }
 
-export async function installKernel(major: number, kernelType: string | null): Promise<OperationRecord> {
-  return invoke<OperationRecord>("manager_install_kernel", { input: { major, kernelType } });
+export async function installKernel(kernel: KernelRecord): Promise<OperationRecord> {
+  if (kernel.major === null) {
+    throw new Error("内核主版本未知，无法安装");
+  }
+  return invoke<OperationRecord>("manager_install_kernel", {
+    input: {
+      kernelId: kernel.id,
+      major: kernel.major,
+      kernelType: kernel.kernelType,
+      platform: kernel.platform,
+      arch: kernel.arch,
+    },
+  });
 }
 
 export async function cleanupKernelCache(major: number | null): Promise<OperationExecution> {
@@ -291,6 +303,7 @@ function demoSnapshot(): DashboardSnapshot {
   const workspacePreview = search.get("preview") === "workspace";
   const duplicateNames = search.get("scenario") === "duplicate-names";
   const kernelInstalling = search.get("scenario") === "kernel-installing";
+  const kernelPlatformMatrix = search.get("scenario") === "kernel-platform-matrix";
   const startingProgress = search.get("scenario") === "starting-progress";
   const firstEnvironmentName = duplicateNames ? "共享工作环境" : "Marketing CN";
   const secondEnvironmentName = duplicateNames ? "共享工作环境" : "Operations JP";
@@ -308,7 +321,12 @@ function demoSnapshot(): DashboardSnapshot {
       requestId: 42,
       generation: 0,
       errorCode: null,
-      request: { cores: [{ major: 142, type: "chrome" }] },
+      request: {
+        kernelId: "chrome-142-windows-x86_64",
+        platform: "windows",
+        arch: "x86_64",
+        cores: [{ major: 142, type: "chrome" }],
+      },
       createdAt: previewNow,
       updatedAt: previewNow,
     },
@@ -418,6 +436,7 @@ function demoSnapshot(): DashboardSnapshot {
     },
     capabilities: {
       platform: "windows",
+      arch: "x86_64",
       supportStatus: "available",
       unsupportedReason: null,
       cAbi: true,
@@ -584,7 +603,46 @@ function demoSnapshot(): DashboardSnapshot {
       boundEnvIds: ["env-demo-01"],
       updatedAt: new Date().toISOString(),
     }],
-    kernels: [{
+    kernels: kernelPlatformMatrix ? [{
+      id: "chrome-146-linux-x86_64",
+      kernelType: "chrome",
+      name: "YunBrowser",
+      major: 146,
+      version: null,
+      latestVersion: "146",
+      platform: "linux",
+      arch: "x86_64",
+      status: "available",
+      installPath: null,
+      downloadAvailable: true,
+      updatedAt: previewNow,
+    }, {
+      id: "chrome-146-macos-arm64",
+      kernelType: "chrome",
+      name: "YunBrowser.app",
+      major: 146,
+      version: null,
+      latestVersion: "146",
+      platform: "macos",
+      arch: "arm64",
+      status: "available",
+      installPath: null,
+      downloadAvailable: true,
+      updatedAt: previewNow,
+    }, {
+      id: "chrome-146-windows-x86_64",
+      kernelType: "chrome",
+      name: "YunBrowser.exe",
+      major: 146,
+      version: null,
+      latestVersion: "146",
+      platform: "windows",
+      arch: "x86_64",
+      status: "available",
+      installPath: null,
+      downloadAvailable: true,
+      updatedAt: previewNow,
+    }] : [{
       id: "chrome-142-windows-x86_64",
       kernelType: "chrome",
       name: "Chrome",

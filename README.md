@@ -15,7 +15,7 @@ BroSDK Dashboard 是基于 BroSDK 的 Windows 多指纹浏览器桌面控制台�
 - 首次启动输入 API Key，按 `getUserSig(role=user) -> sdk_init` 完成初始化；API Key 使用 Windows DPAPI 保护，不写入 SQLite、日志或发布清单。
 - 以服务端数据为事实来源，以 `envId` 为环境唯一主键；本地 SQLite 只保存可删除、脱敏且带新鲜度状态的缓存。
 - 创建环境只要求选择代理和已安装内核版本，其余指纹参数使用服务端策略。
-- 内核管理合并 API Key `/api/v2/browser/kernelList`、`sdk_init` 返回的 `kernelVersions`、后续 `sdk_info` catalog 和本地已安装 cores；未配置 SDK API URL 时默认使用 `https://api.brosdk.com`，刷新按钮会重新对账最新服务端清单。
+- 内核管理合并 API Key `/api/v2/browser/kernelList`、`sdk_init` 返回的 `kernelVersions`、后续 `sdk_info` catalog 和本地已安装 cores；请求服务端清单时带当前 `platform/arch`，界面只展示当前机器可安装内核，安装进度按 `kernelId` 绑定并支持无回调超时重试。
 - 支持环境创建、同步、启动、进度回调、停止、更新、删除、详情和关键指纹查看。
 - 运行时由隔离的 `sdk-host.exe` 加载 DLL；Dashboard 和 Host 均为 Windows GUI 子系统，不显示终端窗口。
 - 应用单实例运行；关闭主窗口后驻留系统托盘，重复启动会唤醒已有窗口，避免相同 appId 被重复初始化。
@@ -175,7 +175,7 @@ npm run manager:smoke
 Remove-Item Env:BROSDK_API_KEY
 ```
 
-报告中的 `kernelRefresh.serverKernelListLoaded=true` 且 `kernelRefresh.count > 1` 表示内核页会显示服务端清单，而不只是本地已安装 core。
+报告中的 `kernelRefresh.serverKernelListLoaded=true` 且 `kernelRefresh.count > 1` 表示内核页已从服务端清单合并出当前平台/架构可用内核，而不只是本地已安装 core。
 
 环境 E2E 会启动真实浏览器并调用全局 MCP；测试结束必须将环境恢复为 stopped。创建/多环境测试会使用临时环境并执行补偿清理。完整命令和安全约束见 [测试交接文档](docs/testing-handoff.md)。
 

@@ -119,6 +119,19 @@ test("kernel preview shows the server catalog merged with local cores", async ({
   expect(issues).toEqual([]);
 });
 
+test("kernel page filters server platform matrix to the current runtime", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  await page.goto("/?preview=workspace&scenario=kernel-platform-matrix&page=kernels");
+  await expectHealthyDashboard(page, "内核");
+
+  const rows = page.locator(".kernel-table tbody tr");
+  await expect(rows).toHaveCount(1);
+  await expect(page.getByRole("row", { name: /YunBrowser\.exe\s+chrome.*146.*windows \/ x86_64.*可安装.*可用/ })).toBeVisible();
+  await expect(page.getByText("YunBrowser.app", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("YunBrowser", { exact: true })).toHaveCount(0);
+  expect(issues).toEqual([]);
+});
+
 test("kernel install progress is visible on the kernel page", async ({ page }) => {
   const issues = monitorPageIssues(page);
   await page.goto("/?preview=workspace&scenario=kernel-installing&page=kernels");

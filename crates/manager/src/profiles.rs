@@ -253,6 +253,22 @@ pub fn scan_kernels_with_catalogs<'a>(
     work_dir: &Path,
     catalogs: impl IntoIterator<Item = &'a Value>,
 ) -> Vec<KernelRecord> {
+    scan_kernels_with_catalogs_for_platform(
+        work_dir,
+        catalogs,
+        &current_kernel_platform(),
+        &current_kernel_arch(),
+    )
+}
+
+pub fn scan_kernels_with_catalogs_for_platform<'a>(
+    work_dir: &Path,
+    catalogs: impl IntoIterator<Item = &'a Value>,
+    platform: &str,
+    arch: &str,
+) -> Vec<KernelRecord> {
+    let platform = normalize_kernel_platform(platform);
+    let arch = normalize_kernel_arch(arch);
     let mut records = HashMap::<String, KernelRecord>::new();
     let cores_dir = find_cores_dir(work_dir);
     if cores_dir.exists() {
@@ -295,13 +311,47 @@ pub fn scan_kernels_with_catalogs<'a>(
     }
 
     let mut result = records.into_values().collect::<Vec<_>>();
+    result.retain(|record| kernel_matches_platform(record, &platform, &arch));
     result.sort_by(|left, right| {
         right
             .major
             .cmp(&left.major)
             .then_with(|| left.kernel_type.cmp(&right.kernel_type))
+            .then_with(|| left.platform.cmp(&right.platform))
+            .then_with(|| left.arch.cmp(&right.arch))
     });
     result
+}
+
+pub fn current_kernel_platform() -> String {
+    normalize_kernel_platform(std::env::consts::OS)
+}
+
+pub fn current_kernel_arch() -> String {
+    normalize_kernel_arch(std::env::consts::ARCH)
+}
+
+pub fn normalize_kernel_platform(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "win" | "win32" | "windows" => "windows".into(),
+        "mac" | "macos" | "darwin" => "macos".into(),
+        "linux" => "linux".into(),
+        other => other.into(),
+    }
+}
+
+pub fn normalize_kernel_arch(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "amd64" | "x64" | "x86_64" => "x86_64".into(),
+        "aarch64" | "arm64" => "arm64".into(),
+        "x86" | "i386" | "i686" => "i386".into(),
+        other => other.into(),
+    }
+}
+
+fn kernel_matches_platform(record: &KernelRecord, platform: &str, arch: &str) -> bool {
+    normalize_kernel_platform(&record.platform) == platform
+        && normalize_kernel_arch(&record.arch) == arch
 }
 
 fn find_cores_dir(work_dir: &Path) -> std::path::PathBuf {
@@ -340,9 +390,12 @@ fn kernel_record_from_value(
             "majorVersion",
         ],
     );
-    let platform =
-        priority_string(value, &["platform"]).unwrap_or_else(|| std::env::consts::OS.into());
-    let arch = priority_string(value, &["arch"]).unwrap_or_else(|| std::env::consts::ARCH.into());
+    let platform = priority_string(value, &["platform"])
+        .map(|value| normalize_kernel_platform(&value))
+        .unwrap_or_else(current_kernel_platform);
+    let arch = priority_string(value, &["arch"])
+        .map(|value| normalize_kernel_arch(&value))
+        .unwrap_or_else(current_kernel_arch);
     let id = format!(
         "{}-{}-{}-{}",
         kernel_type,
@@ -579,8 +632,12 @@ mod tests {
                 }]
             }
         });
-        let records =
-            scan_kernels_with_catalogs(Path::new("missing"), [&init_catalog, &info_catalog]);
+        let records = scan_kernels_with_catalogs_for_platform(
+            Path::new("missing"),
+            [&init_catalog, &info_catalog],
+            "windows",
+            "x86_64",
+        );
         assert_eq!(records.len(), 2);
         assert!(
             records
@@ -592,6 +649,50 @@ mod tests {
                 .iter()
                 .any(|record| record.id == "firefox-140-windows-x86_64")
         );
+    }
+
+    #[test]
+    fn filters_kernel_catalogs_to_target_platform_and_arch() {
+        let catalog = json!({
+            "data": {
+                "list": [
+                    {
+                        "kernelId": "chrome",
+                        "kernelName": "YunBrowser",
+                        "majorVersion": "146",
+                        "platform": "linux",
+                        "arch": "x86_64",
+                        "url": "https://download.example.test/linux.zip"
+                    },
+                    {
+                        "kernelId": "chrome",
+                        "kernelName": "YunBrowser.app",
+                        "majorVersion": "146",
+                        "platform": "macos",
+                        "arch": "arm64",
+                        "url": "https://download.example.test/macos.zip"
+                    },
+                    {
+                        "kernelId": "chrome",
+                        "kernelName": "YunBrowser.exe",
+                        "majorVersion": "146",
+                        "platform": "windows",
+                        "arch": "x86_64",
+                        "url": "https://download.example.test/windows.zip"
+                    }
+                ]
+            }
+        });
+        let records = scan_kernels_with_catalogs_for_platform(
+            Path::new("missing"),
+            [&catalog],
+            "win32",
+            "amd64",
+        );
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, "chrome-146-windows-x86_64");
+        assert_eq!(records[0].name, "YunBrowser.exe");
     }
 
     #[test]

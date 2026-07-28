@@ -834,6 +834,12 @@ function KernelPage({ snapshot, onRefresh, onError }: {
   const [focusedOperationId, setFocusedOperationId] = useState<string | null>(null);
   const desktop = isDesktopRuntime();
   const kernelActionReason = desktopActionReason(desktop, Boolean(busy), "内核操作正在执行");
+  const currentPlatform = normalizePlatform(snapshot?.capabilities.platform ?? "");
+  const currentArch = normalizeArch(snapshot?.capabilities.arch ?? "");
+  const visibleKernels = useMemo(
+    () => (snapshot?.kernels ?? []).filter((kernel) => kernelMatchesRuntime(kernel, currentPlatform, currentArch)),
+    [currentArch, currentPlatform, snapshot?.kernels],
+  );
   const installOperations = useMemo(
     () => snapshot?.operations.filter((operation) => operation.kind === "kernel.install") ?? [],
     [snapshot?.operations],
@@ -846,8 +852,8 @@ function KernelPage({ snapshot, onRefresh, onError }: {
     : null;
   const visibleInstallOperation = focusedOperation ?? activeInstallOperation;
   const pendingInstallKernel = useMemo(
-    () => snapshot?.kernels.find((kernel) => busy === `install:${kernel.id}`) ?? null,
-    [busy, snapshot?.kernels],
+    () => visibleKernels.find((kernel) => busy === `install:${kernel.id}`) ?? null,
+    [busy, visibleKernels],
   );
   const visibleInstallPanel = visibleInstallOperation
     ? {
@@ -903,8 +909,8 @@ function KernelPage({ snapshot, onRefresh, onError }: {
       <div className="table-wrap">
         <table className="module-table kernel-table">
           <thead><tr><th>内核</th><th>主版本</th><th>本地版本</th><th>最新版本</th><th>平台</th><th>状态</th><th>下载源</th><th aria-label="操作" /></tr></thead>
-          <tbody>{(snapshot?.kernels ?? []).map((kernel) => {
-            const installOperation = installOperations.find((operation) => operationTargetsKernel(operation, kernel)
+          <tbody>{visibleKernels.map((kernel) => {
+            const installOperation = installOperations.find((operation) => operationTargetsKernel(operation, kernel, currentPlatform, currentArch)
               && (operation.status === "queued" || operation.status === "running" || operation.id === focusedOperationId)) ?? null;
             const locallyInstalling = busy === `install:${kernel.id}`;
             const installing = locallyInstalling || installOperation?.status === "queued" || installOperation?.status === "running";
@@ -925,14 +931,14 @@ function KernelPage({ snapshot, onRefresh, onError }: {
                 </td>
                 <td>{kernel.downloadAvailable ? "可用" : "未知"}</td>
                 <td className="row-actions inline-actions">
-                  {kernel.major !== null && <button className="icon-button" type="button" title={actionTitle("安装或更新", installReason)} aria-label={`安装 ${kernel.name}`} disabled={!desktop || !kernel.downloadAvailable || Boolean(busy) || installing} onClick={() => void run(`install:${kernel.id}`, () => installKernel(kernel.major!, kernel.kernelType))}>{installing ? <LoaderCircle className="spin" size={15} /> : <HardDriveDownload size={15} />}</button>}
+                  {kernel.major !== null && <button className="icon-button" type="button" title={actionTitle("安装或更新", installReason)} aria-label={`安装 ${kernel.name}`} disabled={!desktop || !kernel.downloadAvailable || Boolean(busy) || installing} onClick={() => void run(`install:${kernel.id}`, () => installKernel(kernel))}>{installing ? <LoaderCircle className="spin" size={15} /> : <HardDriveDownload size={15} />}</button>}
                   {kernel.installPath && <button className="icon-button danger" type="button" title={actionTitle("卸载", kernelActionReason)} aria-label={`卸载 ${kernel.name}`} disabled={!desktop || Boolean(busy)} onClick={() => void run(`uninstall:${kernel.id}`, () => uninstallKernel(kernel.id))}><Trash2 size={15} /></button>}
                 </td>
               </tr>
             );
           })}</tbody>
         </table>
-        {(snapshot?.kernels.length ?? 0) === 0 && <div className="environment-empty"><HardDriveDownload size={18} /><span>尚未扫描内核</span></div>}
+        {visibleKernels.length === 0 && <div className="environment-empty"><HardDriveDownload size={18} /><span>尚未扫描当前平台内核</span></div>}
       </div>
     </section>
   );
@@ -1051,13 +1057,38 @@ function isOperationRecord(value: unknown): value is OperationRecord {
     && typeof candidate.message === "string";
 }
 
-function operationTargetsKernel(operation: OperationRecord, kernel: KernelRecord): boolean {
+function operationTargetsKernel(
+  operation: OperationRecord,
+  kernel: KernelRecord,
+  currentPlatform: string,
+  currentArch: string,
+): boolean {
+  const request = operation.request;
+  if (request && typeof request === "object" && !Array.isArray(request)) {
+    const requestKernelId = readString(request, "kernelId");
+    if (requestKernelId) return requestKernelId === kernel.id;
+  }
   const core = kernelInstallCore(operation);
   if (!core || kernel.major === null || core.major !== kernel.major) return false;
-  return core.kernelType === null || core.kernelType === kernel.kernelType;
+  if (
+    core.kernelType !== null
+    && core.kernelType.trim().toLocaleLowerCase() !== kernel.kernelType.trim().toLocaleLowerCase()
+  ) {
+    return false;
+  }
+  const targetPlatform = normalizePlatform(core.platform ?? currentPlatform);
+  if (targetPlatform && normalizePlatform(kernel.platform) !== targetPlatform) return false;
+  const targetArch = normalizeArch(core.arch ?? currentArch);
+  if (targetArch && normalizeArch(kernel.arch) !== targetArch) return false;
+  return true;
 }
 
-function kernelInstallCore(operation: OperationRecord): { major: number; kernelType: string | null } | null {
+function kernelInstallCore(operation: OperationRecord): {
+  major: number;
+  kernelType: string | null;
+  platform: string | null;
+  arch: string | null;
+} | null {
   const request = operation.request;
   if (!request || typeof request !== "object" || Array.isArray(request)) return null;
   const cores = (request as { cores?: unknown }).cores;
@@ -1070,5 +1101,53 @@ function kernelInstallCore(operation: OperationRecord): { major: number; kernelT
   return {
     major,
     kernelType: typeof type === "string" && type.trim() ? type : null,
+    platform: readString(request, "platform") ?? readString(core, "platform"),
+    arch: readString(request, "arch") ?? readString(core, "arch"),
   };
+}
+
+function kernelMatchesRuntime(kernel: KernelRecord, platform: string, arch: string) {
+  if (platform && normalizePlatform(kernel.platform) !== platform) return false;
+  if (arch && normalizeArch(kernel.arch) !== arch) return false;
+  return true;
+}
+
+function normalizePlatform(value: string) {
+  switch (value.trim().toLocaleLowerCase()) {
+    case "win":
+    case "win32":
+    case "windows":
+      return "windows";
+    case "mac":
+    case "macos":
+    case "darwin":
+      return "macos";
+    case "linux":
+      return "linux";
+    default:
+      return value.trim().toLocaleLowerCase();
+  }
+}
+
+function normalizeArch(value: string) {
+  switch (value.trim().toLocaleLowerCase()) {
+    case "amd64":
+    case "x64":
+    case "x86_64":
+      return "x86_64";
+    case "aarch64":
+    case "arm64":
+      return "arm64";
+    case "x86":
+    case "i386":
+    case "i686":
+      return "i386";
+    default:
+      return value.trim().toLocaleLowerCase();
+  }
+}
+
+function readString(value: object, key: string) {
+  const candidate = (value as Record<string, unknown>)[key];
+  return typeof candidate === "string" && candidate.trim() ? candidate : null;
 }

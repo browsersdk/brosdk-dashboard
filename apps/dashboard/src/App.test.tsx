@@ -38,7 +38,7 @@ describe("App kernel page", () => {
     const installOperation = operation({
       id: "op-install-142",
       status: "running",
-      message: "SDK accepted install; awaiting progress callback",
+      message: "SDK 已受理安装，等待下载进度回调（3 分钟无回调将标记失败）",
     });
     const installRequest = deferred<OperationRecord>();
     api.installKernel.mockReturnValue(installRequest.promise);
@@ -69,6 +69,41 @@ describe("App kernel page", () => {
       expect(screen.getByLabelText("内核安装进度").textContent).toContain("browser-install · Downloading · 42%");
     });
   });
+
+  it("filters platform matrix kernels and installs by kernel id", async () => {
+    const currentSnapshot = snapshot({
+      kernels: [
+        kernel("chrome-146-linux-x86_64", "YunBrowser", "linux", "x86_64", 146),
+        kernel("chrome-146-macos-arm64", "YunBrowser.app", "macos", "arm64", 146),
+        kernel("chrome-146-windows-x86_64", "YunBrowser.exe", "windows", "x86_64", 146),
+      ],
+    });
+    api.getSnapshot.mockResolvedValue(currentSnapshot);
+    api.installKernel.mockResolvedValue(operation({
+      request: {
+        kernelId: "chrome-146-windows-x86_64",
+        platform: "windows",
+        arch: "x86_64",
+        cores: [{ major: 146, type: "chrome" }],
+      },
+    }));
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "内核" });
+
+    expect(screen.queryByText("YunBrowser")).toBeNull();
+    expect(screen.queryByText("YunBrowser.app")).toBeNull();
+    const installButton = screen.getByRole("button", { name: "安装 YunBrowser.exe" });
+    fireEvent.click(installButton);
+
+    await waitFor(() => {
+      expect(api.installKernel).toHaveBeenCalledWith(expect.objectContaining({
+        id: "chrome-146-windows-x86_64",
+        platform: "windows",
+        arch: "x86_64",
+      }));
+    });
+  });
 });
 
 function snapshot(overrides: Partial<DashboardSnapshot> = {}): DashboardSnapshot {
@@ -92,6 +127,7 @@ function snapshot(overrides: Partial<DashboardSnapshot> = {}): DashboardSnapshot
     },
     capabilities: {
       platform: "windows",
+      arch: "x86_64",
       supportStatus: "available",
       unsupportedReason: null,
       cAbi: true,
@@ -170,6 +206,23 @@ function snapshot(overrides: Partial<DashboardSnapshot> = {}): DashboardSnapshot
     latestEventSequence: 0,
     databasePath: "runtime/data/manager.sqlite3",
     ...overrides,
+  };
+}
+
+function kernel(id: string, name: string, platform: string, arch: string, major: number) {
+  return {
+    id,
+    kernelType: "chrome",
+    name,
+    major,
+    version: null,
+    latestVersion: String(major),
+    platform,
+    arch,
+    status: "available",
+    installPath: null,
+    downloadAvailable: true,
+    updatedAt: "2026-07-28T00:00:00.000Z",
   };
 }
 

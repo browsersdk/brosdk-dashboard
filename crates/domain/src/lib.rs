@@ -6,6 +6,7 @@ use serde_json::Value;
 #[serde(rename_all = "camelCase")]
 pub struct SdkCapabilities {
     pub platform: String,
+    pub arch: String,
     pub support_status: String,
     pub unsupported_reason: Option<String>,
     pub c_abi: bool,
@@ -28,6 +29,7 @@ impl Default for SdkCapabilities {
     fn default() -> Self {
         Self {
             platform: std::env::consts::OS.to_string(),
+            arch: normalize_arch(std::env::consts::ARCH),
             support_status: "unavailable".into(),
             unsupported_reason: Some("SDK library has not been resolved".into()),
             c_abi: false,
@@ -45,6 +47,15 @@ impl Default for SdkCapabilities {
             secret_backend: None,
             ipc_transport: None,
         }
+    }
+}
+
+fn normalize_arch(value: &str) -> String {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "amd64" | "x64" | "x86_64" => "x86_64".into(),
+        "aarch64" | "arm64" => "arm64".into(),
+        "x86" | "i386" | "i686" => "i386".into(),
+        other => other.into(),
     }
 }
 
@@ -450,8 +461,11 @@ pub struct KernelRecord {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KernelInstallInput {
+    pub kernel_id: Option<String>,
     pub major: u32,
     pub kernel_type: Option<String>,
+    pub platform: Option<String>,
+    pub arch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
