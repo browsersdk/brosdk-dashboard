@@ -902,7 +902,7 @@ function KernelPage({ snapshot, onRefresh, onError }: {
             <span>{visibleInstallPanel.message}</span>
           </div>
           <span className={`status-badge ${visibleInstallPanel.status}`}>
-            {statusLabel[visibleInstallPanel.status] ?? visibleInstallPanel.status}
+            {kernelInstallOperationStatus(visibleInstallPanel.status)}
           </span>
         </div>
       )}
@@ -916,6 +916,7 @@ function KernelPage({ snapshot, onRefresh, onError }: {
             const installing = locallyInstalling || installOperation?.status === "queued" || installOperation?.status === "running";
             const installProgressStatus = installOperation?.status ?? (locallyInstalling ? "queued" : "");
             const installProgressMessage = installOperation?.message ?? (locallyInstalling ? "已发送安装请求，等待 SDK 受理" : "");
+            const installDisplay = kernelInstallDisplay(installProgressStatus);
             const installReason = !desktop
               ? kernelActionReason
               : installing
@@ -926,8 +927,8 @@ function KernelPage({ snapshot, onRefresh, onError }: {
                 <td><div className="resource-name"><span className="resource-icon"><HardDriveDownload size={16} /></span><div><strong>{kernel.name}</strong><small>{kernel.kernelType}</small></div></div></td>
                 <td>{kernel.major ?? "未知"}</td><td>{kernel.version ?? "未知"}</td><td>{kernel.latestVersion ?? "未知"}</td><td>{kernel.platform} / {kernel.arch}</td>
                 <td className="kernel-state-cell">
-                  <span className={`status-badge ${kernel.status}`}>{kernelStatus(kernel.status)}</span>
-                  {(installOperation || locallyInstalling) && <small>{statusLabel[installProgressStatus] ?? installProgressStatus} · {installProgressMessage}</small>}
+                  <span className={`status-badge ${installDisplay?.className ?? kernel.status}`}>{installDisplay?.label ?? kernelStatus(kernel.status)}</span>
+                  {(installOperation || locallyInstalling) && <small>{installDisplay?.label ?? kernelInstallOperationStatus(installProgressStatus)} · {installProgressMessage}</small>}
                 </td>
                 <td>{kernel.downloadAvailable ? "可用" : "未知"}</td>
                 <td className="row-actions inline-actions">
@@ -1047,6 +1048,15 @@ function credentialSourceLabel(source?: string) { return ({ environment: "系统
 function formatTime(value: string) { return new Date(value).toLocaleString("zh-CN"); }
 function proxyDisplayUrl(profile: ProxyProfile) { return `${profile.scheme}://${profile.username ? `${profile.username}@` : ""}${profile.host}:${profile.port}`; }
 function kernelStatus(status: string) { return ({ installed: "已安装", available: "可安装", "update-available": "可更新", unknown: "未知" } as Record<string, string>)[status] ?? status; }
+function kernelInstallOperationStatus(status: string) {
+  return ({ queued: "安装中", running: "安装中", succeeded: "安装完成", failed: "安装失败", cancelled: "已取消" } as Record<string, string>)[status]
+    ?? statusLabel[status]
+    ?? status;
+}
+function kernelInstallDisplay(status: string) {
+  if (!status) return null;
+  return { className: status, label: kernelInstallOperationStatus(status) };
+}
 
 function isOperationRecord(value: unknown): value is OperationRecord {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;

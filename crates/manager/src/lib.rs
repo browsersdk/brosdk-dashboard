@@ -4013,16 +4013,17 @@ impl Manager {
                         let Some(inner) = weak.upgrade() else {
                             break;
                         };
-                        let refresh_cdp = inner.store.apply_host_event(&event).is_ok()
-                            && event
-                                .event_name
-                                .to_ascii_lowercase()
-                                .contains("browser-open-success")
+                        let event_name = event.event_name.to_ascii_lowercase();
+                        let event_applied = inner.store.apply_host_event(&event).is_ok();
+                        let refresh_cdp = event_applied
+                            && event_name.contains("browser-open-success")
                             && event.env_id.as_deref().is_some_and(|env_id| {
                                 inner.store.environment(env_id).ok().flatten().is_some_and(
                                     |environment| !mirror::is_cdp_endpoint(&environment.cdp),
                                 )
                             });
+                        let refresh_kernels =
+                            event_applied && event_name.contains("browser-install-success");
                         if refresh_cdp && let Some(env_id) = event.env_id.clone() {
                             let refresh_inner = inner.clone();
                             let refresh_host = event_host.clone();
@@ -4065,6 +4066,56 @@ impl Manager {
                                         .store
                                         .reconcile_running_environments(&running, &observed);
                                     break;
+                                }
+                            });
+                        }
+                        if refresh_kernels {
+                            let refresh_manager = Manager {
+                                inner: inner.clone(),
+                            };
+                            let refresh_host = event_host.clone();
+                            let operation_id = event.operation_id.clone();
+                            tokio::spawn(async move {
+                                let Ok(settings) = refresh_manager.inner.store.settings() else {
+                                    return;
+                                };
+                                let api_key = refresh_manager
+                                    .resolve_api_key()
+                                    .ok()
+                                    .flatten()
+                                    .map(|(api_key, _)| api_key);
+                                let sdk_info =
+                                    refresh_host.call(HostCommand::Info, None).await.ok();
+                                match refresh_manager
+                                    .replace_kernel_records_from_catalogs(
+                                        &settings,
+                                        api_key.as_ref().map(|key| key.as_str()),
+                                        sdk_info.as_ref(),
+                                        false,
+                                    )
+                                    .await
+                                {
+                                    Ok((record_count, server_catalog_loaded)) => {
+                                        let _ = refresh_manager.inner.store.append_event(
+                                            "kernel.refresh.install-success",
+                                            None,
+                                            operation_id.as_deref(),
+                                            &json!({
+                                                "recordCount": record_count,
+                                                "serverKernelListLoaded": server_catalog_loaded,
+                                            }),
+                                        );
+                                    }
+                                    Err(error) => {
+                                        let _ = refresh_manager.inner.store.append_event(
+                                            "kernel.refresh.install-success.failed",
+                                            None,
+                                            operation_id.as_deref(),
+                                            &json!({
+                                                "error": redacted_response_text(&error.to_string()),
+                                            }),
+                                        );
+                                    }
                                 }
                             });
                         }

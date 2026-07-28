@@ -51,10 +51,10 @@ describe("App kernel page", () => {
     const pendingPanel = await screen.findByLabelText("内核安装进度");
     expect(pendingPanel.textContent).toContain("Chrome 142");
     expect(pendingPanel.textContent).toContain("已发送安装请求，等待 SDK 受理");
-    expect(pendingPanel.textContent).toContain("排队中");
+    expect(pendingPanel.textContent).toContain("安装中");
     const installButton = screen.getByRole("button", { name: "安装 Chrome" }) as HTMLButtonElement;
     expect(installButton.disabled).toBe(true);
-    expect(screen.getByRole("row", { name: /Chrome.*已发送安装请求，等待 SDK 受理/ })).toBeTruthy();
+    expect(screen.getByRole("row", { name: /Chrome.*安装中.*已发送安装请求，等待 SDK 受理/ })).toBeTruthy();
 
     currentSnapshot = snapshot({
       operations: [operation({
@@ -68,6 +68,31 @@ describe("App kernel page", () => {
     await waitFor(() => {
       expect(screen.getByLabelText("内核安装进度").textContent).toContain("browser-install · Downloading · 42%");
     });
+    expect(screen.getByRole("row", { name: /Chrome.*安装中.*browser-install.*Downloading.*42%/ })).toBeTruthy();
+  });
+
+  it("keeps the focused install row on the callback terminal state", async () => {
+    let currentSnapshot = snapshot();
+    api.getSnapshot.mockImplementation(() => Promise.resolve(currentSnapshot));
+    const installOperation = operation({
+      id: "op-install-success",
+      status: "succeeded",
+      message: "browser-install-success · Installed · 100%",
+    });
+    api.installKernel.mockImplementation(async () => {
+      currentSnapshot = snapshot({ operations: [installOperation] });
+      return installOperation;
+    });
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "内核" });
+
+    fireEvent.click(screen.getByRole("button", { name: "安装 Chrome" }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("内核安装进度").textContent).toContain("安装完成");
+    });
+    expect(screen.getByRole("row", { name: /Chrome.*安装完成.*browser-install-success.*Installed.*100%/ })).toBeTruthy();
   });
 
   it("filters platform matrix kernels and installs by kernel id", async () => {
