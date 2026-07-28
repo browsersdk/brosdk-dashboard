@@ -960,6 +960,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - `ensure_sdk_initialized` 会把最近一次 init catalog 写入 `kernel_records`，因此首次初始化和首次 snapshot 后内核页不再只依赖本地目录扫描。
 - 内核刷新同时合并 init catalog、`sdk_info` catalog 和本地 cores；解析器兼容 `/api/v2/browser/kernelList` 文档中的 `data.list` 分页结构以及 `items/records/rows` 别名。
 - `versionCode/version` 优先于 `majorVersion` 作为最新版本显示；新增 Manager 单元测试覆盖浏览器内核列表分页和 init/info 双 catalog 合并。
+- Dashboard workspace 预览同步扩展为服务端 catalog + 本地 cores 的合并样例，内核页至少覆盖可安装、可更新和未知下载源状态；Playwright 桌面/移动回归直接断言 5 行 catalog，避免预览只显示单个本地内核。
 
 ## 38. 阶段 35：跨境店铺与环境绑定
 

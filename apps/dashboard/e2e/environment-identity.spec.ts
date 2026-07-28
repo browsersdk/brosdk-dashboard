@@ -103,6 +103,21 @@ test("disabled actions expose reasons and icon targets stay stable", async ({ pa
   expect(issues).toEqual([]);
 });
 
+test("kernel preview shows the server catalog merged with local cores", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  await page.goto(`/?${scenario}&page=kernels`);
+  await expectHealthyDashboard(page, "内核");
+
+  const rows = page.locator(".kernel-table tbody tr");
+  await expect(rows).toHaveCount(5);
+  await expect(page.getByRole("row", { name: /Chrome\s+chrome.*142.*142001.*可安装.*可用/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /Firefox\s+firefox.*140.*140012.*可安装.*可用/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /Chromium\s+chromium.*139.*139009.*可安装.*可用/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /Broium\s+broium.*138.*未知.*可安装.*未知/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /Chrome\s+chrome.*141.*141\.0\.7390\.0.*142001.*可更新.*可用/ })).toBeVisible();
+  expect(issues).toEqual([]);
+});
+
 test("same-name environments remain independently searchable and selectable", async ({ page }) => {
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=environments`);

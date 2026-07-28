@@ -128,7 +128,7 @@ brosdk-dashboard/
 
 阶段 34 全界面动作状态收口已完成：总览、环境、指纹、代理、内核、MCP、AI、操作和设置中的禁用按钮都提供明确悬停原因，桌面预览、忙碌、缺少目标环境、缺少 URL、未配置凭据等状态不再只表现为灰色按钮。新增共享 `actionTitle/desktopActionReason` 帮助器，统一桌面能力和忙碌态提示；表格动作列和 AI 会话列表的图标按钮固定为可点击尺寸，内核安装/卸载双按钮不会被表格压缩。Playwright 新增桌面/移动守护，逐页断言禁用动作有原因、图标按钮不小于 30px、无横向溢出；浏览器插件再次覆盖 9 个主要页面。最终 Dashboard 56 项、Playwright 桌面/移动 26 项、TypeScript/Rust check、Rustfmt 和 Clippy 全部通过。
 
-内核管理补丁完成（2026-07-28）：`sdk-host` 初始化时从 `sdk_init` 响应提取非敏感 `kernelCatalog`，Manager 立即写入 `kernel_records`；内核页刷新会同时合并最近一次 init catalog、`sdk_info` 返回和 `<workDir>/**/cores/**/.core.json`。解析器兼容 `data.kernelVersions` 与 `data.list/items/records/rows` 这类服务端分页结构，`versionCode/version` 优先于 `majorVersion` 展示为最新版本。
+内核管理补丁完成（2026-07-28）：`sdk-host` 初始化时从 `sdk_init` 响应提取非敏感 `kernelCatalog`，Manager 立即写入 `kernel_records`；内核页刷新会同时合并最近一次 init catalog、`sdk_info` 返回和 `<workDir>/**/cores/**/.core.json`。解析器兼容 `data.kernelVersions` 与 `data.list/items/records/rows` 这类服务端分页结构，`versionCode/version` 优先于 `majorVersion` 展示为最新版本。Dashboard workspace 预览也同步使用多内核 catalog 样例，覆盖可安装、可更新和未知下载源状态，避免演示页面只展示一个本地 core。
 
 阶段 35-39 已规划为跨境电商轻量运营中台方向，按店铺环境绑定、订单发货、SKU/库存、商品刊登和 Commerce Agent 递进实施。该方向继续复用 envId 唯一主键、Manager operation、安全凭据、DLL MCP 和 AI 审批链路；平台订单、库存和刊登状态仍以平台 API 为事实来源，本地只保存可删除同步缓存和审计记录。
 
