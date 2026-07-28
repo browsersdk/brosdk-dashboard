@@ -969,7 +969,7 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 安装 operation request 保存 `kernelId/platform/arch`，UI 优先按 `kernelId` 绑定行级进度，重试也按同一 kernel 重放；传给 DLL 的 `sdk_browser_install` 请求仍保持 `cores: [{ type, major }]`。
 - SDK 已受理但 3 分钟没有任何下载进度回调时，Manager 会把 operation 标记为 `failed / SDK_INSTALL_TIMEOUT`，操作中心显示可重试，而不是让内核页无限转圈。
 - 组件测试覆盖真实桌面点击后 `installKernel` Promise 未返回时的即时反馈和跨平台同版本 catalog 过滤；Playwright 桌面/移动覆盖 `browser-install · Downloading · 42%` 的顶部/行内可见状态、当前平台过滤、安装按钮禁用、无横向溢出和控制台健康。
-- 本轮验证通过 Dashboard 58 项组件测试、Playwright 桌面/移动 32 项、Rust workspace 测试、Rustfmt、Clippy、production build、Browser 插件内核矩阵可视验证、Windows NSIS/便携构建和 release verify。
+- 本轮验证通过 Dashboard 58 项组件测试、Playwright 桌面/移动 32 项、Rust workspace 测试、Rustfmt、Clippy、production build、Browser 插件内核矩阵可视验证、真实 API Key `manager:smoke`（`serverKernelListLoaded=true/count=12`）、Windows NSIS/便携构建和 release verify。
 
 ## 38. 阶段 35：跨境店铺与环境绑定
 

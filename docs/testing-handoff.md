@@ -517,4 +517,4 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - `cargo test -p manager stale_kernel_install_operation_becomes_retryable_failure --lib` 必须覆盖 SDK 已受理但无下载进度回调时，Manager 将 operation 收敛为 `failed / SDK_INSTALL_TIMEOUT`，操作中心可重试。
 - `npm run e2e --workspace apps/dashboard -- -g "kernel"` 必须在桌面和移动视口断言 `browser-install · Downloading · 42%` 可见、安装按钮禁用、同版本 linux/macos/windows catalog 只显示当前 `platform/arch`、页面无横向溢出和无应用控制台错误。
 
-2026-07-28 结果：Dashboard 58 项组件测试、Playwright 桌面/移动 32 项、Rust workspace 测试、Rustfmt、Clippy、production build、Browser 插件内核矩阵可视验证、Windows NSIS/便携构建和 `npm run release:verify` 均通过。
+2026-07-28 结果：Dashboard 58 项组件测试、Playwright 桌面/移动 32 项、Rust workspace 测试、Rustfmt、Clippy、production build、Browser 插件内核矩阵可视验证、真实 API Key `npm run manager:smoke`（`serverKernelListLoaded=true/count=12`）、Windows NSIS/便携构建和 `npm run release:verify` 均通过。
