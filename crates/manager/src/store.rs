@@ -1545,27 +1545,32 @@ fn apply_async_operation_event(
         return Ok(());
     }
     let event_name = event.event_name.to_ascii_lowercase();
+    let message = lifecycle_event_message(event);
     let status = if event_name.contains("install-success") {
-        "succeeded"
+        Some("succeeded")
     } else if event_name.contains("install-fail") || event_name.contains("error") || event.code < 0
     {
-        "failed"
+        Some("failed")
     } else {
-        return Ok(());
+        None
     };
-    transaction.execute(
-        r#"UPDATE operations SET status = ?1, message = ?2,
-                  request_id = COALESCE(request_id, ?3),
-                  error_code = CASE WHEN ?1 = 'failed' THEN 'SDK_EVENT_FAILED' ELSE NULL END,
-                  updated_at = ?4 WHERE id = ?5 AND status = 'running'"#,
-        params![
-            status,
-            event.event_name,
-            event.request_id,
-            timestamp(),
-            operation.id,
-        ],
-    )?;
+    let now = timestamp();
+    if let Some(status) = status {
+        transaction.execute(
+            r#"UPDATE operations SET status = ?1, message = ?2,
+                      request_id = COALESCE(request_id, ?3),
+                      error_code = CASE WHEN ?1 = 'failed' THEN 'SDK_EVENT_FAILED' ELSE NULL END,
+                      updated_at = ?4 WHERE id = ?5 AND status = 'running'"#,
+            params![status, message, event.request_id, now, operation.id],
+        )?;
+    } else {
+        transaction.execute(
+            r#"UPDATE operations SET message = ?1,
+                      request_id = COALESCE(request_id, ?2),
+                      updated_at = ?3 WHERE id = ?4 AND status IN ('queued', 'running')"#,
+            params![message, event.request_id, now, operation.id],
+        )?;
+    }
     Ok(())
 }
 
@@ -2717,6 +2722,79 @@ mod tests {
         assert_eq!(environment.current_operation_id, Some(operation.id.clone()));
         assert_eq!(operation.status, "running");
         assert_eq!(operation.message, "browser-open · Downloading · 37%");
+    }
+
+    #[test]
+    fn kernel_install_progress_updates_operation_message() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = test_store(&directory);
+        let operation = store
+            .create_operation(
+                "kernel.install",
+                None,
+                "安装内核",
+                0,
+                Some(&json!({ "cores": [{ "major": 142, "type": "chrome" }] })),
+            )
+            .expect("operation");
+        store
+            .transition_operation(
+                &operation.id,
+                "running",
+                "calling sdk_browser_install",
+                None,
+            )
+            .expect("running");
+        store
+            .update_operation_progress(
+                &operation.id,
+                Some(42),
+                "SDK accepted install; awaiting progress callback",
+            )
+            .expect("accepted response");
+
+        store
+            .apply_host_event(&HostEvent {
+                sequence: 1,
+                event_type: "sdk.result".into(),
+                code: 0,
+                event_name: "browser-install".into(),
+                request_id: Some(42),
+                operation_id: Some(operation.id.clone()),
+                env_id: None,
+                payload: json!({ "data": { "statusName": "Downloading", "percent": 42 } }),
+                received_at: Utc::now(),
+            })
+            .expect("progress callback");
+        let progress = store
+            .operation(&operation.id)
+            .expect("operation")
+            .expect("stored operation");
+        assert_eq!(progress.status, "running");
+        assert_eq!(progress.message, "browser-install · Downloading · 42%");
+
+        store
+            .apply_host_event(&HostEvent {
+                sequence: 2,
+                event_type: "sdk.result".into(),
+                code: 0,
+                event_name: "browser-install-success".into(),
+                request_id: Some(42),
+                operation_id: Some(operation.id.clone()),
+                env_id: None,
+                payload: json!({ "data": { "statusName": "Installed", "percent": 100 } }),
+                received_at: Utc::now(),
+            })
+            .expect("success callback");
+        let finished = store
+            .operation(&operation.id)
+            .expect("operation")
+            .expect("stored operation");
+        assert_eq!(finished.status, "succeeded");
+        assert_eq!(
+            finished.message,
+            "browser-install-success · Installed · 100%"
+        );
     }
 
     #[test]

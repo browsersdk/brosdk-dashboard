@@ -176,20 +176,20 @@ export async function openFingerprintCheck(envId: string): Promise<OperationExec
   return invoke("manager_open_fingerprint_check", { envId });
 }
 
-export async function refreshKernels() {
-  return invoke("manager_refresh_kernels");
+export async function refreshKernels(): Promise<OperationRecord> {
+  return invoke<OperationRecord>("manager_refresh_kernels");
 }
 
-export async function installKernel(major: number, kernelType: string | null) {
-  return invoke("manager_install_kernel", { input: { major, kernelType } });
+export async function installKernel(major: number, kernelType: string | null): Promise<OperationRecord> {
+  return invoke<OperationRecord>("manager_install_kernel", { input: { major, kernelType } });
 }
 
 export async function cleanupKernelCache(major: number | null): Promise<OperationExecution> {
   return invoke("manager_cleanup_kernel_cache", { major });
 }
 
-export async function uninstallKernel(kernelId: string) {
-  return invoke("manager_uninstall_kernel", { kernelId });
+export async function uninstallKernel(kernelId: string): Promise<OperationRecord> {
+  return invoke<OperationRecord>("manager_uninstall_kernel", { kernelId });
 }
 
 export async function cancelOperation(operationId: string) {
@@ -290,13 +290,43 @@ function demoSnapshot(): DashboardSnapshot {
   const search = new URLSearchParams(window.location.search);
   const workspacePreview = search.get("preview") === "workspace";
   const duplicateNames = search.get("scenario") === "duplicate-names";
+  const kernelInstalling = search.get("scenario") === "kernel-installing";
   const startingProgress = search.get("scenario") === "starting-progress";
   const firstEnvironmentName = duplicateNames ? "共享工作环境" : "Marketing CN";
   const secondEnvironmentName = duplicateNames ? "共享工作环境" : "Operations JP";
   const firstEnvironmentStatus = duplicateNames ? "ready" : startingProgress ? "starting" : "stopped";
   const secondEnvironmentStatus = duplicateNames ? "ready" : "stopped";
   const previewNow = new Date().toISOString();
-  const previewOperations = duplicateNames ? [
+  const previewOperations = kernelInstalling ? [
+    {
+      id: "op-preview-kernel-install",
+      kind: "kernel.install",
+      envId: null,
+      label: "安装或更新内核",
+      status: "running",
+      message: "browser-install · Downloading · 42%",
+      requestId: 42,
+      generation: 0,
+      errorCode: null,
+      request: { cores: [{ major: 142, type: "chrome" }] },
+      createdAt: previewNow,
+      updatedAt: previewNow,
+    },
+    {
+      id: "op-preview-sync",
+      kind: "environment.sync",
+      envId: null,
+      label: "同步远端环境",
+      status: "succeeded",
+      message: "synced 1 environments",
+      requestId: null,
+      generation: 0,
+      errorCode: null,
+      request: null,
+      createdAt: previewNow,
+      updatedAt: previewNow,
+    },
+  ] : duplicateNames ? [
     {
       id: "op-preview-start-01",
       kind: "environment.start",

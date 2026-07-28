@@ -509,3 +509,11 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - `npm run e2e:ai-assistant` 必须覆盖真实全局会话导航：环境 ready 后要求打开 `https://example.com/`，断言模型使用 `env.navigate`，且没有再次调用生命周期 `browser.open/browser.close`。
 
 2026-07-27 阶段 32 真实结果：DeepSeek `deepseek-v4-flash` 真实 AI E2E 通过，报告包含 `globalNavigateToolObserved=true`、`globalNavigateAvoidedLifecycle=true`、`inactiveEnvGetHandled=true`、`initialStateRestored=true`。Dashboard AI 组件测试新增自动 Agent MCP 参数展示断言，Manager 单元测试新增全局 `env.navigate` 绑定、schema envId、Chat 过滤 mutation、全局状态读取不强制 ready 和全局环境工具执行校验。桌面 E2E 脚本修复 ready baseline 竞态、停止状态中文否定误判和自动/手动执行模式切换。
+
+## 35. 内核安装反馈回归
+
+- `npm run test --workspace apps/dashboard -- App.test.tsx` 必须覆盖真实桌面点击“安装 Chrome”后，`installKernel` Promise 未返回时顶部“内核安装进度”和行内“等待 SDK 受理”已经可见。
+- `cargo test -p manager kernel_install_progress_updates_operation_message --lib` 必须覆盖 `kernel.install` 中间回调刷新 operation message，成功回调再切换到 `succeeded`。
+- `npm run e2e --workspace apps/dashboard -- -g "kernel install progress"` 必须在桌面和移动视口断言 `browser-install · Downloading · 42%` 可见、安装按钮禁用、页面无横向溢出和无应用控制台错误。
+
+2026-07-28 结果：Dashboard 57 项组件测试、Playwright 桌面/移动 30 项、Rust workspace 测试、Rustfmt、Clippy、production build、Windows NSIS/便携构建和 `npm run release:verify` 均通过。

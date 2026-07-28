@@ -119,6 +119,20 @@ test("kernel preview shows the server catalog merged with local cores", async ({
   expect(issues).toEqual([]);
 });
 
+test("kernel install progress is visible on the kernel page", async ({ page }) => {
+  const issues = monitorPageIssues(page);
+  await page.goto("/?preview=workspace&scenario=kernel-installing&page=kernels");
+  await expectHealthyDashboard(page, "内核");
+
+  await expect(page.getByLabel("内核安装进度")).toContainText("安装或更新内核");
+  await expect(page.getByLabel("内核安装进度")).toContainText("browser-install · Downloading · 42%");
+  await expect(page.getByLabel("内核安装进度")).toContainText("执行中");
+  const row = page.getByRole("row", { name: /Chrome\s+chrome.*142.*browser-install.*Downloading.*42%/ });
+  await expect(row).toBeVisible();
+  await expect(row.getByRole("button", { name: "安装 Chrome" })).toBeDisabled();
+  expect(issues).toEqual([]);
+});
+
 test("same-name environments remain independently searchable and selectable", async ({ page }) => {
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=environments`);

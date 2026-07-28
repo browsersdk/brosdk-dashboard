@@ -80,7 +80,9 @@ import { environmentProgress } from "./environmentProgress";
 import type {
   DashboardSnapshot,
   EnvironmentBatchAction,
+  KernelRecord,
   ManagerSettings,
+  OperationRecord,
   ProxyProfile,
   SmokeReport,
   SmokeStage,
@@ -829,11 +831,47 @@ function KernelPage({ snapshot, onRefresh, onError }: {
   onError: (message: string) => void;
 }) {
   const [busy, setBusy] = useState("");
+  const [focusedOperationId, setFocusedOperationId] = useState<string | null>(null);
   const desktop = isDesktopRuntime();
   const kernelActionReason = desktopActionReason(desktop, Boolean(busy), "内核操作正在执行");
+  const installOperations = useMemo(
+    () => snapshot?.operations.filter((operation) => operation.kind === "kernel.install") ?? [],
+    [snapshot?.operations],
+  );
+  const activeInstallOperation = installOperations.find(
+    (operation) => operation.status === "queued" || operation.status === "running",
+  ) ?? null;
+  const focusedOperation = focusedOperationId
+    ? installOperations.find((operation) => operation.id === focusedOperationId) ?? null
+    : null;
+  const visibleInstallOperation = focusedOperation ?? activeInstallOperation;
+  const pendingInstallKernel = useMemo(
+    () => snapshot?.kernels.find((kernel) => busy === `install:${kernel.id}`) ?? null,
+    [busy, snapshot?.kernels],
+  );
+  const visibleInstallPanel = visibleInstallOperation
+    ? {
+      label: visibleInstallOperation.label,
+      message: visibleInstallOperation.message || "等待 SDK 回调更新安装状态",
+      status: visibleInstallOperation.status,
+    }
+    : pendingInstallKernel
+      ? {
+        label: "安装或更新内核",
+        message: `${pendingInstallKernel.name} ${pendingInstallKernel.major ?? "未知版本"} · 已发送安装请求，等待 SDK 受理`,
+        status: "queued",
+      }
+      : null;
+
   async function run(action: string, callback: () => Promise<unknown>) {
     setBusy(action); onError("");
-    try { await callback(); await onRefresh(); }
+    try {
+      const result = await callback();
+      if (isOperationRecord(result)) {
+        setFocusedOperationId(result.id);
+      }
+      await onRefresh();
+    }
     catch (requestError) { onError(errorMessage(requestError, "内核操作失败")); }
     finally { setBusy(""); }
   }
@@ -846,20 +884,53 @@ function KernelPage({ snapshot, onRefresh, onError }: {
           <button className="button primary compact" type="button" title={actionTitle("刷新内核", kernelActionReason)} disabled={!desktop || Boolean(busy)} onClick={() => void run("refresh", refreshKernels)}><RefreshCw className={busy === "refresh" ? "spin" : ""} size={14} />刷新</button>
         </div>
       </div>
+      {visibleInstallPanel && (
+        <div className="kernel-operation-panel" aria-live="polite" aria-label="内核安装进度">
+          {visibleInstallPanel.status === "running" || visibleInstallPanel.status === "queued"
+            ? <LoaderCircle className="spin" size={16} />
+            : visibleInstallPanel.status === "failed"
+              ? <CircleAlert size={16} />
+              : <CheckCircle2 size={16} />}
+          <div>
+            <strong>{visibleInstallPanel.label}</strong>
+            <span>{visibleInstallPanel.message}</span>
+          </div>
+          <span className={`status-badge ${visibleInstallPanel.status}`}>
+            {statusLabel[visibleInstallPanel.status] ?? visibleInstallPanel.status}
+          </span>
+        </div>
+      )}
       <div className="table-wrap">
         <table className="module-table kernel-table">
           <thead><tr><th>内核</th><th>主版本</th><th>本地版本</th><th>最新版本</th><th>平台</th><th>状态</th><th>下载源</th><th aria-label="操作" /></tr></thead>
-          <tbody>{(snapshot?.kernels ?? []).map((kernel) => (
-            <tr key={kernel.id}>
-              <td><div className="resource-name"><span className="resource-icon"><HardDriveDownload size={16} /></span><div><strong>{kernel.name}</strong><small>{kernel.kernelType}</small></div></div></td>
-              <td>{kernel.major ?? "未知"}</td><td>{kernel.version ?? "未知"}</td><td>{kernel.latestVersion ?? "未知"}</td><td>{kernel.platform} / {kernel.arch}</td>
-              <td><span className={`status-badge ${kernel.status}`}>{kernelStatus(kernel.status)}</span></td><td>{kernel.downloadAvailable ? "可用" : "未知"}</td>
-              <td className="row-actions inline-actions">
-                {kernel.major !== null && <button className="icon-button" type="button" title={actionTitle("安装或更新", kernelActionReason || (!kernel.downloadAvailable ? "下载源未知" : ""))} aria-label={`安装 ${kernel.name}`} disabled={!desktop || !kernel.downloadAvailable || Boolean(busy)} onClick={() => void run(`install:${kernel.id}`, () => installKernel(kernel.major!, kernel.kernelType))}><HardDriveDownload size={15} /></button>}
-                {kernel.installPath && <button className="icon-button danger" type="button" title={actionTitle("卸载", kernelActionReason)} aria-label={`卸载 ${kernel.name}`} disabled={!desktop || Boolean(busy)} onClick={() => void run(`uninstall:${kernel.id}`, () => uninstallKernel(kernel.id))}><Trash2 size={15} /></button>}
-              </td>
-            </tr>
-          ))}</tbody>
+          <tbody>{(snapshot?.kernels ?? []).map((kernel) => {
+            const installOperation = installOperations.find((operation) => operationTargetsKernel(operation, kernel)
+              && (operation.status === "queued" || operation.status === "running" || operation.id === focusedOperationId)) ?? null;
+            const locallyInstalling = busy === `install:${kernel.id}`;
+            const installing = locallyInstalling || installOperation?.status === "queued" || installOperation?.status === "running";
+            const installProgressStatus = installOperation?.status ?? (locallyInstalling ? "queued" : "");
+            const installProgressMessage = installOperation?.message ?? (locallyInstalling ? "已发送安装请求，等待 SDK 受理" : "");
+            const installReason = !desktop
+              ? kernelActionReason
+              : installing
+                ? `正在安装: ${installProgressMessage}`
+                : kernelActionReason || (!kernel.downloadAvailable ? "下载源未知" : "");
+            return (
+              <tr key={kernel.id}>
+                <td><div className="resource-name"><span className="resource-icon"><HardDriveDownload size={16} /></span><div><strong>{kernel.name}</strong><small>{kernel.kernelType}</small></div></div></td>
+                <td>{kernel.major ?? "未知"}</td><td>{kernel.version ?? "未知"}</td><td>{kernel.latestVersion ?? "未知"}</td><td>{kernel.platform} / {kernel.arch}</td>
+                <td className="kernel-state-cell">
+                  <span className={`status-badge ${kernel.status}`}>{kernelStatus(kernel.status)}</span>
+                  {(installOperation || locallyInstalling) && <small>{statusLabel[installProgressStatus] ?? installProgressStatus} · {installProgressMessage}</small>}
+                </td>
+                <td>{kernel.downloadAvailable ? "可用" : "未知"}</td>
+                <td className="row-actions inline-actions">
+                  {kernel.major !== null && <button className="icon-button" type="button" title={actionTitle("安装或更新", installReason)} aria-label={`安装 ${kernel.name}`} disabled={!desktop || !kernel.downloadAvailable || Boolean(busy) || installing} onClick={() => void run(`install:${kernel.id}`, () => installKernel(kernel.major!, kernel.kernelType))}>{installing ? <LoaderCircle className="spin" size={15} /> : <HardDriveDownload size={15} />}</button>}
+                  {kernel.installPath && <button className="icon-button danger" type="button" title={actionTitle("卸载", kernelActionReason)} aria-label={`卸载 ${kernel.name}`} disabled={!desktop || Boolean(busy)} onClick={() => void run(`uninstall:${kernel.id}`, () => uninstallKernel(kernel.id))}><Trash2 size={15} /></button>}
+                </td>
+              </tr>
+            );
+          })}</tbody>
         </table>
         {(snapshot?.kernels.length ?? 0) === 0 && <div className="environment-empty"><HardDriveDownload size={18} /><span>尚未扫描内核</span></div>}
       </div>
@@ -970,3 +1041,34 @@ function credentialSourceLabel(source?: string) { return ({ environment: "系统
 function formatTime(value: string) { return new Date(value).toLocaleString("zh-CN"); }
 function proxyDisplayUrl(profile: ProxyProfile) { return `${profile.scheme}://${profile.username ? `${profile.username}@` : ""}${profile.host}:${profile.port}`; }
 function kernelStatus(status: string) { return ({ installed: "已安装", available: "可安装", "update-available": "可更新", unknown: "未知" } as Record<string, string>)[status] ?? status; }
+
+function isOperationRecord(value: unknown): value is OperationRecord {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<OperationRecord>;
+  return typeof candidate.id === "string"
+    && typeof candidate.kind === "string"
+    && typeof candidate.status === "string"
+    && typeof candidate.message === "string";
+}
+
+function operationTargetsKernel(operation: OperationRecord, kernel: KernelRecord): boolean {
+  const core = kernelInstallCore(operation);
+  if (!core || kernel.major === null || core.major !== kernel.major) return false;
+  return core.kernelType === null || core.kernelType === kernel.kernelType;
+}
+
+function kernelInstallCore(operation: OperationRecord): { major: number; kernelType: string | null } | null {
+  const request = operation.request;
+  if (!request || typeof request !== "object" || Array.isArray(request)) return null;
+  const cores = (request as { cores?: unknown }).cores;
+  if (!Array.isArray(cores) || cores.length === 0) return null;
+  const core = cores[0];
+  if (!core || typeof core !== "object" || Array.isArray(core)) return null;
+  const major = Number((core as { major?: unknown }).major);
+  if (!Number.isFinite(major)) return null;
+  const type = (core as { type?: unknown }).type;
+  return {
+    major,
+    kernelType: typeof type === "string" && type.trim() ? type : null,
+  };
+}

@@ -962,6 +962,13 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 解析器兼容 `/api/v2/browser/kernelList` 文档中的 `data.list` 分页结构以及 `items/records/rows` 别名，并优先展示服务端 `kernelVersion`；新增 Manager 单元测试覆盖浏览器内核列表分页、init/info 双 catalog 合并和 URL 改写。
 - Dashboard workspace 预览同步扩展为服务端 catalog + 本地 cores 的合并样例，内核页至少覆盖可安装、可更新和未知下载源状态；Playwright 桌面/移动回归直接断言 5 行 catalog，避免预览只显示单个本地内核。
 
+内核安装反馈补丁（2026-07-28）：
+
+- 点击内核“安装或更新”后，Dashboard 不等待 SDK 返回就显示顶部进度面板和对应行内状态，文案为“已发送安装请求，等待 SDK 受理”，按钮保持禁用并显示旋转图标。
+- Manager 将 `kernel.install` 的非终态 SDK/DLL 回调写入 operation message；`browser-install-success` 与失败事件继续切换终态，不把原始 payload 暴露给 Dashboard。
+- 组件测试覆盖真实桌面点击后 `installKernel` Promise 未返回时的即时反馈；Playwright 桌面/移动覆盖 `browser-install · Downloading · 42%` 的顶部/行内可见状态、安装按钮禁用、无横向溢出和控制台健康。
+- 本轮验证通过 Dashboard 57 项组件测试、Playwright 桌面/移动 30 项、Rust workspace 测试、Rustfmt、Clippy、production build、Windows NSIS/便携构建和 release verify。
+
 ## 38. 阶段 35：跨境店铺与环境绑定
 
 目标：把 BroSDK Dashboard 从“多环境浏览器控制台”扩展为“跨境多店铺运营中台”的基础骨架，但不直接做完整 ERP。
