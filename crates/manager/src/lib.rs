@@ -41,6 +41,7 @@ const MAX_ENVIRONMENT_PAGES: usize = 500;
 const MAX_ENVIRONMENTS: usize = 100_000;
 const KERNEL_CATALOG_PAGE_SIZE: u64 = 200;
 const MAX_KERNEL_CATALOG_PAGES: u64 = 100;
+const DEFAULT_SDK_API_URL: &str = "https://api.brosdk.com";
 const MAX_ENVIRONMENT_BATCH_SIZE: usize = 20;
 const API_KEY_SECRET_ID: &str = "sdk-api-key";
 const API_KEY_SECRET_REFERENCE: &str = "sdk-api-key.bin";
@@ -3780,7 +3781,7 @@ impl Manager {
             .initialize(
                 settings.work_dir.clone(),
                 port,
-                settings.sdk_api_url.clone(),
+                Some(effective_sdk_api_url(&settings)),
                 settings.debug,
             )
             .await?;
@@ -4434,6 +4435,10 @@ fn kernel_browser_list_endpoint(
         .filter(|value| !value.trim().is_empty())
         .map(browser_kernel_list_url)
         .transpose()
+        .and_then(|url| match url {
+            Some(url) => Ok(Some(url)),
+            None => browser_kernel_list_url(DEFAULT_SDK_API_URL).map(Some),
+        })
 }
 
 fn browser_kernel_list_url(value: &str) -> Result<url::Url, ManagerError> {
@@ -4450,6 +4455,16 @@ fn browser_kernel_list_url(value: &str) -> Result<url::Url, ManagerError> {
     }
     url.set_path("/api/v2/browser/kernelList");
     Ok(url)
+}
+
+fn effective_sdk_api_url(settings: &ManagerSettings) -> String {
+    settings
+        .sdk_api_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_SDK_API_URL)
+        .to_string()
 }
 
 fn embedded_mcp_port_for_initialization(
@@ -6243,6 +6258,30 @@ mod tests {
             .expect("url")
             .as_str(),
             "https://api.example.test/api/v2/browser/kernelList"
+        );
+    }
+
+    #[test]
+    fn kernel_list_endpoint_uses_public_default_when_unconfigured() {
+        let settings = ManagerSettings {
+            data_dir: "data".into(),
+            work_dir: "work".into(),
+            extension_dir: "extensions".into(),
+            log_dir: "logs".into(),
+            sdk_api_url: None,
+            debug: false,
+            startup_policy: "restore-none".into(),
+            embedded_mcp_port: None,
+            ai_base_url: None,
+            ai_model: None,
+        };
+        assert_eq!(effective_sdk_api_url(&settings), "https://api.brosdk.com");
+        assert_eq!(
+            kernel_browser_list_endpoint(&settings, None)
+                .expect("endpoint")
+                .expect("url")
+                .as_str(),
+            "https://api.brosdk.com/api/v2/browser/kernelList"
         );
     }
 

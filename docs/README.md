@@ -66,7 +66,7 @@ brosdk-dashboard/
 - Dashboard 不直接加载 DLL，不直接读写本地数据库，不直接访问 CDP。所有操作进入本地 Manager/operation 队列。
 - 动态端口只用于必要的本地 HTTP/MCP 入口。客户端内部优先用 named pipe/UDS 或 Tauri command/event，减少端口占用和启动失败点。
 
-阶段 6 已补齐指纹、代理、内核、操作和设置菜单。代理密码在 Windows 使用 DPAPI 保护；目录、导入/导出和诊断包使用系统文件选择器；内核管理会合并 API Key `kernelList`、`sdk_init` 返回的服务端 `kernelVersions`、后续 `sdk_info` catalog 和本地已安装 cores；没有可靠 catalog URL 时显示“未知”，不会误报可更新。
+阶段 6 已补齐指纹、代理、内核、操作和设置菜单。代理密码在 Windows 使用 DPAPI 保护；目录、导入/导出和诊断包使用系统文件选择器；内核管理会合并 API Key `kernelList`、`sdk_init` 返回的服务端 `kernelVersions`、后续 `sdk_info` catalog 和本地已安装 cores；未配置 SDK API URL 时按参考客户端默认使用 `https://api.brosdk.com`，请求失败时显示“未知”，不会误报可更新。
 
 ## 当前实施状态
 
@@ -128,7 +128,7 @@ brosdk-dashboard/
 
 阶段 34 全界面动作状态收口已完成：总览、环境、指纹、代理、内核、MCP、AI、操作和设置中的禁用按钮都提供明确悬停原因，桌面预览、忙碌、缺少目标环境、缺少 URL、未配置凭据等状态不再只表现为灰色按钮。新增共享 `actionTitle/desktopActionReason` 帮助器，统一桌面能力和忙碌态提示；表格动作列和 AI 会话列表的图标按钮固定为可点击尺寸，内核安装/卸载双按钮不会被表格压缩。Playwright 新增桌面/移动守护，逐页断言禁用动作有原因、图标按钮不小于 30px、无横向溢出；浏览器插件再次覆盖 9 个主要页面。最终 Dashboard 56 项、Playwright 桌面/移动 26 项、TypeScript/Rust check、Rustfmt 和 Clippy 全部通过。
 
-内核管理补丁完成（2026-07-28）：`sdk-host` 初始化时从 `sdk_init` 响应提取非敏感 `kernelCatalog` 与 `kernelListUrl`，Manager 立即合并写入 `kernel_records`；首次初始化和内核页刷新还会由 Manager 使用受保护 API Key 请求同源 `/api/v2/browser/kernelList`，body 固定包含 `page/pageSize/status=1`，再合并最近一次 init catalog、`sdk_info` 返回和 `<workDir>/**/cores/**/.core.json`。解析器兼容 `data.kernelVersions` 与 `data.list/items/records/rows` 这类服务端分页结构，并优先展示服务端 `kernelVersion`。Dashboard workspace 预览也同步使用多内核 catalog 样例，覆盖可安装、可更新和未知下载源状态，避免演示页面只展示一个本地 core。
+内核管理补丁完成（2026-07-28）：`sdk-host` 初始化时从 `sdk_init` 响应提取非敏感 `kernelCatalog` 与 `kernelListUrl`，Manager 立即合并写入 `kernel_records`；首次初始化和内核页刷新还会由 Manager 使用受保护 API Key 请求 `/api/v2/browser/kernelList`，body 固定包含 `page/pageSize/status=1`，优先使用设置页 `sdkApiUrl` 或 DLL 返回同源 URL，缺失时使用参考客户端默认 `https://api.brosdk.com`，再合并最近一次 init catalog、`sdk_info` 返回和 `<workDir>/**/cores/**/.core.json`。解析器兼容 `data.kernelVersions` 与 `data.list/items/records/rows` 这类服务端分页结构，并优先展示服务端 `kernelVersion`。Dashboard workspace 预览也同步使用多内核 catalog 样例，覆盖可安装、可更新和未知下载源状态，避免演示页面只展示一个本地 core；`manager:smoke` 会输出 `kernelRefresh.serverKernelListLoaded/count/preview` 用于不打开界面排查发布包内核列表。
 
 阶段 35-39 已规划为跨境电商轻量运营中台方向，按店铺环境绑定、订单发货、SKU/库存、商品刊登和 Commerce Agent 递进实施。该方向继续复用 envId 唯一主键、Manager operation、安全凭据、DLL MCP 和 AI 审批链路；平台订单、库存和刊登状态仍以平台 API 为事实来源，本地只保存可删除同步缓存和审计记录。
 

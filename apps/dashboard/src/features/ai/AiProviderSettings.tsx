@@ -23,9 +23,10 @@ export function AiProviderSettings({ snapshot, onRefresh, onError }: {
   async function save() {
     setBusy("save");
     onError("");
+    const submittedApiKey = apiKey.trim();
+    setApiKey("");
     try {
-      await configureAiProvider({ baseUrl, model, apiKey: apiKey.trim() || null });
-      setApiKey("");
+      await configureAiProvider({ baseUrl, model, apiKey: submittedApiKey || null });
       await onRefresh();
     } catch (requestError) {
       onError(errorMessage(requestError, "AI Provider 保存失败"));

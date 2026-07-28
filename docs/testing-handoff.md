@@ -102,7 +102,7 @@ Manager Domain smoke：
 npm run manager:smoke
 ```
 
-该命令验证 SQLite 初始化、runtime host 启停、持久化 operation、snapshot 和 `events_since`。未设置 `BROSDK_API_KEY` 时，同步 operation 预期以 `SDK_HOST_ERROR` 失败并产生 queued/running/failed 事件；设置密钥时预期执行真实 `sdk_env_page` 并更新环境镜像。额外设置 `BROSDK_EMBEDDED_PORT` 时，还会发现全局工具并调用 `sdk.health`、`env.list`；缓存存在环境时再调用 `mcp.endpoint`。报告只输出协议、数量和成功布尔值。隔离测试数据应同时设置 `BROSDK_DATA_DIR`，不要使用不存在的数据库文件覆盖变量。
+该命令验证 SQLite 初始化、runtime host 启停、持久化 operation、snapshot、`events_since`、内核刷新和 DLL 全局 MCP。未设置 `BROSDK_API_KEY` 时，同步 operation 预期以 `SDK_HOST_ERROR` 失败并产生 queued/running/failed 事件；设置密钥时预期执行真实 `sdk_env_page` 并更新环境镜像，同时 `kernelRefresh.serverKernelListLoaded=true` 且 `kernelRefresh.count > 1` 表示 `/api/v2/browser/kernelList` 已进入内核页数据源。额外设置 `BROSDK_EMBEDDED_PORT` 时，还会发现全局工具并调用 `sdk.health`、`env.list`；缓存存在环境时再调用 `mcp.endpoint`。报告只输出协议、数量和成功布尔值，不输出 API Key。隔离测试数据应同时设置 `BROSDK_DATA_DIR`，不要使用不存在的数据库文件覆盖变量。
 
 ## 4. 生命周期 E2E 预期流程
 

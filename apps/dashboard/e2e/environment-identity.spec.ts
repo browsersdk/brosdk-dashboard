@@ -108,6 +108,7 @@ test("kernel preview shows the server catalog merged with local cores", async ({
   await page.goto(`/?${scenario}&page=kernels`);
   await expectHealthyDashboard(page, "内核");
 
+  await expect(page.getByRole("button", { name: /^刷新$/ })).toHaveCount(1);
   const rows = page.locator(".kernel-table tbody tr");
   await expect(rows).toHaveCount(5);
   await expect(page.getByRole("row", { name: /Chrome\s+chrome.*142.*142001.*可安装.*可用/ })).toBeVisible();

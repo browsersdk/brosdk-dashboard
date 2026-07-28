@@ -15,7 +15,7 @@ BroSDK Dashboard 是基于 BroSDK 的 Windows 多指纹浏览器桌面控制台�
 - 首次启动输入 API Key，按 `getUserSig(role=user) -> sdk_init` 完成初始化；API Key 使用 Windows DPAPI 保护，不写入 SQLite、日志或发布清单。
 - 以服务端数据为事实来源，以 `envId` 为环境唯一主键；本地 SQLite 只保存可删除、脱敏且带新鲜度状态的缓存。
 - 创建环境只要求选择代理和已安装内核版本，其余指纹参数使用服务端策略。
-- 内核管理合并 API Key `/api/v2/browser/kernelList`、`sdk_init` 返回的 `kernelVersions`、后续 `sdk_info` catalog 和本地已安装 cores；刷新按钮会重新对账最新服务端清单。
+- 内核管理合并 API Key `/api/v2/browser/kernelList`、`sdk_init` 返回的 `kernelVersions`、后续 `sdk_info` catalog 和本地已安装 cores；未配置 SDK API URL 时默认使用 `https://api.brosdk.com`，刷新按钮会重新对账最新服务端清单。
 - 支持环境创建、同步、启动、进度回调、停止、更新、删除、详情和关键指纹查看。
 - 运行时由隔离的 `sdk-host.exe` 加载 DLL；Dashboard 和 Host 均为 Windows GUI 子系统，不显示终端窗口。
 - 应用单实例运行；关闭主窗口后驻留系统托盘，重复启动会唤醒已有窗口，避免相同 appId 被重复初始化。
@@ -75,6 +75,8 @@ npm run tauri:dev
 ```
 
 首次打开时输入 API Key 完成初始化。`npm run dev` 只启动 Dashboard 前端，适合 UI 预览，不提供 DLL、托盘和本机 mutation 能力。
+
+发布版首次启动只要求填写 API Key。SDK API URL 留空时采用 BroSDK 参考客户端一致的默认服务 `https://api.brosdk.com`；只有连接私有部署、测试服或内网 Swagger 服务时才需要在设置页覆盖。
 
 ## 构建与打包
 
@@ -164,6 +166,16 @@ $env:BROSDK_API_KEY = Read-Host "BroSDK API Key"
 npm run e2e:environment
 Remove-Item Env:BROSDK_API_KEY
 ```
+
+快速验证本机 Host、Manager、服务端内核列表和 DLL MCP 的连通性：
+
+```powershell
+$env:BROSDK_API_KEY = Read-Host "BroSDK API Key"
+npm run manager:smoke
+Remove-Item Env:BROSDK_API_KEY
+```
+
+报告中的 `kernelRefresh.serverKernelListLoaded=true` 且 `kernelRefresh.count > 1` 表示内核页会显示服务端清单，而不只是本地已安装 core。
 
 环境 E2E 会启动真实浏览器并调用全局 MCP；测试结束必须将环境恢复为 stopped。创建/多环境测试会使用临时环境并执行补偿清理。完整命令和安全约束见 [测试交接文档](docs/testing-handoff.md)。
 
