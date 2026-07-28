@@ -29,7 +29,7 @@
 | `page` | `sdk_env_page` 完整分页、总数校验、envId 去重和原子替换 | 已产品化（DLL 链路） |
 | `updateEnv` | `sdk_env_update` 的名称/序号最小更新与服务端回显校验 | 已产品化（DLL 链路） |
 | `update` | 完整指纹/代理更新 DTO 未开放给普通 Dashboard | 部分覆盖 |
-| `kernelList` | 通过 `sdk_init.data.kernelVersions` 和 `sdk_info` catalog 进入内核页，刷新时与本地 cores 合并；Dashboard 不直连 API Key 接口 | 已产品化（DLL/Host 链路） |
+| `kernelList` | Manager 使用受保护 API Key 调 `/api/v2/browser/kernelList`（`page/pageSize/status=1`），并与 `sdk_init.data.kernelVersions`、`sdk_info` catalog、本地 cores 合并；Dashboard 不直连 | 已产品化（Manager/API Key + DLL/Host 链路） |
 | `archList`、`platformList`、`kernelIdList` | 没有独立专家筛选 UI，普通创建只展示当前平台可用内核 | 未产品化 |
 | `getUiFingerList` | 普通创建依赖服务端默认指纹，没有专家字段选择器 | 未产品化 |
 | `getGlobalFinger`、`setGlobalFinger` | 没有全局指纹模板管理 UI | 未产品化 |

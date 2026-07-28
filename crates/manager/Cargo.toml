@@ -11,6 +11,7 @@ chrono.workspace = true
 domain = { path = "../domain" }
 mcp-client = { path = "../mcp-client" }
 platform = { path = "../platform" }
+reqwest.workspace = true
 rusqlite.workspace = true
 sdk-client = { path = "../sdk-client" }
 sdk-ffi = { path = "../sdk-ffi" }

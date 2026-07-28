@@ -87,7 +87,7 @@ API Key 输入 -> Manager 候选验证 -> sdk-host 子进程环境 -> sdk_get_us
 
 DLL 内嵌 HTTP/WS/MCP 由 `sdk_init.port` 启用。正式客户端若未配置固定端口，会在初始化前自动选择可用环回端口；Dashboard 与 Manager 的通讯仍走 Tauri command/event，不直接访问该端口。
 
-`sdk_init` 响应中的 `data.kernelVersions` 是当前账号可用内核清单的第一事实来源。`sdk-host` 只把其中的内核对象提取为 `kernelCatalog` 交给 Manager，不把完整初始化响应透传给 Dashboard；Manager 初始化后立即写入 `kernel_records`，内核页刷新时再合并最近一次 init catalog、`sdk_info` catalog 和本地 `<workDir>/**/cores/**/.core.json`。`doc.json` 中 `/api/v2/browser/kernelList` 是 API Key 认证的第三方接口，`/api/v2/sdk/kernel-version/page` 是 DLL 使用 userSig 的内部接口；本项目继续由 Host/DLL 读取 SDK 内部数据，Dashboard 不直接调用这两条 HTTP 接口。
+`sdk_init` 响应中的 `data.kernelVersions` 是当前账号可用内核清单的第一事实来源。`sdk-host` 只把其中的内核对象提取为 `kernelCatalog`，并额外提取非敏感 `config.kernelListUrl` 交给 Manager，不把完整初始化响应透传给 Dashboard；Manager 初始化和内核页刷新时会合并最近一次 init catalog、`sdk_info` catalog、API Key `/api/v2/browser/kernelList` 和本地 `<workDir>/**/cores/**/.core.json`。`kernelList` 请求由 Manager 使用受保护 API Key 发起，body 固定包含 `page/pageSize/status=1`；显式 `sdkApiUrl` 优先，否则将 `sdk_init.config.kernelListUrl` 同源改写为 `/api/v2/browser/kernelList`。Dashboard 不持有 API Key，也不直接调用这两条 HTTP 接口。
 
 补充：当前 DLL 已自带 MCP 功能，和内嵌 HTTP/WS 服务同属 `sdk_init` 的 `port` 启用路径。`sdk-host` 始终由 Manager 传入固定或自动选择的端口；Manager 仍然是 Dashboard 与自动化工具的策略边界，负责 envId 路由、operation 追踪和敏感信息脱敏。
 

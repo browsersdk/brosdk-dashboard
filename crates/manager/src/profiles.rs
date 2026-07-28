@@ -329,7 +329,17 @@ fn kernel_record_from_value(
     let major = priority_string(value, &["majorVersion", "major", "browserMajor"])
         .and_then(|value| value.parse().ok())
         .or_else(|| priority_number(value, &["major"]));
-    let version = priority_string(value, &["versionCode", "version", "majorVersion"]);
+    let version = priority_string(
+        value,
+        &[
+            "kernelVersion",
+            "browserVersion",
+            "brwVersion",
+            "version",
+            "versionCode",
+            "majorVersion",
+        ],
+    );
     let platform =
         priority_string(value, &["platform"]).unwrap_or_else(|| std::env::consts::OS.into());
     let arch = priority_string(value, &["arch"]).unwrap_or_else(|| std::env::consts::ARCH.into());
@@ -524,6 +534,7 @@ mod tests {
                         "kernelId": "Chrome",
                         "kernelName": "Chrome",
                         "majorVersion": "142",
+                        "kernelVersion": "142",
                         "versionCode": 142001,
                         "platform": "windows",
                         "arch": "x86_64",
@@ -536,7 +547,7 @@ mod tests {
         assert_eq!(records[0].kernel_type, "Chrome");
         assert_eq!(records[0].name, "Chrome");
         assert_eq!(records[0].major, Some(142));
-        assert_eq!(records[0].latest_version.as_deref(), Some("142001"));
+        assert_eq!(records[0].latest_version.as_deref(), Some("142"));
         assert_eq!(records[0].platform, "windows");
         assert_eq!(records[0].arch, "x86_64");
         assert!(records[0].download_available);

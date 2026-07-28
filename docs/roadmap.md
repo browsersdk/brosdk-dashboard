@@ -193,7 +193,7 @@
 
 - 指纹支持本地 JSON profile 新建、编辑、导入、导出、删除和环境绑定；远端详情通过 `sdk_env_getinfo` 缓存为脱敏摘要，运行环境可打开 DLL 内置指纹检查页。
 - 代理支持 HTTP/HTTPS/SOCKS5/SOCKS5H URL 解析；密码在 Windows 通过 DPAPI 保存为文件密文，SQLite 只保存 `secret_ref`；接通 DLL 网络与系统代理诊断。
-- 内核合并 `sdk_init` 返回的服务端 `kernelVersions`、后续 `sdk_info` catalog 和 `<workDir>/**/cores/**/.core.json` 本地扫描结果；接通安装、缓存清理和受运行状态保护的本地卸载。缺失下载 URL 或最新版本时显示“未知”。
+- 内核合并 API Key `kernelList`、`sdk_init` 返回的服务端 `kernelVersions`、后续 `sdk_info` catalog 和 `<workDir>/**/cores/**/.core.json` 本地扫描结果；接通安装、缓存清理和受运行状态保护的本地卸载。缺失下载 URL 或最新版本时显示“未知”。
 - operation 保存脱敏 request snapshot，页面支持状态/类型/文本筛选、详情、取消和受支持类型重试。
 - 设置支持数据/SDK/扩展/日志目录、启动策略、Debug 与 DLL MCP 端口；使用原生目录选择器，数据目录迁移通过 SQLite 在线备份并在重启后生效；可导出不含密钥、Cookie 和代理密码的诊断包。
 - 自动验证覆盖 Rust 单元测试、workspace clippy、Dashboard production build，以及 1440x900 与 390x844 浏览器截图/交互检查。
@@ -956,10 +956,10 @@ Dashboard 交互子阶段完成（2026-07-26）：
 
 内核服务端清单补丁（2026-07-28）：
 
-- `sdk-host` 初始化响应增加 `sdkInit` 摘要和只包含内核对象的 `kernelCatalog`，Manager 不向 Dashboard 暴露完整 `sdk_init` 响应。
-- `ensure_sdk_initialized` 会把最近一次 init catalog 写入 `kernel_records`，因此首次初始化和首次 snapshot 后内核页不再只依赖本地目录扫描。
-- 内核刷新同时合并 init catalog、`sdk_info` catalog 和本地 cores；解析器兼容 `/api/v2/browser/kernelList` 文档中的 `data.list` 分页结构以及 `items/records/rows` 别名。
-- `versionCode/version` 优先于 `majorVersion` 作为最新版本显示；新增 Manager 单元测试覆盖浏览器内核列表分页和 init/info 双 catalog 合并。
+- `sdk-host` 初始化响应增加 `sdkInit` 摘要、只包含内核对象的 `kernelCatalog` 和非敏感 `kernelListUrl`，Manager 不向 Dashboard 暴露完整 `sdk_init` 响应。
+- `ensure_sdk_initialized` 会把最近一次 init catalog、同源 API Key `/api/v2/browser/kernelList` 响应和本地 cores 合并写入 `kernel_records`，因此首次初始化和首次 snapshot 后内核页不再只依赖本地目录扫描。
+- 内核刷新同时合并 init catalog、`sdk_info` catalog、API Key `kernelList` 和本地 cores；`kernelList` 请求固定发送 `page/pageSize/status=1`，显式 `sdkApiUrl` 优先，否则把 `sdk_init.config.kernelListUrl` 同源改写为 `/api/v2/browser/kernelList`。
+- 解析器兼容 `/api/v2/browser/kernelList` 文档中的 `data.list` 分页结构以及 `items/records/rows` 别名，并优先展示服务端 `kernelVersion`；新增 Manager 单元测试覆盖浏览器内核列表分页、init/info 双 catalog 合并和 URL 改写。
 - Dashboard workspace 预览同步扩展为服务端 catalog + 本地 cores 的合并样例，内核页至少覆盖可安装、可更新和未知下载源状态；Playwright 桌面/移动回归直接断言 5 行 catalog，避免预览只显示单个本地内核。
 
 ## 38. 阶段 35：跨境店铺与环境绑定

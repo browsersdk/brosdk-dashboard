@@ -279,6 +279,7 @@ impl HostRuntime {
             "embeddedPort": embedded_port,
             "sdkInit": summarize_json(&init_output.value),
             "kernelCatalog": kernel_catalog_from_sdk_init(&init_output.value),
+            "kernelListUrl": kernel_list_url_from_sdk_init(&init_output.value),
             "sdkInfo": summarize_json(&info.value),
         }))
     }
@@ -609,6 +610,13 @@ fn kernel_catalog_from_sdk_init(value: &Value) -> Value {
     output
 }
 
+fn kernel_list_url_from_sdk_init(value: &Value) -> Value {
+    find_string(value, &["kernelListUrl"])
+        .filter(|value| !value.trim().is_empty())
+        .map(Value::String)
+        .unwrap_or(Value::Null)
+}
+
 fn collect_kernel_versions(value: &Value, output: &mut Vec<Value>) {
     match value {
         Value::Object(map) => {
@@ -782,5 +790,24 @@ mod tests {
             .initialize(Path::new("unused"), None, None, false)
             .expect_err("second init must fail");
         assert_eq!(error.code, "HOST_ALREADY_INITIALIZED");
+    }
+
+    #[test]
+    fn initialization_extracts_non_secret_kernel_list_url() {
+        let value = json!({
+            "code": 200,
+            "data": {
+                "config": {
+                    "kernelListUrl": "https://api.example.test/api/v2/sdk/kernel-version/page"
+                },
+                "oss": {
+                    "accessKeySecret": "must-not-leak"
+                }
+            }
+        });
+        assert_eq!(
+            kernel_list_url_from_sdk_init(&value),
+            "https://api.example.test/api/v2/sdk/kernel-version/page"
+        );
     }
 }

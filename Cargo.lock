@@ -2109,6 +2109,7 @@ dependencies = [
  "domain",
  "mcp-client",
  "platform",
+ "reqwest 0.12.28",
  "rusqlite",
  "sdk-client",
  "sdk-ffi",

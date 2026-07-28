@@ -7,6 +7,7 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
 use domain::{
@@ -38,6 +39,8 @@ mod store;
 const ENVIRONMENT_PAGE_SIZE: usize = 200;
 const MAX_ENVIRONMENT_PAGES: usize = 500;
 const MAX_ENVIRONMENTS: usize = 100_000;
+const KERNEL_CATALOG_PAGE_SIZE: u64 = 200;
+const MAX_KERNEL_CATALOG_PAGES: u64 = 100;
 const MAX_ENVIRONMENT_BATCH_SIZE: usize = 20;
 const API_KEY_SECRET_ID: &str = "sdk-api-key";
 const API_KEY_SECRET_REFERENCE: &str = "sdk-api-key.bin";
@@ -231,6 +234,8 @@ pub enum ManagerError {
     Zip(#[from] zip::result::ZipError),
     #[error("JSON serialization failed: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("HTTP request failed: {0}")]
+    Http(#[from] reqwest::Error),
     #[error("operation cannot be retried from its current state")]
     OperationNotRetryable,
     #[error("operation can only be cancelled while queued")]
@@ -279,6 +284,7 @@ struct ManagerInner {
     sdk_init_lock: Mutex<()>,
     sdk_initialized: RwLock<bool>,
     last_kernel_catalog: RwLock<Option<Value>>,
+    last_kernel_list_url: RwLock<Option<String>>,
     active_mcp_port: RwLock<Option<u16>>,
     last_runtime_status: RwLock<RuntimeHostStatus>,
     last_smoke: RwLock<Option<SmokeReport>>,
@@ -314,6 +320,7 @@ impl Manager {
                 sdk_init_lock: Mutex::new(()),
                 sdk_initialized: RwLock::new(false),
                 last_kernel_catalog: RwLock::new(None),
+                last_kernel_list_url: RwLock::new(None),
                 active_mcp_port: RwLock::new(None),
                 last_runtime_status: RwLock::new(RuntimeHostStatus::default()),
                 last_smoke: RwLock::new(None),
@@ -375,6 +382,7 @@ impl Manager {
                 let status = host.status();
                 *self.inner.sdk_initialized.write().await = false;
                 *self.inner.last_kernel_catalog.write().await = None;
+                *self.inner.last_kernel_list_url.write().await = None;
                 *self.inner.active_mcp_port.write().await = None;
                 *self.inner.last_runtime_status.write().await = status.clone();
                 self.inner.store.append_event(
@@ -417,6 +425,7 @@ impl Manager {
         };
         *self.inner.sdk_initialized.write().await = false;
         *self.inner.last_kernel_catalog.write().await = None;
+        *self.inner.last_kernel_list_url.write().await = None;
         *self.inner.active_mcp_port.write().await = None;
         *self.inner.last_runtime_status.write().await = status.clone();
         self.inner
@@ -589,6 +598,23 @@ impl Manager {
             self.inner.store.reset_account_state()?;
             let data_dir = self.credential_data_dir()?;
             platform::store_secret(&data_dir, API_KEY_SECRET_ID, api_key.as_bytes())?;
+            let settings = self.inner.store.settings()?;
+            if let Err(error) = self
+                .replace_kernel_records_from_catalogs(
+                    &settings,
+                    Some(api_key.as_str()),
+                    None,
+                    false,
+                )
+                .await
+            {
+                self.inner.store.append_event(
+                    "kernel.catalog-fetch.failed",
+                    None,
+                    None,
+                    &json!({ "error": redacted_response_text(&error.to_string()) }),
+                )?;
+            }
             self.inner
                 .store
                 .replace_remote_environments(&environments)?;
@@ -2866,32 +2892,154 @@ impl Manager {
         })
     }
 
+    async fn replace_kernel_records_from_catalogs(
+        &self,
+        settings: &ManagerSettings,
+        api_key: Option<&str>,
+        sdk_info: Option<&Value>,
+        fail_server_fetch: bool,
+    ) -> Result<(usize, bool), ManagerError> {
+        let init_catalog = self.inner.last_kernel_catalog.read().await.clone();
+        let mut catalogs = Vec::new();
+        if let Some(catalog) = init_catalog {
+            catalogs.push(catalog);
+        }
+        if let Some(info) = sdk_info {
+            catalogs.push(info.clone());
+        }
+        let mut server_catalog_loaded = false;
+        if let Some(api_key) = api_key {
+            match self.fetch_server_kernel_catalog(settings, api_key).await {
+                Ok(Some(catalog)) => {
+                    server_catalog_loaded = true;
+                    catalogs.push(catalog);
+                }
+                Ok(None) => {}
+                Err(error) if fail_server_fetch => return Err(error),
+                Err(error) => {
+                    self.inner.store.append_event(
+                        "kernel.catalog-fetch.failed",
+                        None,
+                        None,
+                        &json!({ "error": redacted_response_text(&error.to_string()) }),
+                    )?;
+                }
+            }
+        }
+        let records =
+            profiles::scan_kernels_with_catalogs(Path::new(&settings.work_dir), catalogs.iter());
+        self.inner.store.replace_kernel_records(&records)?;
+        Ok((records.len(), server_catalog_loaded))
+    }
+
+    async fn fetch_server_kernel_catalog(
+        &self,
+        settings: &ManagerSettings,
+        api_key: &str,
+    ) -> Result<Option<Value>, ManagerError> {
+        let discovered_url = self.inner.last_kernel_list_url.read().await.clone();
+        let Some(endpoint) = kernel_browser_list_endpoint(settings, discovered_url.as_deref())?
+        else {
+            return Ok(None);
+        };
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(20))
+            .build()?;
+        let mut items = Vec::new();
+        let mut expected_total = None;
+        for page in 1..=MAX_KERNEL_CATALOG_PAGES {
+            let response = client
+                .post(endpoint.clone())
+                .bearer_auth(api_key)
+                .json(&json!({
+                    "page": page,
+                    "pageSize": KERNEL_CATALOG_PAGE_SIZE,
+                    "status": 1,
+                }))
+                .send()
+                .await?
+                .error_for_status()?;
+            let value = response.json::<Value>().await?;
+            ensure_backend_success("kernel list", &value)?;
+            let page_items = value
+                .pointer("/data/list")
+                .and_then(Value::as_array)
+                .ok_or_else(|| {
+                    ManagerError::InvalidHostResponse(
+                        "kernel list response did not contain data.list".into(),
+                    )
+                })?;
+            if let Some(total) = value.pointer("/data/total").and_then(value_as_u64) {
+                if total > MAX_KERNEL_CATALOG_PAGES * KERNEL_CATALOG_PAGE_SIZE {
+                    return Err(ManagerError::InvalidHostResponse(format!(
+                        "kernel list total {total} exceeds safety limit"
+                    )));
+                }
+                if let Some(expected) = expected_total
+                    && expected != total
+                {
+                    return Err(ManagerError::InvalidHostResponse(format!(
+                        "kernel list total changed from {expected} to {total} during refresh"
+                    )));
+                }
+                expected_total = Some(total);
+            }
+            let page_len = page_items.len();
+            items.extend(page_items.iter().cloned());
+            if expected_total.is_some_and(|total| items.len() >= total as usize)
+                || page_len < KERNEL_CATALOG_PAGE_SIZE as usize
+            {
+                let total = expected_total.unwrap_or(items.len() as u64);
+                return Ok(Some(json!({
+                    "code": 200,
+                    "data": {
+                        "list": items,
+                        "total": total,
+                    },
+                })));
+            }
+        }
+        Err(ManagerError::InvalidHostResponse(format!(
+            "kernel list pagination exceeded {MAX_KERNEL_CATALOG_PAGES} pages"
+        )))
+    }
+
     pub async fn refresh_kernels(&self) -> Result<OperationRecord, ManagerError> {
         let operation =
             self.inner
                 .operations
                 .enqueue("kernel.refresh", None, "刷新内核列表", 0, None)?;
         let _execution = self.inner.operations.acquire().await;
-        self.inner
-            .operations
-            .start(&operation.id, "reading local cores and SDK catalog")?;
+        self.inner.operations.start(
+            &operation.id,
+            "reading local cores, SDK catalog and server kernelList",
+        )?;
         let result = async {
             let settings = self.inner.store.settings()?;
+            let (api_key, _) = self.resolve_api_key()?.ok_or(ManagerError::ApiKeyMissing)?;
             let host = self.runtime_handle().await?;
             self.ensure_sdk_initialized(&host).await?;
             let info = host
                 .call(HostCommand::Info, Some(operation.id.clone()))
                 .await?;
-            let init_catalog = self.inner.last_kernel_catalog.read().await.clone();
-            let mut catalogs = Vec::new();
-            if let Some(catalog) = init_catalog.as_ref() {
-                catalogs.push(catalog);
-            }
-            catalogs.push(&info);
-            let records =
-                profiles::scan_kernels_with_catalogs(Path::new(&settings.work_dir), catalogs);
-            self.inner.store.replace_kernel_records(&records)?;
-            Ok::<usize, ManagerError>(records.len())
+            let (count, server_catalog_loaded) = self
+                .replace_kernel_records_from_catalogs(
+                    &settings,
+                    Some(api_key.as_str()),
+                    Some(&info),
+                    true,
+                )
+                .await?;
+            self.inner.store.append_event(
+                "kernel.refresh.catalogs",
+                None,
+                Some(&operation.id),
+                &json!({
+                    "serverKernelListLoaded": server_catalog_loaded,
+                    "recordCount": count,
+                }),
+            )?;
+            Ok::<usize, ManagerError>(count)
         }
         .await;
         match result {
@@ -3632,26 +3780,34 @@ impl Manager {
             .initialize(
                 settings.work_dir.clone(),
                 port,
-                settings.sdk_api_url,
+                settings.sdk_api_url.clone(),
                 settings.debug,
             )
             .await?;
-        let mut kernel_records = None;
         let kernel_catalog = kernel_catalog_from_init_response(&init_response);
-        if let Some(catalog) = kernel_catalog.as_ref() {
-            let records =
-                profiles::scan_kernels_with_catalogs(Path::new(&settings.work_dir), [catalog]);
-            self.inner.store.replace_kernel_records(&records)?;
-            kernel_records = Some(records.len());
-        }
+        let kernel_list_url = kernel_list_url_from_init_response(&init_response);
         *self.inner.last_kernel_catalog.write().await = kernel_catalog;
+        *self.inner.last_kernel_list_url.write().await = kernel_list_url;
+        let api_key = self.resolve_api_key()?.map(|(api_key, _)| api_key);
+        let (record_count, server_catalog_loaded) = self
+            .replace_kernel_records_from_catalogs(
+                &settings,
+                api_key.as_deref().map(String::as_str),
+                None,
+                false,
+            )
+            .await?;
         *self.inner.sdk_initialized.write().await = true;
         *self.inner.active_mcp_port.write().await = port;
         self.inner.store.append_event(
             "sdk.initialized",
             None,
             None,
-            &json!({ "embeddedPort": port, "kernelRecords": kernel_records }),
+            &json!({
+                "embeddedPort": port,
+                "kernelRecords": record_count,
+                "serverKernelListLoaded": server_catalog_loaded,
+            }),
         )?;
         Ok(())
     }
@@ -3751,6 +3907,7 @@ impl Manager {
                 if current.state == RuntimeHostState::Degraded {
                     *inner.sdk_initialized.write().await = false;
                     *inner.last_kernel_catalog.write().await = None;
+                    *inner.last_kernel_list_url.write().await = None;
                     *inner.active_mcp_port.write().await = None;
                     let message = current
                         .last_error
@@ -4032,6 +4189,12 @@ fn value_as_i64(value: &serde_json::Value) -> Option<i64> {
         .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
 }
 
+fn value_as_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+}
+
 fn redacted_response_text(text: &str) -> String {
     let mut value = serde_json::Value::String(text.to_string());
     sdk_ffi::redact_value(&mut value);
@@ -4246,6 +4409,47 @@ fn kernel_catalog_from_init_response(response: &Value) -> Option<Value> {
     } else {
         None
     }
+}
+
+fn kernel_list_url_from_init_response(response: &Value) -> Option<String> {
+    response
+        .get("kernelListUrl")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+}
+
+fn kernel_browser_list_endpoint(
+    settings: &ManagerSettings,
+    discovered_url: Option<&str>,
+) -> Result<Option<url::Url>, ManagerError> {
+    if let Some(value) = settings
+        .sdk_api_url
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        return browser_kernel_list_url(value).map(Some);
+    }
+    discovered_url
+        .filter(|value| !value.trim().is_empty())
+        .map(browser_kernel_list_url)
+        .transpose()
+}
+
+fn browser_kernel_list_url(value: &str) -> Result<url::Url, ManagerError> {
+    let mut url = url::Url::parse(value).map_err(|error| {
+        ManagerError::InvalidHostResponse(format!("kernel list URL is invalid: {error}"))
+    })?;
+    url.set_username("").ok();
+    url.set_password(None).ok();
+    url.set_query(None);
+    url.set_fragment(None);
+    let path = url.path().trim_end_matches('/');
+    if path.eq_ignore_ascii_case("/api/v2/browser/kernelList") {
+        return Ok(url);
+    }
+    url.set_path("/api/v2/browser/kernelList");
+    Ok(url)
 }
 
 fn embedded_mcp_port_for_initialization(
@@ -5573,6 +5777,7 @@ fn manager_error_code(error: &ManagerError) -> &'static str {
         ManagerError::Io(_) => "IO_ERROR",
         ManagerError::Zip(_) => "ZIP_ERROR",
         ManagerError::Json(_) => "JSON_ERROR",
+        ManagerError::Http(_) => "HTTP_ERROR",
         ManagerError::OperationNotRetryable => "OPERATION_NOT_RETRYABLE",
         ManagerError::OperationNotCancellable => "OPERATION_NOT_CANCELLABLE",
         ManagerError::KernelNotFound => "KERNEL_NOT_FOUND",
@@ -5987,6 +6192,58 @@ mod tests {
             ensure_backend_success("environment create", &json!({ "data": {} })),
             Err(ManagerError::InvalidHostResponse(_))
         ));
+    }
+
+    #[test]
+    fn kernel_list_endpoint_prefers_configured_sdk_api_url() {
+        let settings = ManagerSettings {
+            data_dir: "data".into(),
+            work_dir: "work".into(),
+            extension_dir: "extensions".into(),
+            log_dir: "logs".into(),
+            sdk_api_url: Some("http://192.168.0.188:9988".into()),
+            debug: false,
+            startup_policy: "restore-none".into(),
+            embedded_mcp_port: None,
+            ai_base_url: None,
+            ai_model: None,
+        };
+        assert_eq!(
+            kernel_browser_list_endpoint(
+                &settings,
+                Some("https://api.example.test/api/v2/sdk/kernel-version/page")
+            )
+            .expect("endpoint")
+            .expect("url")
+            .as_str(),
+            "http://192.168.0.188:9988/api/v2/browser/kernelList"
+        );
+    }
+
+    #[test]
+    fn kernel_list_endpoint_rewrites_sdk_init_catalog_url() {
+        let settings = ManagerSettings {
+            data_dir: "data".into(),
+            work_dir: "work".into(),
+            extension_dir: "extensions".into(),
+            log_dir: "logs".into(),
+            sdk_api_url: None,
+            debug: false,
+            startup_policy: "restore-none".into(),
+            embedded_mcp_port: None,
+            ai_base_url: None,
+            ai_model: None,
+        };
+        assert_eq!(
+            kernel_browser_list_endpoint(
+                &settings,
+                Some("https://api.example.test/api/v2/sdk/kernel-version/page?token=secret")
+            )
+            .expect("endpoint")
+            .expect("url")
+            .as_str(),
+            "https://api.example.test/api/v2/browser/kernelList"
+        );
     }
 
     #[test]
