@@ -23,7 +23,7 @@ use domain::{
 };
 use operation::OperationQueue;
 use sdk_client::{RuntimeHost, SdkHostClient};
-use serde_json::json;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use store::{ManagerStore, RuntimeUpdate};
 use thiserror::Error;
@@ -278,6 +278,7 @@ struct ManagerInner {
     runtime: Mutex<Option<RuntimeHost>>,
     sdk_init_lock: Mutex<()>,
     sdk_initialized: RwLock<bool>,
+    last_kernel_catalog: RwLock<Option<Value>>,
     active_mcp_port: RwLock<Option<u16>>,
     last_runtime_status: RwLock<RuntimeHostStatus>,
     last_smoke: RwLock<Option<SmokeReport>>,
@@ -312,6 +313,7 @@ impl Manager {
                 runtime: Mutex::new(None),
                 sdk_init_lock: Mutex::new(()),
                 sdk_initialized: RwLock::new(false),
+                last_kernel_catalog: RwLock::new(None),
                 active_mcp_port: RwLock::new(None),
                 last_runtime_status: RwLock::new(RuntimeHostStatus::default()),
                 last_smoke: RwLock::new(None),
@@ -372,6 +374,7 @@ impl Manager {
             Ok(host) => {
                 let status = host.status();
                 *self.inner.sdk_initialized.write().await = false;
+                *self.inner.last_kernel_catalog.write().await = None;
                 *self.inner.active_mcp_port.write().await = None;
                 *self.inner.last_runtime_status.write().await = status.clone();
                 self.inner.store.append_event(
@@ -413,6 +416,7 @@ impl Manager {
             None => RuntimeHostStatus::default(),
         };
         *self.inner.sdk_initialized.write().await = false;
+        *self.inner.last_kernel_catalog.write().await = None;
         *self.inner.active_mcp_port.write().await = None;
         *self.inner.last_runtime_status.write().await = status.clone();
         self.inner
@@ -428,6 +432,7 @@ impl Manager {
             None => RuntimeHostStatus::default(),
         };
         *self.inner.sdk_initialized.write().await = false;
+        *self.inner.last_kernel_catalog.write().await = None;
         *self.inner.active_mcp_port.write().await = None;
         *self.inner.last_runtime_status.write().await = status.clone();
         Ok(status)
@@ -2877,7 +2882,14 @@ impl Manager {
             let info = host
                 .call(HostCommand::Info, Some(operation.id.clone()))
                 .await?;
-            let records = profiles::scan_kernels(Path::new(&settings.work_dir), Some(&info));
+            let init_catalog = self.inner.last_kernel_catalog.read().await.clone();
+            let mut catalogs = Vec::new();
+            if let Some(catalog) = init_catalog.as_ref() {
+                catalogs.push(catalog);
+            }
+            catalogs.push(&info);
+            let records =
+                profiles::scan_kernels_with_catalogs(Path::new(&settings.work_dir), catalogs);
             self.inner.store.replace_kernel_records(&records)?;
             Ok::<usize, ManagerError>(records.len())
         }
@@ -3616,20 +3628,30 @@ impl Manager {
         }
         let settings = self.inner.store.settings()?;
         let port = embedded_mcp_port_for_initialization(&settings)?;
-        host.initialize(
-            settings.work_dir,
-            port,
-            settings.sdk_api_url,
-            settings.debug,
-        )
-        .await?;
+        let init_response = host
+            .initialize(
+                settings.work_dir.clone(),
+                port,
+                settings.sdk_api_url,
+                settings.debug,
+            )
+            .await?;
+        let mut kernel_records = None;
+        let kernel_catalog = kernel_catalog_from_init_response(&init_response);
+        if let Some(catalog) = kernel_catalog.as_ref() {
+            let records =
+                profiles::scan_kernels_with_catalogs(Path::new(&settings.work_dir), [catalog]);
+            self.inner.store.replace_kernel_records(&records)?;
+            kernel_records = Some(records.len());
+        }
+        *self.inner.last_kernel_catalog.write().await = kernel_catalog;
         *self.inner.sdk_initialized.write().await = true;
         *self.inner.active_mcp_port.write().await = port;
         self.inner.store.append_event(
             "sdk.initialized",
             None,
             None,
-            &json!({ "embeddedPort": port }),
+            &json!({ "embeddedPort": port, "kernelRecords": kernel_records }),
         )?;
         Ok(())
     }
@@ -3728,6 +3750,7 @@ impl Manager {
                 *inner.last_runtime_status.write().await = current.clone();
                 if current.state == RuntimeHostState::Degraded {
                     *inner.sdk_initialized.write().await = false;
+                    *inner.last_kernel_catalog.write().await = None;
                     *inner.active_mcp_port.write().await = None;
                     let message = current
                         .last_error
@@ -4214,6 +4237,15 @@ fn embedded_port() -> Option<u16> {
     std::env::var("BROSDK_EMBEDDED_PORT")
         .ok()
         .and_then(|value| value.parse::<u16>().ok())
+}
+
+fn kernel_catalog_from_init_response(response: &Value) -> Option<Value> {
+    let catalog = response.get("kernelCatalog")?;
+    if catalog.as_array().is_some_and(|items| !items.is_empty()) {
+        Some(catalog.clone())
+    } else {
+        None
+    }
 }
 
 fn embedded_mcp_port_for_initialization(

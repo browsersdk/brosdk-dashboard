@@ -87,6 +87,8 @@ API Key 输入 -> Manager 候选验证 -> sdk-host 子进程环境 -> sdk_get_us
 
 DLL 内嵌 HTTP/WS/MCP 由 `sdk_init.port` 启用。正式客户端若未配置固定端口，会在初始化前自动选择可用环回端口；Dashboard 与 Manager 的通讯仍走 Tauri command/event，不直接访问该端口。
 
+`sdk_init` 响应中的 `data.kernelVersions` 是当前账号可用内核清单的第一事实来源。`sdk-host` 只把其中的内核对象提取为 `kernelCatalog` 交给 Manager，不把完整初始化响应透传给 Dashboard；Manager 初始化后立即写入 `kernel_records`，内核页刷新时再合并最近一次 init catalog、`sdk_info` catalog 和本地 `<workDir>/**/cores/**/.core.json`。`doc.json` 中 `/api/v2/browser/kernelList` 是 API Key 认证的第三方接口，`/api/v2/sdk/kernel-version/page` 是 DLL 使用 userSig 的内部接口；本项目继续由 Host/DLL 读取 SDK 内部数据，Dashboard 不直接调用这两条 HTTP 接口。
+
 补充：当前 DLL 已自带 MCP 功能，和内嵌 HTTP/WS 服务同属 `sdk_init` 的 `port` 启用路径。`sdk-host` 始终由 Manager 传入固定或自动选择的端口；Manager 仍然是 Dashboard 与自动化工具的策略边界，负责 envId 路由、operation 追踪和敏感信息脱敏。
 
 源码审计确认 DLL 的全局 MCP 不缺少单环境操作：`/sdk/v1/mcp` 同时注册管理工具和带 `env.` 前缀的浏览器工具（例如 `env.tabs`、`env.snapshot`、`env.act`），后者要求每次调用在 arguments 中显式提供 envId。`?envId=` 与 `/sdk/v1/mcp/env/{envId}` 继续兼容旧客户端，但不再是本项目的接入面。Manager 只连接全局 endpoint，动态发现 `env.*` 浏览器目录、强制注入 ready 环境 envId，并负责严格 lifecycle、operation 追踪、URL 降级和响应脱敏；Dashboard/Agent 不直接持有 MCP session。

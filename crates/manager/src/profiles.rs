@@ -249,7 +249,10 @@ pub fn parse_profile_document(text: &str) -> Result<(String, Value), ProfileErro
     Ok((name, profile))
 }
 
-pub fn scan_kernels(work_dir: &Path, sdk_info: Option<&Value>) -> Vec<KernelRecord> {
+pub fn scan_kernels_with_catalogs<'a>(
+    work_dir: &Path,
+    catalogs: impl IntoIterator<Item = &'a Value>,
+) -> Vec<KernelRecord> {
     let mut records = HashMap::<String, KernelRecord>::new();
     let cores_dir = find_cores_dir(work_dir);
     if cores_dir.exists() {
@@ -273,8 +276,8 @@ pub fn scan_kernels(work_dir: &Path, sdk_info: Option<&Value>) -> Vec<KernelReco
         }
     }
 
-    if let Some(sdk_info) = sdk_info {
-        for item in find_kernel_versions(sdk_info) {
+    for catalog in catalogs {
+        for item in find_kernel_versions(catalog) {
             let available = kernel_record_from_value(item, "available", None);
             records
                 .entry(available.id.clone())
@@ -322,13 +325,14 @@ fn kernel_record_from_value(
     install_path: Option<String>,
 ) -> KernelRecord {
     let kernel_type =
-        string(value, &["type", "kernelId", "kernel"]).unwrap_or_else(|| "unknown".into());
-    let major = string(value, &["majorVersion", "major", "browserMajor"])
+        priority_string(value, &["type", "kernelId", "kernel"]).unwrap_or_else(|| "unknown".into());
+    let major = priority_string(value, &["majorVersion", "major", "browserMajor"])
         .and_then(|value| value.parse().ok())
-        .or_else(|| number(value, &["major"]));
-    let version = string(value, &["versionCode", "version", "majorVersion"]);
-    let platform = string(value, &["platform"]).unwrap_or_else(|| std::env::consts::OS.into());
-    let arch = string(value, &["arch"]).unwrap_or_else(|| std::env::consts::ARCH.into());
+        .or_else(|| priority_number(value, &["major"]));
+    let version = priority_string(value, &["versionCode", "version", "majorVersion"]);
+    let platform =
+        priority_string(value, &["platform"]).unwrap_or_else(|| std::env::consts::OS.into());
+    let arch = priority_string(value, &["arch"]).unwrap_or_else(|| std::env::consts::ARCH.into());
     let id = format!(
         "{}-{}-{}-{}",
         kernel_type,
@@ -341,7 +345,8 @@ fn kernel_record_from_value(
     KernelRecord {
         id,
         kernel_type,
-        name: string(value, &["kernelName", "name"]).unwrap_or_else(|| "Browser core".into()),
+        name: priority_string(value, &["kernelName", "name", "browserName"])
+            .unwrap_or_else(|| "Browser core".into()),
         major,
         latest_version: (status == "available").then(|| version.clone()).flatten(),
         version: (status == "installed").then(|| version.clone()).flatten(),
@@ -349,22 +354,82 @@ fn kernel_record_from_value(
         arch,
         status: status.into(),
         install_path,
-        download_available: string(value, &["url"]).is_some_and(|url| !url.trim().is_empty()),
+        download_available: priority_string(value, &["url", "downloadUrl", "downloadURL"])
+            .is_some_and(|url| !url.trim().is_empty()),
         updated_at: Utc::now(),
     }
 }
 
 fn find_kernel_versions(value: &Value) -> Vec<&Value> {
+    let mut versions = Vec::new();
+    collect_kernel_versions(value, matches!(value, Value::Array(_)), &mut versions);
+    versions
+}
+
+fn collect_kernel_versions<'a>(
+    value: &'a Value,
+    in_kernel_collection: bool,
+    output: &mut Vec<&'a Value>,
+) {
     match value {
         Value::Object(map) => {
-            if let Some(values) = map.get("kernelVersions").and_then(Value::as_array) {
-                return values.iter().collect();
+            if in_kernel_collection && is_kernel_version(value) {
+                output.push(value);
+                return;
             }
-            map.values().flat_map(find_kernel_versions).collect()
+            for (key, child) in map {
+                collect_kernel_versions(
+                    child,
+                    in_kernel_collection || is_kernel_collection_key(key),
+                    output,
+                );
+            }
         }
-        Value::Array(values) => values.iter().flat_map(find_kernel_versions).collect(),
-        _ => Vec::new(),
+        Value::Array(values) => {
+            for item in values {
+                collect_kernel_versions(item, in_kernel_collection, output);
+            }
+        }
+        _ => {}
     }
+}
+
+fn is_kernel_collection_key(key: &str) -> bool {
+    matches!(
+        key,
+        "kernelVersions"
+            | "kernelVersion"
+            | "chromeKernelVersion"
+            | "chromeKernelversion"
+            | "firefoxKernelVersion"
+            | "firefoxKernelversion"
+            | "platformKernelversion"
+            | "platformKernelVersion"
+            | "list"
+            | "items"
+            | "records"
+            | "rows"
+            | "cores"
+    )
+}
+
+fn is_kernel_version(value: &Value) -> bool {
+    let Some(map) = value.as_object() else {
+        return false;
+    };
+    let has_kernel_identity = ["type", "kernelId", "kernelName"]
+        .iter()
+        .any(|key| map.get(*key).is_some());
+    let has_version = [
+        "majorVersion",
+        "major",
+        "browserMajor",
+        "versionCode",
+        "version",
+    ]
+    .iter()
+    .any(|key| map.get(*key).is_some());
+    has_kernel_identity && has_version
 }
 
 fn find_value<'a>(value: &'a Value, keys: &HashSet<&str>) -> Option<&'a Value> {
@@ -382,20 +447,25 @@ fn find_value<'a>(value: &'a Value, keys: &HashSet<&str>) -> Option<&'a Value> {
     }
 }
 
-fn string(value: &Value, keys: &[&str]) -> Option<String> {
-    let keys = keys.iter().copied().collect::<HashSet<_>>();
-    find_value(value, &keys).and_then(|value| match value {
-        Value::String(value) if !value.is_empty() => Some(value.clone()),
-        Value::Number(value) => Some(value.to_string()),
-        _ => None,
+fn priority_string(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| find_value(value, &HashSet::from([*key])).and_then(json_to_string))
+}
+
+fn priority_number(value: &Value, keys: &[&str]) -> Option<u32> {
+    keys.iter().find_map(|key| {
+        find_value(value, &HashSet::from([*key]))
+            .and_then(Value::as_u64)
+            .and_then(|value| value.try_into().ok())
     })
 }
 
-fn number(value: &Value, keys: &[&str]) -> Option<u32> {
-    let keys = keys.iter().copied().collect::<HashSet<_>>();
-    find_value(value, &keys)
-        .and_then(Value::as_u64)
-        .and_then(|value| value.try_into().ok())
+fn json_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) if !value.is_empty() => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 pub fn object_without_secrets(value: &Value) -> Value {
@@ -435,15 +505,82 @@ mod tests {
 
     #[test]
     fn remote_kernel_without_url_is_not_downloadable() {
-        let records = scan_kernels(
-            Path::new("missing"),
-            Some(&json!({
+        let catalog = json!({
                 "data": { "kernelVersions": [{ "type": "yun", "majorVersion": "141" }] }
-            })),
-        );
+        });
+        let records = scan_kernels_with_catalogs(Path::new("missing"), [&catalog]);
         assert_eq!(records.len(), 1);
         assert!(!records[0].download_available);
         assert_eq!(records[0].status, "available");
+    }
+
+    #[test]
+    fn reads_kernel_versions_from_browser_kernel_list_page() {
+        let catalog = json!({
+                "code": 200,
+                "data": {
+                    "total": 1,
+                    "list": [{
+                        "kernelId": "Chrome",
+                        "kernelName": "Chrome",
+                        "majorVersion": "142",
+                        "versionCode": 142001,
+                        "platform": "windows",
+                        "arch": "x86_64",
+                        "url": "https://download.example.test/chrome-142.zip"
+                    }]
+                }
+        });
+        let records = scan_kernels_with_catalogs(Path::new("missing"), [&catalog]);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].kernel_type, "Chrome");
+        assert_eq!(records[0].name, "Chrome");
+        assert_eq!(records[0].major, Some(142));
+        assert_eq!(records[0].latest_version.as_deref(), Some("142001"));
+        assert_eq!(records[0].platform, "windows");
+        assert_eq!(records[0].arch, "x86_64");
+        assert!(records[0].download_available);
+    }
+
+    #[test]
+    fn merges_sdk_init_and_sdk_info_kernel_catalogs() {
+        let init_catalog = json!({
+            "data": {
+                "kernelVersions": [{
+                    "kernelId": "chrome",
+                    "kernelName": "Chrome",
+                    "majorVersion": "143",
+                    "platform": "windows",
+                    "arch": "x86_64",
+                    "url": "https://download.example.test/chrome-143.zip"
+                }]
+            }
+        });
+        let info_catalog = json!({
+            "data": {
+                "list": [{
+                    "kernelId": "firefox",
+                    "kernelName": "Firefox",
+                    "majorVersion": "140",
+                    "platform": "windows",
+                    "arch": "x86_64",
+                    "url": "https://download.example.test/firefox-140.zip"
+                }]
+            }
+        });
+        let records =
+            scan_kernels_with_catalogs(Path::new("missing"), [&init_catalog, &info_catalog]);
+        assert_eq!(records.len(), 2);
+        assert!(
+            records
+                .iter()
+                .any(|record| record.id == "chrome-143-windows-x86_64")
+        );
+        assert!(
+            records
+                .iter()
+                .any(|record| record.id == "firefox-140-windows-x86_64")
+        );
     }
 
     #[test]

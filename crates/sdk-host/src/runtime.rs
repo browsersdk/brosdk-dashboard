@@ -249,7 +249,7 @@ impl HostRuntime {
                 &format!("failed to create SDK workDir: {error}"),
             )
         })?;
-        {
+        let init_output = {
             let sdk = self.sdk()?;
             let user_sig_output = sdk
                 .get_user_sig(&get_user_sig_request(&api_key))
@@ -269,14 +269,16 @@ impl HostRuntime {
                 sdk_api_url,
                 debug,
             ))
-            .map_err(sdk_error)?;
-        }
+            .map_err(sdk_error)?
+        };
         self.initialized = true;
 
         let info = self.sdk()?.info().map_err(sdk_error)?;
         Ok(json!({
             "state": "initialized",
             "embeddedPort": embedded_port,
+            "sdkInit": summarize_json(&init_output.value),
+            "kernelCatalog": kernel_catalog_from_sdk_init(&init_output.value),
             "sdkInfo": summarize_json(&info.value),
         }))
     }
@@ -597,6 +599,33 @@ fn redacted_message(message: &str) -> String {
         .chars()
         .take(512)
         .collect()
+}
+
+fn kernel_catalog_from_sdk_init(value: &Value) -> Value {
+    let mut versions = Vec::new();
+    collect_kernel_versions(value, &mut versions);
+    let mut output = Value::Array(versions);
+    redact_value(&mut output);
+    output
+}
+
+fn collect_kernel_versions(value: &Value, output: &mut Vec<Value>) {
+    match value {
+        Value::Object(map) => {
+            if let Some(values) = map.get("kernelVersions").and_then(Value::as_array) {
+                output.extend(values.iter().cloned());
+            }
+            for child in map.values() {
+                collect_kernel_versions(child, output);
+            }
+        }
+        Value::Array(values) => {
+            for child in values {
+                collect_kernel_versions(child, output);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn find_i32(value: &Value, keys: &[&str]) -> Option<i32> {

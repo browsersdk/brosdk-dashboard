@@ -90,7 +90,7 @@ brosdk-dashboard/
 - `RuntimeInstance`：易失态，包含 `envId`、generation、SDK reqId、PID/CDP/ready/exit fact。
 - `ProxyProfile`：本地代理配置，密码进入系统密钥库。
 - `FingerprintProfile`：先显示 SDK 返回的指纹摘要和预览；完整本地编辑器后续移植。
-- `KernelRecord`：来自 SDK 内核清单和本地目录扫描的合并视图。
+- `KernelRecord`：来自 `sdk_init.kernelVersions`、`sdk_info` catalog 和本地目录扫描的合并视图。
 - `Operation`：所有启动、停止、创建、更新、删除、安装、诊断都必须进入 operation。
 - `Settings`：数据目录、工作目录、扩展目录、SDK API URL、启动策略、日志级别。
 
