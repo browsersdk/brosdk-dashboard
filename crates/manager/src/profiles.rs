@@ -298,12 +298,14 @@ pub fn scan_kernels_with_catalogs_for_platform<'a>(
             records
                 .entry(available.id.clone())
                 .and_modify(|installed| {
-                    installed.latest_version = available.version.clone();
+                    installed.latest_version = available.latest_version.clone();
+                    installed.latest_version_code = available.latest_version_code;
+                    installed.latest_checksum = available.latest_checksum.clone();
                     installed.download_available = available.download_available;
-                    if installed.version != installed.latest_version
-                        && installed.latest_version.is_some()
-                    {
+                    if kernel_update_available(installed) {
                         installed.status = "update-available".into();
+                    } else {
+                        installed.status = "installed".into();
                     }
                 })
                 .or_insert(available);
@@ -390,6 +392,16 @@ fn kernel_record_from_value(
             "majorVersion",
         ],
     );
+    let version_code = priority_i64(
+        value,
+        &[
+            "versionCode",
+            "coreVersionCode",
+            "packageVersionCode",
+            "buildVersionCode",
+        ],
+    );
+    let checksum = priority_checksum(value, &["sha256", "sha256sum", "md5", "checksum"]);
     let platform = priority_string(value, &["platform"])
         .map(|value| normalize_kernel_platform(&value))
         .unwrap_or_else(current_kernel_platform);
@@ -413,6 +425,10 @@ fn kernel_record_from_value(
         major,
         latest_version: (status == "available").then(|| version.clone()).flatten(),
         version: (status == "installed").then(|| version.clone()).flatten(),
+        latest_version_code: (status == "available").then_some(version_code).flatten(),
+        version_code: (status == "installed").then_some(version_code).flatten(),
+        latest_checksum: (status == "available").then(|| checksum.clone()).flatten(),
+        checksum: (status == "installed").then(|| checksum.clone()).flatten(),
         platform,
         arch,
         status: status.into(),
@@ -421,6 +437,28 @@ fn kernel_record_from_value(
             .is_some_and(|url| !url.trim().is_empty()),
         updated_at: Utc::now(),
     }
+}
+
+fn kernel_update_available(record: &KernelRecord) -> bool {
+    if let (Some(local), Some(remote)) = (record.version_code, record.latest_version_code)
+        && local != remote
+    {
+        return true;
+    }
+    if let (Some(local), Some(remote)) = (
+        record.checksum.as_deref(),
+        record.latest_checksum.as_deref(),
+    ) {
+        if local != remote {
+            return true;
+        }
+        if record.version_code.is_some() && record.latest_version_code.is_some() {
+            return false;
+        }
+    } else if record.version_code.is_some() && record.latest_version_code.is_some() {
+        return false;
+    }
+    record.latest_version.is_some() && record.version != record.latest_version
 }
 
 fn find_kernel_versions(value: &Value) -> Vec<&Value> {
@@ -520,6 +558,24 @@ fn priority_number(value: &Value, keys: &[&str]) -> Option<u32> {
         find_value(value, &HashSet::from([*key]))
             .and_then(Value::as_u64)
             .and_then(|value| value.try_into().ok())
+    })
+}
+
+fn priority_i64(value: &Value, keys: &[&str]) -> Option<i64> {
+    keys.iter().find_map(|key| {
+        find_value(value, &HashSet::from([*key])).and_then(|value| {
+            value
+                .as_i64()
+                .or_else(|| value.as_u64().and_then(|value| i64::try_from(value).ok()))
+                .or_else(|| value.as_str()?.trim().parse::<i64>().ok())
+        })
+    })
+}
+
+fn priority_checksum(value: &Value, keys: &[&str]) -> Option<String> {
+    priority_string(value, keys).and_then(|value| {
+        let normalized = value.trim().to_ascii_lowercase();
+        (!normalized.is_empty()).then_some(normalized)
     })
 }
 
@@ -693,6 +749,153 @@ mod tests {
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].id, "chrome-146-windows-x86_64");
         assert_eq!(records[0].name, "YunBrowser.exe");
+    }
+
+    #[test]
+    fn installed_kernel_uses_version_code_before_display_version_for_update_state() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let core_dir = directory.path().join("cores/chrome-146-windows-x86_64");
+        std::fs::create_dir_all(&core_dir).expect("core dir");
+        std::fs::write(
+            core_dir.join(".core.json"),
+            json!({
+                "type": "chrome",
+                "kernelName": "YunBrowser.exe",
+                "majorVersion": "146",
+                "kernelVersion": "146.0.0",
+                "versionCode": 3,
+                "platform": "windows",
+                "arch": "x86_64",
+                "md5": "214be19143fe87ef2ee3b9041b594581"
+            })
+            .to_string(),
+        )
+        .expect("core metadata");
+        let catalog = json!({
+            "data": {
+                "list": [{
+                    "type": "chrome",
+                    "kernelName": "YunBrowser.exe",
+                    "majorVersion": "146",
+                    "kernelVersion": "146",
+                    "versionCode": 3,
+                    "platform": "windows",
+                    "arch": "x86_64",
+                    "url": "https://download.example.test/chrome-146.zip",
+                    "md5": "214be19143fe87ef2ee3b9041b594581"
+                }]
+            }
+        });
+
+        let records = scan_kernels_with_catalogs_for_platform(
+            directory.path(),
+            [&catalog],
+            "windows",
+            "x86_64",
+        );
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "installed");
+        assert_eq!(records[0].version_code, Some(3));
+        assert_eq!(records[0].latest_version_code, Some(3));
+        assert_eq!(records[0].version.as_deref(), Some("146.0.0"));
+        assert_eq!(records[0].latest_version.as_deref(), Some("146"));
+    }
+
+    #[test]
+    fn installed_kernel_uses_checksum_when_version_code_is_missing() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let core_dir = directory.path().join("cores/chrome-146-windows-x86_64");
+        std::fs::create_dir_all(&core_dir).expect("core dir");
+        std::fs::write(
+            core_dir.join(".core.json"),
+            json!({
+                "type": "chrome",
+                "kernelName": "YunBrowser.exe",
+                "majorVersion": "146",
+                "kernelVersion": "146",
+                "platform": "windows",
+                "arch": "x86_64",
+                "md5": "local-md5"
+            })
+            .to_string(),
+        )
+        .expect("core metadata");
+        let catalog = json!({
+            "data": {
+                "list": [{
+                    "type": "chrome",
+                    "kernelName": "YunBrowser.exe",
+                    "majorVersion": "146",
+                    "kernelVersion": "146",
+                    "platform": "windows",
+                    "arch": "x86_64",
+                    "url": "https://download.example.test/chrome-146.zip",
+                    "md5": "remote-md5"
+                }]
+            }
+        });
+
+        let records = scan_kernels_with_catalogs_for_platform(
+            directory.path(),
+            [&catalog],
+            "windows",
+            "x86_64",
+        );
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "update-available");
+        assert_eq!(records[0].checksum.as_deref(), Some("local-md5"));
+        assert_eq!(records[0].latest_checksum.as_deref(), Some("remote-md5"));
+    }
+
+    #[test]
+    fn installed_kernel_treats_digest_change_as_update_even_with_same_version_code() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let core_dir = directory.path().join("cores/chrome-146-windows-x86_64");
+        std::fs::create_dir_all(&core_dir).expect("core dir");
+        std::fs::write(
+            core_dir.join(".core.json"),
+            json!({
+                "type": "chrome",
+                "kernelName": "YunBrowser.exe",
+                "majorVersion": "146",
+                "kernelVersion": "146",
+                "versionCode": 3,
+                "platform": "windows",
+                "arch": "x86_64",
+                "md5": "local-md5"
+            })
+            .to_string(),
+        )
+        .expect("core metadata");
+        let catalog = json!({
+            "data": {
+                "list": [{
+                    "type": "chrome",
+                    "kernelName": "YunBrowser.exe",
+                    "majorVersion": "146",
+                    "kernelVersion": "146",
+                    "versionCode": 3,
+                    "platform": "windows",
+                    "arch": "x86_64",
+                    "url": "https://download.example.test/chrome-146.zip",
+                    "md5": "remote-md5"
+                }]
+            }
+        });
+
+        let records = scan_kernels_with_catalogs_for_platform(
+            directory.path(),
+            [&catalog],
+            "windows",
+            "x86_64",
+        );
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].status, "update-available");
+        assert_eq!(records[0].version_code, Some(3));
+        assert_eq!(records[0].latest_version_code, Some(3));
     }
 
     #[test]

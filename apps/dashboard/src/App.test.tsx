@@ -130,6 +130,29 @@ describe("App kernel page", () => {
       }));
     });
   });
+
+  it("disables the install action when the installed kernel is current", async () => {
+    api.getSnapshot.mockResolvedValue(snapshot({
+      kernels: [{
+        ...kernel("chrome-146-windows-x86_64", "Chrome", "windows", "x86_64", 146),
+        version: "146.0.0",
+        latestVersion: "146.0.0",
+        versionCode: 3,
+        latestVersionCode: 3,
+        checksum: "214be19143fe87ef2ee3b9041b594581",
+        latestChecksum: "214be19143fe87ef2ee3b9041b594581",
+        status: "installed",
+        installPath: "runtime/sdk-work/cores/chrome-146-windows-x86_64",
+      }],
+    }));
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "内核" });
+
+    const installButton = screen.getByRole("button", { name: "安装 Chrome" }) as HTMLButtonElement;
+    expect(installButton.disabled).toBe(true);
+    expect(installButton.title).toContain("已是最新版本");
+  });
 });
 
 function snapshot(overrides: Partial<DashboardSnapshot> = {}): DashboardSnapshot {

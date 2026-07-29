@@ -921,11 +921,13 @@ function KernelPage({ snapshot, onRefresh, onError }: {
             const installProgressMessage = installOperation?.message ?? (locallyInstalling ? "已发送安装请求，等待 SDK 受理" : "");
             const installDisplay = kernelInstallDisplay(installProgressStatus);
             const installProgress = kernelInstallProgress(installProgressMessage);
+            const installable = kernel.status !== "installed";
             const installReason = !desktop
               ? kernelActionReason
               : installing
                 ? `正在安装: ${installProgressMessage}`
-                : kernelActionReason || (!kernel.downloadAvailable ? "下载源未知" : "");
+                : kernelActionReason || (!kernel.downloadAvailable ? "下载源未知" : (!installable ? "已是最新版本" : ""));
+            const installLabel = kernel.status === "update-available" ? `更新 ${kernel.name}` : `安装 ${kernel.name}`;
             return (
               <tr key={kernel.id}>
                 <td><div className="resource-name"><span className="resource-icon"><HardDriveDownload size={16} /></span><div><strong>{kernel.name}</strong><small>{kernel.kernelType}</small></div></div></td>
@@ -937,7 +939,7 @@ function KernelPage({ snapshot, onRefresh, onError }: {
                 </td>
                 <td>{kernel.downloadAvailable ? "可用" : "未知"}</td>
                 <td className="row-actions inline-actions">
-                  {kernel.major !== null && <button className="icon-button" type="button" title={actionTitle("安装或更新", installReason)} aria-label={`安装 ${kernel.name}`} disabled={!desktop || !kernel.downloadAvailable || Boolean(busy) || installing} onClick={() => void run(`install:${kernel.id}`, () => installKernel(kernel))}>{installing ? <LoaderCircle className="spin" size={15} /> : <HardDriveDownload size={15} />}</button>}
+                  {kernel.major !== null && <button className="icon-button" type="button" title={actionTitle(kernel.status === "update-available" ? "更新" : "安装", installReason)} aria-label={installLabel} disabled={!desktop || !kernel.downloadAvailable || !installable || Boolean(busy) || installing} onClick={() => void run(`install:${kernel.id}`, () => installKernel(kernel))}>{installing ? <LoaderCircle className="spin" size={15} /> : <HardDriveDownload size={15} />}</button>}
                   {kernel.installPath && <button className="icon-button danger" type="button" title={actionTitle("卸载", kernelActionReason)} aria-label={`卸载 ${kernel.name}`} disabled={!desktop || Boolean(busy)} onClick={() => void run(`uninstall:${kernel.id}`, () => uninstallKernel(kernel.id))}><Trash2 size={15} /></button>}
                 </td>
               </tr>

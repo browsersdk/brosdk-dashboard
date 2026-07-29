@@ -132,6 +132,8 @@ brosdk-dashboard/
 
 内核安装反馈补丁完成（2026-07-28）：内核页点击“安装或更新”后会立即显示顶部安装进度和对应行内“等待 SDK 受理”状态，状态列主徽标由 install operation 覆盖为“安装中/安装完成/安装失败”，不再继续显示 catalog 原始“可安装”。`sdk_browser_install` 在 DLL 侧通常只返回受理完成码，真正用于追踪的 `reqId` 会出现在 `CL_EVT_BRO_INSTALL_PROGRESS/SUCCESS/FAILED` 回调里，且回调数据包含 `kernelId/major/kernelName/type/platform/arch/progress`，所以 Manager 直接按回调和 operation 的 `kernelId/platform/arch` 绑定即可，不需要客户端自己实现下载管理。operation request 保存 `kernelId/platform/arch` 用于行级匹配和失败重试，传给 DLL 的请求仍保持参考客户端兼容的 `cores: [{ type, major }]`。Manager 接到 `browser-install-success` 后会后台合并 `sdk_info`、init catalog、服务端 `kernelList` 和本地 cores 重扫 `kernel_records`；如果 SDK 已受理后 3 分钟没有任何进度回调，Manager 会把 operation 收敛为 `failed / SDK_INSTALL_TIMEOUT`，操作中心可重试。Dashboard 单测覆盖真实点击后 Promise 未返回、下载进度和成功终态展示，Playwright 桌面/移动覆盖回调进度、当前平台过滤、安装按钮禁用和无横向溢出。
 
+内核最新状态补丁完成（2026-07-29）：`kernel_records` 增加本地/远端 `versionCode` 与 `sha256/md5` 摘要；Manager 合并本地 `.core.json` 和服务端 catalog 时比较小版本号和包 digest，任一不一致都会标记 `update-available`，两者都缺失时才回退到展示用版本字符串，避免服务端显示主版本、本地显示小版本时误报更新。状态为 `installed` 且已是最新的内核，Dashboard 主按钮禁用并提示“已是最新版本”；只有 `available/update-available` 才能调用 `sdk_browser_install`，Manager 直接 API 调用也会拒绝当前已安装内核。
+
 阶段 35-39 已规划为跨境电商轻量运营中台方向，按店铺环境绑定、订单发货、SKU/库存、商品刊登和 Commerce Agent 递进实施。该方向继续复用 envId 唯一主键、Manager operation、安全凭据、DLL MCP 和 AI 审批链路；平台订单、库存和刊登状态仍以平台 API 为事实来源，本地只保存可删除同步缓存和审计记录。
 
 阶段 10 的默认值边界：代理可不选；内核版本必须来自 Manager 本地已安装的当前平台 core；Manager 只向 `sdk_env_create` 发送服务端 `dto.FingerReqDto` 支持的顶层 `kernel`、`kernelVersion` 和可选 `proxy`。`customerId`、`envName` 以及语言、时区、UA、Canvas、WebGL 等字段均省略，由 userSig 上下文和服务端默认策略处理。代理密码只在 Manager 调用 DLL 前从系统密钥库恢复，不进入 operation、事件、snapshot、文档或日志。

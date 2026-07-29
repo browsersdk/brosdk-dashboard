@@ -518,5 +518,9 @@ Dashboard 子阶段结果：5 个环境创建组件测试通过；production bui
 - `cargo test -p manager stale_kernel_install_operation_becomes_retryable_failure --lib` 必须覆盖 SDK 已受理但无下载进度回调时，Manager 将 operation 收敛为 `failed / SDK_INSTALL_TIMEOUT`，操作中心可重试。
 - `npm run e2e --workspace apps/dashboard -- -g "kernel"` 必须在桌面和移动视口断言 `browser-install · Downloading · 42%` 可见、状态列主徽标显示“安装中”、安装按钮禁用、同版本 linux/macos/windows catalog 只显示当前 `platform/arch`、页面无横向溢出和无应用控制台错误。
 - 如果 `sdk_browser_install` 返回 `CL_DONE` 而不是可跟踪 reqId，优先检查 `sdk-host` 是否把首个安装回调的 `reqId` 绑定到 pending install operation；不要改成前端自行下载内核包，DLL 已负责下载、校验、解压和注册。
+- `cargo test -p manager kernel --lib` 必须覆盖内核最新状态对账：本地和远端 `versionCode` 相同且 digest 相同时，即使展示版本字符串不同也保持 `installed`；`versionCode` 或 `sha256/md5` 任一不一致都标记 `update-available`；Manager 直接安装当前 `installed` 内核应返回不可用错误。
+- `npm run test --workspace apps/dashboard -- App.test.tsx` 必须覆盖当前已安装内核的安装按钮禁用并提示“已是最新版本”。
 
 2026-07-28 结果：Dashboard 59 项组件测试、Playwright 桌面/移动 32 项、Rust workspace 测试、Rustfmt、Clippy、production build、Browser 插件内核矩阵可视验证、真实 API Key `npm run manager:smoke`（`serverKernelListLoaded=true/count=12`）、Windows NSIS/便携构建和 `npm run release:verify` 均通过。
+
+2026-07-29 结果：Dashboard 60 项组件测试、Manager 95 项 lib 测试、Rust workspace 测试、Rustfmt、Manager Clippy、Dashboard production build 和内核页 Playwright 桌面/移动 6 项均通过。

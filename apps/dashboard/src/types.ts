@@ -294,6 +294,10 @@ export interface KernelRecord {
   major: number | null;
   version: string | null;
   latestVersion: string | null;
+  versionCode?: number | null;
+  latestVersionCode?: number | null;
+  checksum?: string | null;
+  latestChecksum?: string | null;
   platform: string;
   arch: string;
   status: string;

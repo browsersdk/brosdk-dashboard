@@ -3268,6 +3268,11 @@ impl Manager {
                 kernel.arch
             )));
         }
+        if kernel.status == "installed" {
+            return Err(ManagerError::KernelNotUsable(
+                "kernel is already installed and current".into(),
+            ));
+        }
         if !kernel.download_available {
             return Err(ManagerError::KernelNotUsable(
                 "kernel download source is unknown".into(),
@@ -6094,6 +6099,10 @@ mod tests {
             major: Some(134),
             version: Some("3".into()),
             latest_version: Some("3".into()),
+            version_code: Some(3),
+            latest_version_code: Some(3),
+            checksum: Some("local-checksum".into()),
+            latest_checksum: Some("local-checksum".into()),
             platform: std::env::consts::OS.into(),
             arch: std::env::consts::ARCH.into(),
             status: "installed".into(),
@@ -6401,6 +6410,48 @@ mod tests {
         assert_eq!(operation.status, "failed");
         assert_eq!(operation.error_code.as_deref(), Some("SDK_INSTALL_TIMEOUT"));
         assert!(operation.message.contains("重试"));
+    }
+
+    #[test]
+    fn install_kernel_rejects_current_installed_kernel() {
+        let directory = tempfile::tempdir().expect("tempdir");
+        let store = ManagerStore::open(
+            directory.path().join("manager.sqlite3"),
+            &ManagerSettings {
+                data_dir: directory.path().display().to_string(),
+                work_dir: "work".into(),
+                extension_dir: "extensions".into(),
+                log_dir: "logs".into(),
+                sdk_api_url: None,
+                debug: false,
+                startup_policy: "restore-none".into(),
+                embedded_mcp_port: None,
+                ai_base_url: None,
+                ai_model: None,
+            },
+        )
+        .expect("store");
+        let manager = Manager::with_store(store.clone()).expect("manager");
+        let mut kernel = usable_kernel();
+        kernel.id = "chrome-134-current".into();
+        kernel.status = "installed".into();
+        kernel.download_available = true;
+        store
+            .replace_kernel_records(&[kernel])
+            .expect("kernel records");
+
+        let error = manager
+            .resolve_install_kernel(&KernelInstallInput {
+                kernel_id: Some("chrome-134-current".into()),
+                major: 134,
+                kernel_type: Some("chrome".into()),
+                platform: Some(profiles::current_kernel_platform()),
+                arch: Some(profiles::current_kernel_arch()),
+            })
+            .expect_err("current installed kernel should not install");
+
+        assert!(matches!(error, ManagerError::KernelNotUsable(_)));
+        assert!(error.to_string().contains("already installed"));
     }
 
     #[test]

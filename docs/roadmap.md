@@ -971,6 +971,12 @@ Dashboard 交互子阶段完成（2026-07-26）：
 - 组件测试覆盖真实桌面点击后 `installKernel` Promise 未返回时的即时反馈、下载进度、成功终态和跨平台同版本 catalog 过滤；Playwright 桌面/移动覆盖 `browser-install · Downloading · 42%` 的顶部/行内可见状态、状态列“安装中”、当前平台过滤、安装按钮禁用、无横向溢出和控制台健康。`sdk_browser_install` 的返回值只作为受理信号，实际进度必须依赖回调里的 `reqId` 与 `kernelId/major/platform/arch`；不要把安装下载逻辑下沉到客户端自建下载器。
 - 本轮验证通过 Dashboard 59 项组件测试、Playwright 桌面/移动 32 项、Rust workspace 测试、Rustfmt、Clippy、production build、Browser 插件内核矩阵可视验证、真实 API Key `manager:smoke`（`serverKernelListLoaded=true/count=12`）、Windows NSIS/便携构建和 release verify。
 
+内核最新状态补丁（2026-07-29）：
+
+- `kernel_records` 持久化本地/远端 `versionCode` 与 `sha256/md5` 摘要；合并状态时比较小版本号和 digest，任一不一致都会标记 `update-available`，两者都缺失时才比较展示版本字符串。
+- `installed` 且已是最新的内核不再显示可执行的“安装或更新”主操作；Dashboard 禁用按钮并提示“已是最新版本”，Manager 直接 API 调用也拒绝当前已安装内核，避免用户误以为需要反复安装。
+- 保留 `available/update-available` 的安装入口；未来如需修复安装包，应单独设计“强制重装/修复”二级动作，而不是复用默认安装按钮。
+
 ## 38. 阶段 35：跨境店铺与环境绑定
 
 目标：把 BroSDK Dashboard 从“多环境浏览器控制台”扩展为“跨境多店铺运营中台”的基础骨架，但不直接做完整 ERP。

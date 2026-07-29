@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
 
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 
 pub struct StoredAgentExecution {
     pub plan_hash: String,
@@ -190,6 +190,10 @@ impl ManagerStore {
                 major INTEGER,
                 version TEXT,
                 latest_version TEXT,
+                version_code INTEGER,
+                latest_version_code INTEGER,
+                checksum TEXT,
+                latest_checksum TEXT,
                 platform TEXT NOT NULL,
                 arch TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -232,6 +236,15 @@ impl ManagerStore {
         ensure_column(&connection, "settings", "ai_base_url", "TEXT")?;
         ensure_column(&connection, "settings", "ai_model", "TEXT")?;
         ensure_column(&connection, "operations", "request_json", "TEXT")?;
+        ensure_column(&connection, "kernel_records", "version_code", "INTEGER")?;
+        ensure_column(
+            &connection,
+            "kernel_records",
+            "latest_version_code",
+            "INTEGER",
+        )?;
+        ensure_column(&connection, "kernel_records", "checksum", "TEXT")?;
+        ensure_column(&connection, "kernel_records", "latest_checksum", "TEXT")?;
         ensure_column(
             &connection,
             "proxy_profiles",
@@ -785,9 +798,10 @@ impl ManagerStore {
         for record in records {
             transaction.execute(
                 r#"INSERT INTO kernel_records(
-                       id, kernel_type, name, major, version, latest_version, platform,
-                       arch, status, install_path, download_available, updated_at
-                   ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"#,
+                       id, kernel_type, name, major, version, latest_version,
+                       version_code, latest_version_code, checksum, latest_checksum,
+                       platform, arch, status, install_path, download_available, updated_at
+                   ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)"#,
                 params![
                     record.id,
                     record.kernel_type,
@@ -795,6 +809,10 @@ impl ManagerStore {
                     record.major,
                     record.version,
                     record.latest_version,
+                    record.version_code,
+                    record.latest_version_code,
+                    record.checksum,
+                    record.latest_checksum,
                     record.platform,
                     record.arch,
                     record.status,
@@ -811,13 +829,14 @@ impl ManagerStore {
     pub fn list_kernel_records(&self) -> Result<Vec<KernelRecord>, StoreError> {
         let connection = self.connection()?;
         let mut statement = connection.prepare(
-            r#"SELECT id, kernel_type, name, major, version, latest_version, platform,
-                      arch, status, install_path, download_available, updated_at
+            r#"SELECT id, kernel_type, name, major, version, latest_version,
+                      version_code, latest_version_code, checksum, latest_checksum,
+                      platform, arch, status, install_path, download_available, updated_at
                FROM kernel_records ORDER BY major DESC, kernel_type, id"#,
         )?;
         statement
             .query_map([], |row| {
-                let updated_at: String = row.get(11)?;
+                let updated_at: String = row.get(15)?;
                 Ok(KernelRecord {
                     id: row.get(0)?,
                     kernel_type: row.get(1)?,
@@ -825,14 +844,18 @@ impl ManagerStore {
                     major: row.get(3)?,
                     version: row.get(4)?,
                     latest_version: row.get(5)?,
-                    platform: row.get(6)?,
-                    arch: row.get(7)?,
-                    status: row.get(8)?,
-                    install_path: row.get(9)?,
-                    download_available: row.get(10)?,
+                    version_code: row.get(6)?,
+                    latest_version_code: row.get(7)?,
+                    checksum: row.get(8)?,
+                    latest_checksum: row.get(9)?,
+                    platform: row.get(10)?,
+                    arch: row.get(11)?,
+                    status: row.get(12)?,
+                    install_path: row.get(13)?,
+                    download_available: row.get(14)?,
                     updated_at: parse_time(&updated_at).map_err(|error| {
                         rusqlite::Error::FromSqlConversionFailure(
-                            11,
+                            15,
                             rusqlite::types::Type::Text,
                             Box::new(error),
                         )
