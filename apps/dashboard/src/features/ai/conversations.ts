@@ -39,6 +39,7 @@ export interface AiConversationState {
 }
 
 const STORAGE_KEY = "brosdk-dashboard.ai-conversations.v1";
+const PERSISTENCE_KEY = "brosdk-dashboard.ai-conversations.persistence.v1";
 const MAX_CONVERSATIONS = 20;
 const MAX_STORED_MESSAGES = 80;
 const MAX_HISTORY_MESSAGES = 40;
@@ -72,28 +73,70 @@ export function createConversationMessage(
   };
 }
 
-export function loadConversationState(defaultContextEnvId: string | null): AiConversationState {
+export function aiHistoryPersistenceEnabled() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
-    const conversations: AiConversation[] = Array.isArray(parsed?.conversations)
-      ? (parsed.conversations as unknown[]).map(parseConversation).filter(isConversation).slice(0, MAX_CONVERSATIONS)
-      : [];
-    if (conversations.length > 0) {
-      const activeConversationId = conversations.some(
-        (conversation) => conversation.id === parsed.activeConversationId,
-      )
-        ? parsed.activeConversationId
-        : conversations[0].id;
-      return { activeConversationId, conversations };
+    return localStorage.getItem(PERSISTENCE_KEY) === "enabled";
+  } catch {
+    return false;
+  }
+}
+
+export function setAiHistoryPersistence(enabled: boolean, state: AiConversationState) {
+  try {
+    if (enabled) {
+      localStorage.setItem(PERSISTENCE_KEY, "enabled");
+      writeConversationState(state);
+    } else {
+      localStorage.removeItem(PERSISTENCE_KEY);
+      localStorage.removeItem(STORAGE_KEY);
     }
   } catch {
-    // Invalid or unavailable WebView storage starts a clean local conversation.
+    // WebView storage can be unavailable; privacy mode remains in-memory.
   }
+}
+
+export function loadConversationState(
+  defaultContextEnvId: string | null,
+  options: { persistent?: boolean } = {},
+): AiConversationState {
+  if (options.persistent === true) {
+    try {
+      const parsed: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "null");
+      if (!isRecord(parsed)) {
+        throw new Error("Invalid conversation state");
+      }
+      const conversations: AiConversation[] = Array.isArray(parsed.conversations)
+        ? (parsed.conversations as unknown[]).map(parseConversation).filter(isConversation).slice(0, MAX_CONVERSATIONS)
+        : [];
+      if (conversations.length > 0) {
+        const parsedActiveConversationId = stringValue(parsed.activeConversationId);
+        let activeConversationId = conversations[0].id;
+        if (
+          parsedActiveConversationId
+          && conversations.some((conversation) => conversation.id === parsedActiveConversationId)
+        ) {
+          activeConversationId = parsedActiveConversationId;
+        }
+        return { activeConversationId, conversations };
+      }
+    } catch {
+      // Invalid or unavailable WebView storage starts a clean local conversation.
+    }
+  }
+  if (options.persistent !== true) removeStoredConversationState();
   const conversation = createConversation(defaultContextEnvId);
   return { activeConversationId: conversation.id, conversations: [conversation] };
 }
 
-export function saveConversationState(state: AiConversationState) {
+export function saveConversationState(state: AiConversationState, persistent = aiHistoryPersistenceEnabled()) {
+  if (!persistent) {
+    removeStoredConversationState();
+    return;
+  }
+  writeConversationState(state);
+}
+
+function writeConversationState(state: AiConversationState) {
   try {
     const conversations = state.conversations.slice(0, MAX_CONVERSATIONS).map((conversation) => ({
       ...conversation,
@@ -105,6 +148,14 @@ export function saveConversationState(state: AiConversationState) {
     }));
   } catch {
     // Conversation persistence is best effort and must not block AI requests.
+  }
+}
+
+function removeStoredConversationState() {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Storage cleanup is best effort.
   }
 }
 

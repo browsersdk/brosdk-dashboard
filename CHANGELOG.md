@@ -11,6 +11,7 @@
 ### Security
 
 - 为 Tauri WebView 启用最小 CSP，并新增 `npm run security:tauri` 防止生产策略回退到 `null`、通配源或 `unsafe-eval`。
+- AI 会话默认改为仅内存保存；只有用户显式开启“保存历史”后才写入 WebView 本地存储。
 
 ### Documentation
 

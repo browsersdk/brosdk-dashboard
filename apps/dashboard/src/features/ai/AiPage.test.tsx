@@ -11,6 +11,8 @@ const api = vi.hoisted(() => ({
   onManagerEvent: vi.fn(),
 }));
 const scrollTo = vi.fn();
+const storageKey = "brosdk-dashboard.ai-conversations.v1";
+const persistenceKey = "brosdk-dashboard.ai-conversations.persistence.v1";
 
 vi.mock("../../api", () => ({
   aiChat: api.chat,
@@ -92,11 +94,50 @@ describe("AiPage", () => {
     expect(screen.getByLabelText("AI 会话作用域").textContent).toContain("共享环境 · env-1");
   });
 
-  it("persists messages and sends bounded conversation history on later turns", async () => {
+  it("keeps AI conversations in memory by default and clears legacy WebView storage", async () => {
+    localStorage.setItem(storageKey, JSON.stringify({
+      activeConversationId: "legacy",
+      conversations: [{
+        id: "legacy",
+        title: "旧会话",
+        mode: "chat",
+        executionMode: "manual",
+        contextEnvId: null,
+        createdAt: "2026-07-26T00:00:00.000Z",
+        updatedAt: "2026-07-26T00:00:00.000Z",
+        messages: [{
+          id: "legacy-message",
+          role: "assistant",
+          mode: "chat",
+          content: "不应恢复的历史",
+          createdAt: "2026-07-26T00:00:00.000Z",
+        }],
+      }],
+    }));
+    api.chat.mockResolvedValue({ answer: "临时回答", model: "deepseek-v4-flash", readOnly: true });
+    const view = renderPage();
+
+    expect(screen.queryByText("不应恢复的历史")).toBeNull();
+    expect((screen.getByLabelText("保存 AI 会话历史") as HTMLInputElement).checked).toBe(false);
+    await waitFor(() => expect(localStorage.getItem(storageKey)).toBeNull());
+
+    submitPrompt("临时问题");
+    await screen.findByText("临时回答");
+    expect(localStorage.getItem(storageKey)).toBeNull();
+
+    view.unmount();
+    renderPage();
+    expect(screen.queryByText("临时回答")).toBeNull();
+    expect(screen.getByText("当前会话为空")).toBeTruthy();
+  });
+
+  it("persists messages after explicit opt-in and sends bounded conversation history on later turns", async () => {
     api.chat
       .mockResolvedValueOnce({ answer: "第一轮回答", model: "deepseek-v4-flash", readOnly: true })
       .mockResolvedValueOnce({ answer: "第二轮回答", model: "deepseek-v4-flash", readOnly: true });
     const view = renderPage();
+    fireEvent.click(screen.getByLabelText("保存 AI 会话历史"));
+    expect(localStorage.getItem(persistenceKey)).toBe("enabled");
 
     submitPrompt("第一轮问题");
     await screen.findByText("第一轮回答");
@@ -111,6 +152,7 @@ describe("AiPage", () => {
 
     view.unmount();
     renderPage();
+    expect((screen.getByLabelText("保存 AI 会话历史") as HTMLInputElement).checked).toBe(true);
     expect(screen.getAllByText("第一轮问题").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("第二轮回答")).toBeTruthy();
   });

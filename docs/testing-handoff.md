@@ -247,6 +247,8 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 
 涉及桌面 WebView 或 Tauri 配置的改动必须继续通过 `npm run security:tauri`。该检查要求生产 CSP 不为 `null`，包含本地资源、Tauri IPC、`object-src 'none'`、`form-action 'none'` 和 `frame-ancestors 'none'`，并禁止生产策略使用 `*`、远程网络源或 `unsafe-eval`。
 
+涉及 AI 会话的改动必须验证默认不持久化：首次进入 AI 页不应恢复旧 `brosdk-dashboard.ai-conversations.v1`，发送新消息后也不写入本地存储；只有用户显式勾选“保存历史”后，才允许把最多 20 个会话、每个 80 条消息写入 WebView localStorage。Playwright 若需要预置长会话，必须同时设置 `brosdk-dashboard.ai-conversations.persistence.v1=enabled`。
+
 > 以下内容保留已实现能力的历史回归门槛，不代表当前路线编号。新增工作应以 [正式发布路线](roadmap.md) 为准。
 
 ## 11. 阶段 10 环境创建验收

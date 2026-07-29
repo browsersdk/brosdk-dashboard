@@ -261,6 +261,10 @@ test("AI conversations keep an immutable global or environment MCP scope", async
   await expect(scope).toContainText("全局");
   await expect(scope).toContainText("全部环境");
   await expect(page.getByLabel("AI 关联环境", { exact: true })).toHaveCount(0);
+  const historyToggle = page.getByLabel("保存 AI 会话历史");
+  await expect(historyToggle).not.toBeChecked();
+  await historyToggle.check();
+  await expect(historyToggle).toBeChecked();
 
   await page.getByRole("button", { name: "新建会话" }).click();
   const dialog = page.getByRole("dialog", { name: "新建 AI 会话" });
@@ -332,6 +336,7 @@ test("AI message history opens at the latest reply", async ({ page }) => {
     createdAt,
   }));
   await page.addInitScript((storedMessages) => {
+    localStorage.setItem("brosdk-dashboard.ai-conversations.persistence.v1", "enabled");
     localStorage.setItem("brosdk-dashboard.ai-conversations.v1", JSON.stringify({
       activeConversationId: "conversation-scroll-e2e",
       conversations: [{

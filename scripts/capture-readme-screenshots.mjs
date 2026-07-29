@@ -51,7 +51,8 @@ try {
   });
   await capture("ai-agent-workspace.png", `${scenario}&page=ai`, "AI 助手", async () => {
     const createdAt = "2026-07-27T06:32:00.000Z";
-    await page.evaluate(({ storageKey, createdAt }) => {
+    await page.evaluate(({ storageKey, persistenceKey, createdAt }) => {
+      localStorage.setItem(persistenceKey, "enabled");
       localStorage.setItem(storageKey, JSON.stringify({
         activeConversationId: "conversation-readme",
         conversations: [{
@@ -98,6 +99,7 @@ try {
       }));
     }, {
       storageKey: "brosdk-dashboard.ai-conversations.v1",
+      persistenceKey: "brosdk-dashboard.ai-conversations.persistence.v1",
       createdAt,
     });
     await page.reload({ waitUntil: "networkidle" });

@@ -34,8 +34,10 @@ import {
   conversationTitle,
   createConversation,
   createConversationMessage,
+  aiHistoryPersistenceEnabled,
   loadConversationState,
   saveConversationState,
+  setAiHistoryPersistence,
   type AiConversation,
   type AiConversationMessage,
   type AiMode,
@@ -87,8 +89,9 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
   const [newConversationOpen, setNewConversationOpen] = useState(false);
   const [newConversationScope, setNewConversationScope] = useState<"global" | "environment">("global");
   const [newConversationEnvId, setNewConversationEnvId] = useState<string | null>(null);
+  const [historyPersistence, setHistoryPersistence] = useState(() => aiHistoryPersistenceEnabled());
   const [conversationState, setConversationState] = useState(() => (
-    loadConversationState(null)
+    loadConversationState(null, { persistent: aiHistoryPersistenceEnabled() })
   ));
   const messageListRef = useRef<HTMLDivElement>(null);
   const activeConversation = conversationState.conversations.find(
@@ -121,8 +124,8 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
     : "";
 
   useEffect(() => {
-    saveConversationState(conversationState);
-  }, [conversationState]);
+    saveConversationState(conversationState, historyPersistence);
+  }, [conversationState, historyPersistence]);
 
   useEffect(() => {
     const messageList = messageListRef.current;
@@ -219,6 +222,11 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
     }));
     setPrompt("");
     onError("");
+  }
+
+  function changeHistoryPersistence(enabled: boolean) {
+    setHistoryPersistence(enabled);
+    setAiHistoryPersistence(enabled, conversationState);
   }
 
   function deleteConversation(conversationId: string) {
@@ -388,6 +396,16 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
           )}
         </div>
         <div className="ai-toolbar-provider">
+          <label className="ai-history-toggle" title="保存 AI 会话历史">
+            <input
+              aria-label="保存 AI 会话历史"
+              type="checkbox"
+              checked={historyPersistence}
+              disabled={Boolean(busy)}
+              onChange={(event) => changeHistoryPersistence(event.target.checked)}
+            />
+            <span>保存历史</span>
+          </label>
           <button className="icon-button" type="button" title={actionTitle("清空当前会话", clearConversationReason)} aria-label="清空当前会话" disabled={activeConversation.messages.length === 0 || Boolean(busy)} onClick={clearCurrentConversation}>
             <Eraser size={15} />
           </button>

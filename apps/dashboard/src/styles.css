@@ -2363,6 +2363,27 @@ h2 {
   gap: 8px;
 }
 
+.ai-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 9px;
+  gap: 6px;
+  border: 1px solid #dfe3e8;
+  border-radius: 5px;
+  color: #627084;
+  background: #ffffff;
+  font-size: 12px;
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+.ai-history-toggle input {
+  width: 14px;
+  height: 14px;
+  accent-color: #2866dc;
+}
+
 .segmented-control {
   display: inline-grid;
   grid-template-columns: repeat(2, minmax(76px, 1fr));

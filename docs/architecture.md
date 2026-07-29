@@ -255,7 +255,7 @@ AI Agent 边界：
 - Chat 除了读取 Manager 生成的脱敏快照，还会把 DLL 当次 `tools/list` 中允许的全局读取工具，以及所选 ready 环境的显式读取白名单，作为 OpenAI-compatible function tools 绑定给模型。Chat 不绑定 `env.navigate`、`env.act`、脚本、上传、下载等 mutation，也没有本地文件工具。
 - Agent 把 DLL 全局 `browser.open/browser.close`、Manager 诊断动作和所选 ready 环境当次广告的 MCP 工具作为 function tools 绑定给模型。模型必须选择一个函数；Manager 将函数调用转换为现有 `AiAgentPlan`，再补写真实 `envId`、`expectedState` 和 UUID `idempotencyKey`，不会直接信任模型参数。
 - MCP `inputSchema` 从 DLL `tools/list` 原样进入模型工具定义；环境 schema 中的 `envId/env_id` 会移除，调用时始终由 Manager 强制注入。Chat 每轮最多执行 4 个只读工具并只允许一轮工具回填，结果限制为 64 KiB 且继续脱敏。
-- AI 会话历史保存在 WebView 本地存储，与服务端环境缓存分离；请求只发送有界 user/assistant 历史。Dashboard 不主动注入 API Key、userSig 和 SDK 原始响应，但用户手动输入的文本会保存在未加密会话中。
+- AI 会话历史默认只保存在当前 WebView 进程内存，与服务端环境缓存分离；用户显式开启“保存历史”后才写入 WebView 本地存储。请求只发送有界 user/assistant 历史。Dashboard 不主动注入 API Key、userSig 和 SDK 原始响应；持久化历史在正式公开发布前需要迁入受保护存储或保持明确可关闭。
 - Chat/Agent 的关联环境只包含用户选中或文本明确指定的精确 `envId`。外部 CDP endpoint 只发送 origin；pipe-only 环境只发送 `sdk-browser-command` 控制通道类型。完整 CDP 地址仅在本地 Dashboard 显示。
 - Agent 模型通过原生函数调用提出结构化动作；Manager 同时解析文本中的已知 envId，并根据最新镜像写入 `expectedState` 和 UUID `idempotencyKey`，再校验 action 白名单。会话默认逐次批准，用户可显式选择自动执行；两种方式都通过同一个 Manager reservation 与二次状态校验。
 - Agent 生命周期通过全局 MCP 执行，同时复用现有 operation 队列；Manager 在 HTTP 工具调用前把 envId/open-close 与 operation 绑定给 Host，最终以 callback 或后续 `browser.status` 对账完成，返回 operation id 和 accepted/ready 的状态语义。

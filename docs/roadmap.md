@@ -23,7 +23,7 @@
 ### 安全
 
 - 已为 Tauri 配置最小 CSP，只允许应用本地资源和所需 IPC；AI Provider 网络请求继续由 Manager 发起，并由 `npm run security:tauri` 守护。
-- 将 AI 会话从 WebView localStorage 迁入 Manager，使用平台保护或提供默认不持久化模式。
+- AI 会话已提供默认不持久化模式；若正式版继续支持“保存历史”，需要从 WebView localStorage 迁入 Manager 受保护存储。
 - 建立 MCP/Agent 工具风险等级：
   - 只读：状态、tabs、read、snapshot 等，可在 Chat 和自动模式使用。
   - 低风险写：navigate、wait 等，只在 Agent 自动白名单中使用。
