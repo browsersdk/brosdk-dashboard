@@ -20,6 +20,7 @@ macOS/Linux 只有路径、IPC 和安全存储 adapter；仓库未携带对应�
 | 内核 | 服务端 catalog、本地扫描、平台过滤、版本/digest 比较、安装进度和重试 | 可用 |
 | MCP | DLL 全局 endpoint、动态 tools/list、envId 注入和响应脱敏 | 可用 |
 | AI | OpenAI-compatible Chat/Agent、不可变会话作用域、审批/自动模式和步骤审计 | 内测 |
+| 信息架构 | 五个一级入口、组内二级标签、开发诊断能力收敛到系统区域 | 可用 |
 | Windows 桌面 | 单实例、托盘、后台 Host、安装包和便携包 | 可用 |
 | 本地 HTTP API | 只有地址与 crate 占位，没有产品化服务 | 未实现 |
 | Commerce | 只有方向文档，没有模型、页面或 connector | 未实现 |
@@ -66,5 +67,5 @@ macOS/Linux 只有路径、IPC 和安全存储 adapter；仓库未携带对应�
 1. P0：安全与发布基线，包括 CSP、AI 数据和工具风险、签名、版本及更新回滚。
 2. P0：环境生命周期长期稳定性、Host 故障恢复和大规模环境性能。
 3. P1：分组/标签/保存筛选、批量创建、Cookie 和扩展等运营效率能力。
-4. P1：导航与术语收敛，让普通用户不必理解 MCP、CDP 和 operation。
+4. P1：继续术语收敛和规模体验优化，让普通用户不必理解 MCP、CDP 和 operation。
 5. P2：1.0 后验证店铺工作区与单平台只读 connector。

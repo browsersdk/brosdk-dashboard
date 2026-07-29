@@ -283,10 +283,17 @@ button:focus-visible {
 
 .page-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   min-height: 108px;
   gap: 20px;
+  padding-top: 28px;
+}
+
+.page-heading {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
 }
 
 .breadcrumb {
@@ -298,8 +305,49 @@ button:focus-visible {
   font-size: 12px;
 }
 
+.breadcrumb strong + strong::before {
+  content: "/";
+  margin-right: 6px;
+  color: #a3adbb;
+  font-weight: 500;
+}
+
 .breadcrumb strong {
   color: #5d687a;
+}
+
+.secondary-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+}
+
+.secondary-nav button {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 10px;
+  gap: 6px;
+  border: 1px solid #dce3eb;
+  border-radius: 5px;
+  color: #617089;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.secondary-nav button:hover {
+  color: #263247;
+  border-color: #c7d2df;
+  background: #f8fafc;
+}
+
+.secondary-nav button.active {
+  color: #1f5ed5;
+  border-color: #bcd4fb;
+  background: #edf4ff;
 }
 
 h1,
@@ -324,6 +372,7 @@ h2 {
 .header-actions {
   display: flex;
   align-items: center;
+  padding-top: 4px;
   gap: 8px;
 }
 
@@ -3132,7 +3181,7 @@ h2 {
 
   .primary-nav {
     display: grid;
-    grid-template-columns: repeat(9, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
     height: 48px;
     margin: 0;
     gap: 2px;
@@ -3166,8 +3215,24 @@ h2 {
     gap: 12px;
   }
 
+  .page-heading {
+    width: 100%;
+  }
+
   .breadcrumb {
     display: none;
+  }
+
+  .secondary-nav {
+    flex-wrap: nowrap;
+    max-width: 100%;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+
+  .secondary-nav button {
+    flex: 0 0 auto;
   }
 
   h1 {

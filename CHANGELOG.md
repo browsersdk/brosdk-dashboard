@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+### Changed
+
+- 将 Dashboard 一级导航收敛为“工作台、环境、自动化、资源、系统”，高级 MCP、操作记录和设置通过系统分区的二级标签访问。
+
 ### Documentation
 
 - 明确产品为 Windows 多环境指纹浏览器控制中心，Commerce 不进入 1.0 核心范围。

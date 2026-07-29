@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 const scenario = "preview=workspace&scenario=duplicate-names";
 const pageHeadings = {
-  overview: "总览",
+  overview: "工作台",
   environments: "环境",
   fingerprints: "指纹",
   proxies: "代理",
@@ -21,19 +21,19 @@ test("browser first run offers a working workspace preview entry", async ({ page
 
   await page.getByRole("button", { name: "进入工作台预览" }).click();
   await expect(page).toHaveURL(/preview=workspace/);
-  await expectHealthyDashboard(page, "总览");
+  await expectHealthyDashboard(page, "工作台");
   expect(issues).toEqual([]);
 });
 
 test("overview prioritizes runtime activity and keeps SDK self-check in diagnostics", async ({ page }) => {
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}`);
-  await expectHealthyDashboard(page, "总览");
+  await expectHealthyDashboard(page, "工作台");
   await expect(page.getByRole("button", { name: "SDK Smoke" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "运行活动" })).toBeVisible();
   await expect(page.getByText("2 个运行中", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("button", { name: "系统", exact: true }).click();
   await expectHealthyDashboard(page, "设置");
   const selfCheck = page.getByRole("button", { name: "运行 SDK 自检" });
   await expect(selfCheck).toBeVisible();
@@ -47,18 +47,25 @@ test("main navigation syncs the page query and browser history", async ({ page }
   const issues = monitorPageIssues(page);
   await page.goto(`/?${scenario}&page=settings`);
   await expectHealthyDashboard(page, "设置");
+  await expect(page.getByRole("navigation", { name: "主导航" }).getByRole("button")).toHaveCount(5);
 
   await page.getByRole("button", { name: "环境", exact: true }).click();
   await expectHealthyDashboard(page, "环境");
   await expect(page).toHaveURL(/page=environments/);
 
-  await page.getByRole("button", { name: "AI 助手", exact: true }).click();
+  await page.getByRole("button", { name: "自动化", exact: true }).click();
   await expectHealthyDashboard(page, "AI 助手");
   await expect(page).toHaveURL(/page=ai/);
 
   await page.goBack();
   await expectHealthyDashboard(page, "环境");
   await expect(page).toHaveURL(/page=environments/);
+
+  await page.getByRole("button", { name: "系统", exact: true }).click();
+  await expectHealthyDashboard(page, "设置");
+  await page.getByRole("button", { name: "操作记录", exact: true }).click();
+  await expectHealthyDashboard(page, "操作");
+  await expect(page).toHaveURL(/page=operations/);
   expect(issues).toEqual([]);
 });
 

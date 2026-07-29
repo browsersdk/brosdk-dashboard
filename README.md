@@ -19,6 +19,7 @@ BroSDK Dashboard 是基于 BroSDK 的 Windows 多指纹浏览器桌面控制台�
 - 支持环境创建、同步、启动、进度回调、停止、更新、删除、详情和关键指纹查看。
 - 运行时由隔离的 `sdk-host.exe` 加载 DLL；Dashboard 和 Host 均为 Windows GUI 子系统，不显示终端窗口。
 - 应用单实例运行；关闭主窗口后驻留系统托盘，重复启动会唤醒已有窗口，避免相同 appId 被重复初始化。
+- 界面按“工作台、环境、自动化、资源、系统”五个一级入口组织；MCP 控制台、操作记录和 SDK 自检归入系统区域，普通创建和日常启停优先使用环境工作台。
 - 使用 DLL 全局 `/sdk/v1/mcp` 入口，未指定端口时自动选择本机环回端口；页面工具采用 `env.* + arguments.envId`，Manager 强制注入选中环境并实施工具白名单。
 - AI 会话创建时固定为“全局”或“单环境”：全局会话绑定全局 MCP 目录，单环境会话绑定所选环境且创建后不可修改作用域。Agent 生命周期由 DLL 全局 `browser.open/browser.close` 执行，但仍经过 Manager 的审批、状态机、operation 与幂等校验；Chat 读取、Agent 规划和执行前强制调用全局 `browser.status` 获取当前运行列表，不使用上次客户端遗留的 ready/stopped 缓存。会话历史保存在本地，发送、回复和执行状态更新后自动跟随最新消息。
 

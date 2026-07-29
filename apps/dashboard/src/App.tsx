@@ -29,6 +29,7 @@ import {
   Search,
   SlidersHorizontal,
   TerminalSquare,
+  type LucideIcon,
 } from "lucide-react";
 import {
   batchEnvironmentAction,
@@ -89,19 +90,34 @@ import type {
   SmokeStageStatus,
 } from "./types";
 
-const navItems = [
-  { key: "overview", label: "总览", icon: Activity },
-  { key: "environments", label: "环境", icon: Boxes },
-  { key: "fingerprints", label: "指纹", icon: Fingerprint },
-  { key: "proxies", label: "代理", icon: Network },
-  { key: "kernels", label: "内核", icon: HardDriveDownload },
-  { key: "mcp", label: "MCP", icon: Bot },
-  { key: "ai", label: "AI 助手", icon: BrainCircuit },
-  { key: "operations", label: "操作", icon: TerminalSquare },
-  { key: "settings", label: "设置", icon: Settings },
-] as const;
+const pageDefinitions = {
+  overview: { label: "工作台", title: "工作台", icon: Activity },
+  environments: { label: "环境列表", title: "环境", icon: Boxes },
+  fingerprints: { label: "关键指纹", title: "指纹", icon: Fingerprint },
+  proxies: { label: "代理", title: "代理", icon: Network },
+  kernels: { label: "内核", title: "内核", icon: HardDriveDownload },
+  ai: { label: "AI 助手", title: "AI 助手", icon: BrainCircuit },
+  settings: { label: "设置", title: "设置", icon: Settings },
+  operations: { label: "操作记录", title: "操作", icon: TerminalSquare },
+  mcp: { label: "MCP 控制台", title: "MCP", icon: Bot },
+} as const;
 
-type Page = (typeof navItems)[number]["key"];
+type Page = keyof typeof pageDefinitions;
+
+const navGroups = [
+  { key: "workspace", label: "工作台", icon: Activity, pages: ["overview"] },
+  { key: "environments", label: "环境", icon: Boxes, pages: ["environments", "fingerprints"] },
+  { key: "automation", label: "自动化", icon: BrainCircuit, pages: ["ai"] },
+  { key: "resources", label: "资源", icon: HardDriveDownload, pages: ["proxies", "kernels"] },
+  { key: "system", label: "系统", icon: Settings, pages: ["settings", "operations", "mcp"] },
+] as const satisfies readonly {
+  key: string;
+  label: string;
+  icon: LucideIcon;
+  pages: readonly Page[];
+}[];
+
+const pageKeys = Object.keys(pageDefinitions) as Page[];
 
 const statusLabel: Record<string, string> = {
   "host-running": "Host 运行中",
@@ -141,10 +157,18 @@ function mcpMetricDetail(snapshot: DashboardSnapshot | null) {
   return hint;
 }
 
+function isPage(value: string | null): value is Page {
+  return Boolean(value && pageKeys.includes(value as Page));
+}
+
+function navGroupForPage(page: Page) {
+  return navGroups.find((group) => (group.pages as readonly Page[]).includes(page)) ?? navGroups[0];
+}
+
 export default function App() {
   const [page, setPage] = useState<Page>(() => {
     const previewPage = new URLSearchParams(window.location.search).get("page");
-    return navItems.some((item) => item.key === previewPage) ? previewPage as Page : "overview";
+    return isPage(previewPage) ? previewPage : "overview";
   });
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [smoke, setSmoke] = useState<SmokeReport | null>(null);
@@ -193,6 +217,8 @@ export default function App() {
 
   const latestSmoke = smoke ?? snapshot?.sdk.lastSmoke ?? null;
   const readyEnvironmentCount = snapshot?.environments.filter((environment) => environment.status === "ready").length ?? 0;
+  const activePage = pageDefinitions[page];
+  const activeNavGroup = navGroupForPage(page);
 
   const navigateToPage = useCallback((nextPage: Page, options: { replace?: boolean } = {}) => {
     setPage(nextPage);
@@ -205,7 +231,7 @@ export default function App() {
   useEffect(() => {
     const onPopState = () => {
       const nextPage = new URLSearchParams(window.location.search).get("page");
-      setPage(navItems.some((item) => item.key === nextPage) ? nextPage as Page : "overview");
+      setPage(isPage(nextPage) ? nextPage : "overview");
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
@@ -269,17 +295,18 @@ export default function App() {
           <span className="brand-name">BroSDK</span>
         </div>
         <nav className="primary-nav" aria-label="主导航">
-          {navItems.map((item) => (
+          {navGroups.map((group) => (
             <button
-              key={item.key}
-              aria-label={item.label}
-              className={page === item.key ? "active" : ""}
-              title={item.label}
+              key={group.key}
+              aria-current={group.key === activeNavGroup.key ? "page" : undefined}
+              aria-label={group.label}
+              className={group.key === activeNavGroup.key ? "active" : ""}
+              title={group.label}
               type="button"
-              onClick={() => navigateToPage(item.key)}
+              onClick={() => navigateToPage(group.pages[0])}
             >
-              <item.icon size={18} />
-              <span>{item.label}</span>
+              <group.icon size={18} />
+              <span>{group.label}</span>
             </button>
           ))}
         </nav>
@@ -294,9 +321,32 @@ export default function App() {
 
       <main className={`main-content page-${page}`}>
         <header className="page-header">
-          <div>
-            <div className="breadcrumb"><span>本地客户端</span><strong>{navItems.find((item) => item.key === page)?.label}</strong></div>
-            <h1>{page === "overview" ? "总览" : navItems.find((item) => item.key === page)?.label}</h1>
+          <div className="page-heading">
+            <div className="breadcrumb">
+              <span>本地客户端</span>
+              <strong>{activeNavGroup.label}</strong>
+              {activePage.title !== activeNavGroup.label && <strong>{activePage.title}</strong>}
+            </div>
+            <h1>{activePage.title}</h1>
+            {activeNavGroup.pages.length > 1 && (
+              <nav className="secondary-nav" aria-label={`${activeNavGroup.label}子导航`}>
+                {activeNavGroup.pages.map((pageKey) => {
+                  const item = pageDefinitions[pageKey];
+                  return (
+                    <button
+                      key={pageKey}
+                      aria-current={page === pageKey ? "page" : undefined}
+                      className={page === pageKey ? "active" : ""}
+                      type="button"
+                      onClick={() => navigateToPage(pageKey)}
+                    >
+                      <item.icon size={14} />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            )}
           </div>
           <div className="header-actions">
             {page !== "kernels" && <button className="button secondary" type="button" onClick={() => void load()} disabled={loading}>

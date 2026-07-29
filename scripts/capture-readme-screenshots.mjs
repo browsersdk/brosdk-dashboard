@@ -44,7 +44,7 @@ async function capture(name, route, heading, prepare = async () => {}) {
 
 try {
   const scenario = "?preview=workspace&scenario=duplicate-names";
-  await capture("dashboard-overview.png", scenario, "总览");
+  await capture("dashboard-overview.png", scenario, "工作台");
   await capture("environment-workspace.png", `${scenario}&page=environments`, "环境", async () => {
     await page.locator('tr[data-env-id="env-demo-01"]').click();
     await page.locator("aside.environment-detail").waitFor();

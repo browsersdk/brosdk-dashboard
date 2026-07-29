@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import type { DashboardSnapshot, OperationRecord } from "./types";
@@ -29,6 +29,35 @@ beforeEach(() => {
   api.getSnapshot.mockReset();
   api.installKernel.mockReset();
   api.isDesktopRuntime.mockReset().mockReturnValue(true);
+});
+
+describe("App navigation", () => {
+  it("groups product navigation while keeping advanced pages addressable", async () => {
+    api.getSnapshot.mockResolvedValue(snapshot());
+
+    render(<App />);
+    await screen.findByRole("heading", { name: "内核" });
+
+    const primaryNav = screen.getByRole("navigation", { name: "主导航" });
+    expect(within(primaryNav).getAllByRole("button").map((button) => button.getAttribute("aria-label"))).toEqual([
+      "工作台",
+      "环境",
+      "自动化",
+      "资源",
+      "系统",
+    ]);
+    expect(screen.getByRole("button", { name: "资源" }).getAttribute("aria-current")).toBe("page");
+    expect(within(screen.getByRole("navigation", { name: "资源子导航" })).getByRole("button", { name: "内核" }).getAttribute("aria-current")).toBe("page");
+
+    fireEvent.click(screen.getByRole("button", { name: "系统" }));
+    await screen.findByRole("heading", { name: "设置" });
+    expect(window.location.search).toContain("page=settings");
+    expect(screen.getByRole("button", { name: "系统" }).getAttribute("aria-current")).toBe("page");
+
+    fireEvent.click(screen.getByRole("button", { name: "操作记录" }));
+    await screen.findByRole("heading", { name: "操作" });
+    expect(window.location.search).toContain("page=operations");
+  });
 });
 
 describe("App kernel page", () => {
