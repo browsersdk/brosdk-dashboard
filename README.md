@@ -4,6 +4,10 @@
 
 # BroSDK Dashboard
 
+<p align="center">
+  <a href="README.md">简体中文</a> | <a href="README.en.md">English</a>
+</p>
+
 BroSDK Dashboard 是基于 BroSDK 的 Windows 多指纹浏览器桌面控制台，提供多环境生命周期、代理与内核管理、远端指纹查看、全局 MCP 自动化和受控 AI Agent。
 
 当前 0.1.0 版本面向 Windows x64 内部测试。仓库已包含运行所需的 `libs/windows_x64/brosdk.dll` 和 C API 头文件 `brosdk.h`；服务端接口快照 `doc.json` / `docs.json` 仅作本地参考，不进入版本库。当前能力、已知限制和正式发布门槛见 [当前状态](docs/status.md)。
@@ -233,4 +237,6 @@ Chat 与 Agent 都通过 OpenAI-compatible 原生 `tools/tool_calls` 接入。Ch
 
 ## License
 
-本仓库当前标记为 `UNLICENSED`，未授予开源使用许可。`brosdk.dll` 及其头文件的分发和使用应遵循 BroSDK 对应授权条款。
+本项目源码采用 [MIT License](LICENSE) 开源。
+
+仓库随附的 `libs/windows_x64/brosdk.dll`、`brosdk.h` 以及 BroSDK 服务端/API 访问能力不因本仓库 MIT 授权而改变其原有授权边界；这些文件和服务的分发、使用与商用条款应遵循 BroSDK 对应授权或服务协议。
