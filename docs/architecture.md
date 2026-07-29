@@ -208,6 +208,7 @@ DLL callback 函数只在回调有效期内复制 `data/len` 到无界队列，�
 - API Key 只来自环境变量或系统密钥库，不写入文档、仓库、SQLite 明文字段或普通日志。
 - AI API Key 同样只来自 `BROSDK_AI_API_KEY` 或平台安全存储；AI Base URL 与模型可以写入 Manager settings，密钥不会进入 settings、operation、事件、诊断包或模型上下文。
 - userSig、代理密码、Cookie、CDK/DEK、Authorization、URL query 中的敏感值统一脱敏。
+- 桌面 WebView 使用最小 CSP：生产环境只允许本地资源和 Tauri IPC，开发环境只额外允许 Vite localhost 与 HMR websocket。Dashboard 不直接向 SDK 服务端或 AI Provider 发起网络请求。
 - Dashboard 不展示密钥、摘要或尾号，只显示凭据来源与初始化状态。
 - 可选 loopback API 默认只监听 `127.0.0.1`，mutation 检查 Origin。
 - 诊断包默认不包含密钥、Cookie 明文、代理密码和完整启动 URL。

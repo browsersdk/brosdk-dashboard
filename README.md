@@ -146,6 +146,7 @@ dist/release/
 本地静态检查和单元测试：
 
 ```powershell
+npm run security:tauri
 npm run check
 npm test
 npm run e2e:dashboard

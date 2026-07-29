@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "npm run dev --workspace apps/dashboard",
     "build": "npm run build --workspace apps/dashboard",
-    "check": "npm run check --workspace apps/dashboard && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
+    "check": "npm run check --workspace apps/dashboard && npm run security:tauri && cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings",
     "test": "npm run test --workspace apps/dashboard && cargo test --workspace",
     "tauri:dev": "npm run dev --workspace apps/desktop",
     "tauri:build": "npm run build --workspace apps/desktop",
@@ -28,6 +28,7 @@
     "docs:screenshots": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/capture-readme-screenshots.ps1",
     "e2e:tray": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/test-desktop-tray-e2e.ps1",
     "sdk:capabilities": "cargo run -p sdk-host -- capabilities --json",
+    "security:tauri": "node scripts/check-tauri-security.mjs",
     "ai:smoke": "cargo run -p ai-agent --bin ai-smoke",
     "release:prepare": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-windows-sidecar.ps1",
     "release:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-release.ps1 -PortableOnly",

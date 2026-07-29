@@ -21,7 +21,7 @@ macOS/Linux 只有路径、IPC 和安全存储 adapter；仓库未携带对应�
 | MCP | DLL 全局 endpoint、动态 tools/list、envId 注入和响应脱敏 | 可用 |
 | AI | OpenAI-compatible Chat/Agent、不可变会话作用域、审批/自动模式和步骤审计 | 内测 |
 | 信息架构 | 五个一级入口、组内二级标签、开发诊断能力收敛到系统区域 | 可用 |
-| Windows 桌面 | 单实例、托盘、后台 Host、安装包和便携包 | 可用 |
+| Windows 桌面 | 单实例、托盘、后台 Host、最小 WebView CSP、安装包和便携包 | 可用 |
 | 本地 HTTP API | 只有地址与 crate 占位，没有产品化服务 | 未实现 |
 | Commerce | 只有方向文档，没有模型、页面或 connector | 未实现 |
 | macOS/Linux | adapter 占位，缺少动态库和发布验证 | 不支持 |
@@ -32,13 +32,12 @@ macOS/Linux 只有路径、IPC 和安全存储 adapter；仓库未携带对应�
 
 正式公开发布前必须处理：
 
-1. Tauri CSP 当前未启用，需要建立与本地资源、Tauri invoke 和必要网络请求匹配的最小策略。
-2. AI 会话历史当前保存在未加密 WebView localStorage，需要迁入 Manager 受保护存储，或增加默认不持久化模式。
-3. Agent 自动执行缺少独立的工具风险等级。页面脚本、上传、下载、点击和表单写入不能只依赖会话级开关。
-4. 正式安装包未签名；版本仍为 0.1.0，缺少稳定升级通道和面向用户的迁移/回滚验证。
-5. Cookie 导入导出、扩展选择和批量创建尚未产品化，是多账号迁移与日常运营的明显缺口。
-6. 环境缺少本地分组、标签、收藏和保存筛选，大规模环境下定位效率不足。
-7. 仓库包含 brosdk.dll 和 brosdk.h；公开分发前必须确认 DLL 再分发条款，并确定项目自身许可证。
+1. AI 会话历史当前保存在未加密 WebView localStorage，需要迁入 Manager 受保护存储，或增加默认不持久化模式。
+2. Agent 自动执行缺少独立的工具风险等级。页面脚本、上传、下载、点击和表单写入不能只依赖会话级开关。
+3. 正式安装包未签名；版本仍为 0.1.0，缺少稳定升级通道和面向用户的迁移/回滚验证。
+4. Cookie 导入导出、扩展选择和批量创建尚未产品化，是多账号迁移与日常运营的明显缺口。
+5. 环境缺少本地分组、标签、收藏和保存筛选，大规模环境下定位效率不足。
+6. 仓库包含 brosdk.dll 和 brosdk.h；公开分发前必须确认 DLL 再分发条款，并确定项目自身许可证。
 
 ## 数据与状态边界
 
@@ -54,6 +53,7 @@ macOS/Linux 只有路径、IPC 和安全存储 adapter；仓库未携带对应�
 当前仓库已经覆盖：
 
 - Dashboard 组件、TypeScript 和 production build。
+- Tauri CSP 配置检查，阻止生产 WebView 放开远程网络、通配源或 `unsafe-eval`。
 - Rust workspace 单元测试、Rustfmt 和 Clippy。
 - 桌面与移动视口 Playwright。
 - 真实 API Key 的初始化、环境生命周期、双环境、MCP 和内核 catalog smoke。

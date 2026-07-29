@@ -241,9 +241,11 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 - 带 `BROSDK_EMBEDDED_PORT`、唯一环境选择和模拟手动关闭的 `npm run e2e:environment` 通过，结果包含 `runtimeEvaluateVerified=true`、`embeddedMcpReachable=true`、`embeddedMcpToolVerified=true`、`manualCloseVerified=true`。
 - `npm run check`、`npm test`、`npm run build` 通过；Dashboard 在 1440x900 和 390x844 下完成 AI/MCP 导航、Chat/Agent 切换、禁用态、控制台和横向溢出检查。
 
-维护者应先阅读 [文档中心](README.md)，再运行 `git status --short --branch`、`npm run check`、`npm test` 和 `npm run build` 建立基线。产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
+维护者应先阅读 [文档中心](README.md)，再运行 `git status --short --branch`、`npm run security:tauri`、`npm run check`、`npm test` 和 `npm run build` 建立基线。产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
+
+涉及桌面 WebView 或 Tauri 配置的改动必须继续通过 `npm run security:tauri`。该检查要求生产 CSP 不为 `null`，包含本地资源、Tauri IPC、`object-src 'none'`、`form-action 'none'` 和 `frame-ancestors 'none'`，并禁止生产策略使用 `*`、远程网络源或 `unsafe-eval`。
 
 > 以下内容保留已实现能力的历史回归门槛，不代表当前路线编号。新增工作应以 [正式发布路线](roadmap.md) 为准。
 
