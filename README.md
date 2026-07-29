@@ -6,9 +6,9 @@
 
 BroSDK Dashboard 是基于 BroSDK 的 Windows 多指纹浏览器桌面控制台，提供多环境生命周期、代理与内核管理、远端指纹查看、全局 MCP 自动化和受控 AI Agent。
 
-当前版本面向 Windows x64。仓库已包含运行所需的 `libs/windows_x64/brosdk.dll` 和 C API 头文件 `brosdk.h`；服务端接口快照 `doc.json` / `docs.json` 仅作本地参考，不进入版本库。
+当前 0.1.0 版本面向 Windows x64 内部测试。仓库已包含运行所需的 `libs/windows_x64/brosdk.dll` 和 C API 头文件 `brosdk.h`；服务端接口快照 `doc.json` / `docs.json` 仅作本地参考，不进入版本库。当前能力、已知限制和正式发布门槛见 [当前状态](docs/status.md)。
 
-后续产品方向会围绕跨境电商多店铺运营扩展：不是直接做传统大 ERP，而是在多环境指纹浏览器之上增加店铺环境绑定、订单发货、商品/SKU 同步、平台连接器和受控 Commerce Agent。详见 [跨境电商运营中台规划](docs/commerce-roadmap.md)。
+1.0 前的产品目标是可靠、易懂、可正式分发的多环境控制中心。跨境电商只作为 1.0 后的验证性模块，先验证店铺与 envId 绑定及单平台只读订单，不直接扩张为 ERP。详见 [产品定位](docs/product.md) 和 [跨境电商方向验证](docs/commerce-roadmap.md)。
 
 ## 核心能力
 
@@ -177,7 +177,7 @@ Remove-Item Env:BROSDK_API_KEY
 
 报告中的 `kernelRefresh.serverKernelListLoaded=true` 且 `kernelRefresh.count > 1` 表示内核页已从服务端清单合并出当前平台/架构可用内核，而不只是本地已安装 core。
 
-环境 E2E 会启动真实浏览器并调用全局 MCP；测试结束必须将环境恢复为 stopped。创建/多环境测试会使用临时环境并执行补偿清理。完整命令和安全约束见 [测试交接文档](docs/testing-handoff.md)。
+环境 E2E 会启动真实浏览器并调用全局 MCP；测试结束必须将环境恢复为 stopped。创建/多环境测试会使用临时环境并执行补偿清理。完整命令和安全约束见 [测试与发布验证](docs/testing-handoff.md)。
 
 真实 AI 会话与自动 Agent 回归：
 
@@ -216,14 +216,17 @@ Chat 与 Agent 都通过 OpenAI-compatible 原生 `tools/tool_calls` 接入。Ch
 
 ## 文档
 
-- [项目规划与当前状态](docs/README.md)
+- [文档中心](docs/README.md)
+- [产品定位](docs/product.md)
+- [当前状态与已知限制](docs/status.md)
+- [正式发布路线](docs/roadmap.md)
 - [架构与进程边界](docs/architecture.md)
 - [DLL C API 接入](docs/dll-integration.md)
 - [接口覆盖矩阵](docs/interface-coverage.md)
-- [跨境电商运营中台规划](docs/commerce-roadmap.md)
 - [Manager 领域模型](docs/manager-domain.md)
-- [实施路线图](docs/roadmap.md)
 - [Windows 发布与回滚](docs/windows-release.md)
+- [跨境电商方向验证](docs/commerce-roadmap.md)
+- [变更记录](CHANGELOG.md)
 
 ## License
 

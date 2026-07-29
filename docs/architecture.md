@@ -1,8 +1,8 @@
-# BroSDK Dashboard 跨平台客户端架构
+# BroSDK Dashboard 客户端架构
 
 ## 1. 目标
 
-`brosdk-dashboard` 是新的本地桌面客户端项目。它吸收当前 `brosdk-v3` Windows WebView 客户端的产品形态和 Dashboard 功能，但把实现边界重新整理为更容易跨平台、测试和发布的结构。
+`brosdk-dashboard` 是 BroSDK 的本地桌面控制中心。它吸收既有 Windows WebView 客户端的产品经验，并把实现边界整理为可隔离、可测试、可发布的结构。
 
 首发平台是 Windows x64。运行时能力来自：
 
@@ -74,7 +74,7 @@ brosdk-dashboard/
     sdk-ffi/                 libloading 绑定和 C ABI 类型
     domain/                  领域模型、API schema、事件类型
     platform/                文件选择器、进程锁、密钥库、路径
-    local-api/               可选 loopback API，用于开发/E2E/外部接入
+    local-api/               loopback API 占位，当前未提供 HTTP 服务
   libs/
     windows_x64/
       brosdk.dll
@@ -112,7 +112,7 @@ manager.listOperations(filter)
 manager.updateSettings(input)
 ```
 
-为测试、外部自动化和未来 MCP 保留可选 loopback API：
+local-api crate 当前只有环回地址占位，没有启动 HTTP 服务，也不属于当前产品能力。以下接口形态仅作为未来外部集成候选：
 
 ```text
 GET  /api/v1/overview
@@ -123,7 +123,7 @@ GET  /api/v1/operations
 GET  /api/v1/events
 ```
 
-mutation 都返回 operation，不等待浏览器完全 ready。事件必须有递增 sequence，便于 Dashboard 刷新后恢复。
+如果未来实现，mutation 仍必须返回 operation，不等待浏览器完全 ready；事件必须有递增 sequence，便于客户端恢复。当前 Dashboard 只使用 Tauri command/event，MCP 由 Manager 连接 DLL 全局 endpoint。
 
 阶段 10 将创建输入固定为最小产品契约：
 

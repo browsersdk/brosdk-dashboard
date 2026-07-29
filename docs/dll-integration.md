@@ -9,11 +9,11 @@ libs/windows_x64/brosdk.dll
 libs/windows_x64/brosdk.h
 ```
 
-当前入库版本（2026-07-27）：
+当前入库版本为 2.1.0.0（2026-07-29 校验）：
 
 | 文件 | 大小 | SHA-256 |
 | --- | ---: | --- |
-| `brosdk.dll` | 20,505,600 bytes | `922808C200D0B00008DCB5FF69A17901BB31CD2477523D08C454B2074A26DC9F` |
+| `brosdk.dll` | 21,706,752 bytes | `E378A07F346F228EB96DAED958A9C95A15819AEF66BE1DD2E5F8E39FEB0F220A` |
 | `brosdk.h` | 36,932 bytes | `C60BDDCF6C7BFA90B624B1A4CFFAB3DB2BAE3366B792C9FA5151CDE3D2DA2DC1` |
 
 二进制与头文件是同一个交付单元，升级时必须一起替换并提交。`doc.json`/`docs.json`

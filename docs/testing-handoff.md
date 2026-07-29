@@ -1,4 +1,6 @@
-# 测试与交接说明
+# 测试与发布验证
+
+本文件前半部分描述当前测试入口和安全约束；第 11 节起保留历史阶段验收门槛。当前产品状态与发布优先级以 [当前状态](status.md) 和 [正式发布路线](roadmap.md) 为准。
 
 ## 1. 测试凭据
 
@@ -34,7 +36,7 @@ $env:BROSDK_E2E_ALLOW_MUTATION = "0"
 $env:BROSDK_E2E_USE_ONLY_ENV = "0"
 $env:BROSDK_E2E_MANUAL_CLOSE_TIMEOUT_SECS = "0"
 $env:BROSDK_E2E_SIMULATE_MANUAL_CLOSE = "0"
-$env:BROSDK_WORK_DIR = "D:\go\src\browsersdk\brosdk-dashboard\runtime\sdk-work"
+$env:BROSDK_WORK_DIR = Join-Path $PWD "runtime\sdk-work"
 $env:BROSDK_EMBEDDED_PORT = "17891"
 ```
 
@@ -219,7 +221,7 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 
 测试后执行 secret scan，至少检查当前仓库和运行日志目录。
 
-## 10. 新会话接力提示
+## 10. 维护基线
 
 阶段 9 AI 验收补充：
 
@@ -239,16 +241,11 @@ Dashboard MVP 自动验收补充：桌面 1280px 与移动 390px 都要覆盖环
 - 带 `BROSDK_EMBEDDED_PORT`、唯一环境选择和模拟手动关闭的 `npm run e2e:environment` 通过，结果包含 `runtimeEvaluateVerified=true`、`embeddedMcpReachable=true`、`embeddedMcpToolVerified=true`、`manualCloseVerified=true`。
 - `npm run check`、`npm test`、`npm run build` 通过；Dashboard 在 1440x900 和 390x844 下完成 AI/MCP 导航、Chat/Agent 切换、禁用态、控制台和横向溢出检查。
 
-新会话可以直接从这里开始：
-
-1. `cd D:\go\src\browsersdk\brosdk-dashboard`
-2. 阅读 `docs/README.md`、`docs/architecture.md`、`docs/dll-integration.md`、`docs/roadmap.md`。
-3. 运行 `git status --short --branch`，确认是否存在未提交工作。
-4. 运行 `npm run check`、`npm test`、`npm run build` 建立基线。
-5. 当前阶段 0-31 已完成；新增范围先更新 `docs/roadmap.md`，再实施、测试、更新文档并独立提交。
-6. 产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
+维护者应先阅读 [文档中心](README.md)，再运行 `git status --short --branch`、`npm run check`、`npm test` 和 `npm run build` 建立基线。产品 API Key 使用平台安全存储，测试 Key 只从进程环境读取；两者都不写入仓库、SQLite、日志或截图。
 
 涉及 DLL 生命周期或 MCP 的改动必须继续通过隔离 host、Manager operation 和脱敏边界，不允许 Dashboard 直接调用 DLL/MCP/CDP。
+
+> 以下内容保留已实现能力的历史回归门槛，不代表当前路线编号。新增工作应以 [正式发布路线](roadmap.md) 为准。
 
 ## 11. 阶段 10 环境创建验收
 

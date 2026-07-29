@@ -11,7 +11,7 @@ Manager 使用 `runtime/data/manager.sqlite3` 持久化设置、operation、本�
 - 任一分页失败时不写入部分结果，保留上一份缓存并标记 stale。
 - generation、reqId、CDP、ready/stopped 属于当前设备运行态，可与缓存一起保存，但不能覆盖远端环境配置。
 
-当前 schema version 为 6：
+当前 schema version 为 7：
 
 | 表 | 用途 |
 | --- | --- |
