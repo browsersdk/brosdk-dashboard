@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, KeyRound, LoaderCircle, ShieldCheck, Trash2 } from "lucide-react";
 import { clearAiApiKey, configureAiProvider, isDesktopRuntime } from "../../api";
 import { actionTitle, desktopActionReason } from "../../actionTitles";
+import { errorMessage } from "../../errors";
 import type { DashboardSnapshot } from "../../types";
 
 export function AiProviderSettings({ snapshot, onRefresh, onError }: {
@@ -81,6 +82,12 @@ export function AiProviderSettings({ snapshot, onRefresh, onError }: {
           {busy === "clear" ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}清除 API Key
         </button>
       </div>
+      {!keyManaged && !snapshot?.ai.apiKeyPresent && (
+        <p className="notice-banner" role="alert">
+          <KeyRound size={15} />
+          <span>AI API Key 未配置，AI 助手不可用。填写上方 API Key 后点击保存，或设置环境变量 BROSDK_AI_API_KEY。</span>
+        </p>
+      )}
       {envManaged && <p className="section-note">BROSDK_AI_BASE_URL / BROSDK_AI_MODEL 由部署环境覆盖。</p>}
     </div>
   );
@@ -92,8 +99,4 @@ function sourceLabel(source?: string) {
   if (source === "settings") return "本地设置";
   if (source === "default") return "默认值";
   return "-";
-}
-
-function errorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message ? error.message : fallback;
 }

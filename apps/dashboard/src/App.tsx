@@ -76,6 +76,7 @@ import { McpPage } from "./features/mcp/McpPage";
 import { OperationsPage } from "./features/operations/OperationsPage";
 import { ApiKeySetup } from "./features/setup/ApiKeySetup";
 import { actionTitle, desktopActionReason } from "./actionTitles";
+import { errorMessage, operationFailureMessage } from "./errors";
 import { environmentCdpLabel, environmentControlLabel, environmentLabel } from "./environmentIdentity";
 import { environmentProgress } from "./environmentProgress";
 import type {
@@ -182,7 +183,7 @@ export default function App() {
       setSnapshot(await getSnapshot());
       setError("");
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "读取状态失败");
+      setError(errorMessage(requestError, "读取状态失败"));
     } finally {
       setLoading(false);
     }
@@ -205,7 +206,7 @@ export default function App() {
         })
         .catch((requestError) => {
           if (!disposed) {
-            setError(requestError instanceof Error ? requestError.message : "读取事件失败");
+            setError(errorMessage(requestError, "读取事件失败"));
           }
         });
     }, 1500);
@@ -245,7 +246,7 @@ export default function App() {
       setSmoke(report);
       await load();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "SDK 自检执行失败");
+      setError(errorMessage(requestError, "SDK 自检执行失败"));
     } finally {
       setSmokeBusy(false);
     }
@@ -546,6 +547,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
   const [selectedEnvIds, setSelectedEnvIds] = useState<string[]>([]);
   const [busyAction, setBusyAction] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [createError, setCreateError] = useState("");
   const [diagnostics, setDiagnostics] = useState<Record<string, unknown>>({});
   const rows = useMemo(() => snapshot?.environments ?? [], [snapshot?.environments]);
   const filteredRows = useMemo(() => {
@@ -588,7 +590,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
       await onRefresh();
       return result;
     } catch (requestError) {
-      onError(requestError instanceof Error ? requestError.message : "环境操作失败");
+      onError(errorMessage(requestError, "环境操作失败"));
       return null;
     } finally {
       setBusyAction("");
@@ -597,18 +599,23 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
 
   async function create(input: Parameters<typeof createEnvironment>[0]) {
     setBusyAction("create");
+    setCreateError("");
     onError("");
     try {
       const operation = await createEnvironment(input);
       if (operation.status !== "succeeded") {
-        onError(operation.message || "环境创建失败");
+        const message = operationFailureMessage(operation, "环境创建失败");
+        setCreateError(message);
+        onError(message);
         return;
       }
       await onRefresh();
       setSelectedEnvId(operation.envId);
       setCreateOpen(false);
     } catch (requestError) {
-      onError(errorMessage(requestError, "环境创建失败"));
+      const message = errorMessage(requestError, "环境创建失败");
+      setCreateError(message);
+      onError(message);
     } finally {
       setBusyAction("");
     }
@@ -674,7 +681,7 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           <button className="button secondary compact" type="button" title={actionTitle("对账运行态", environmentActionReason)} disabled={!desktop || Boolean(busyAction)} onClick={() => void runAction("reconcile", reconcileRuntimes)}>
             <Activity className={busyAction === "reconcile" ? "spin" : ""} size={14} />对账
           </button>
-          <button className="button primary compact" type="button" title={actionTitle("新建环境", busyAction ? "环境操作正在执行" : "")} aria-expanded={createOpen} disabled={Boolean(busyAction)} onClick={() => { onError(""); setCreateOpen((open) => !open); }}>
+          <button className="button primary compact" type="button" title={actionTitle("新建环境", busyAction ? "环境操作正在执行" : "")} aria-expanded={createOpen} disabled={Boolean(busyAction)} onClick={() => { onError(""); setCreateError(""); setCreateOpen((open) => !open); }}>
             <Plus size={14} />新建环境
           </button>
         </div>
@@ -686,8 +693,9 @@ function EnvironmentPage({ snapshot, onRefresh, onError, onOpenKernels }: {
           platform={snapshot?.capabilities.platform ?? ""}
           busy={busyAction === "create"}
           desktop={desktop}
-          onCancel={() => setCreateOpen(false)}
-          onOpenKernels={() => { setCreateOpen(false); onOpenKernels(); }}
+          error={createError}
+          onCancel={() => { setCreateError(""); setCreateOpen(false); }}
+          onOpenKernels={() => { setCreateError(""); setCreateOpen(false); onOpenKernels(); }}
           onCreate={create}
         />
       )}
@@ -1109,7 +1117,6 @@ function KernelProgressBar({ value, compact = false }: { value: number; compact?
   );
 }
 
-function errorMessage(error: unknown, fallback: string) { return error instanceof Error ? error.message : fallback; }
 function credentialSourceLabel(source?: string) { return ({ environment: "系统环境", "secure-storage": "系统安全存储", none: "未设置" } as Record<string, string>)[source ?? "none"] ?? "未知"; }
 function formatTime(value: string) { return new Date(value).toLocaleString("zh-CN"); }
 function proxyDisplayUrl(profile: ProxyProfile) { return `${profile.scheme}://${profile.username ? `${profile.username}@` : ""}${profile.host}:${profile.port}`; }

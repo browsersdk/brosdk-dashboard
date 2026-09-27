@@ -6,6 +6,7 @@ import {
   Copy,
   Eraser,
   Globe2,
+  KeyRound,
   LoaderCircle,
   MessageSquarePlus,
   Monitor,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { aiChat, aiExecuteAgent, aiPlanAgent, aiRunAgent, isDesktopRuntime, onManagerEvent } from "../../api";
 import { actionTitle } from "../../actionTitles";
+import { errorMessage } from "../../errors";
 import type {
   AiAgentExecution,
   AiAgentPlan,
@@ -420,6 +422,14 @@ export function AiPage({ snapshot, onRefresh, onError, onOpenSettings }: {
         </div>
       </div>
 
+      {desktopRuntime && !snapshot?.ai.apiKeyPresent && (
+        <div className="notice-banner" role="alert">
+          <KeyRound size={16} />
+          <span>AI API Key 未配置，Chat 与 Agent 均无法使用。请在设置页填写 AI Provider 的 API Key，或配置环境变量 BROSDK_AI_API_KEY。</span>
+          <button className="button secondary compact" type="button" onClick={onOpenSettings}>前往设置</button>
+        </div>
+      )}
+
       <div className="ai-conversation-layout">
         <aside className="ai-conversation-sidebar" aria-label="AI 会话历史">
           <div className="ai-conversation-heading">
@@ -714,12 +724,3 @@ function stringField(record: Record<string, unknown> | null, key: string) {
   return typeof value === "string" && value.trim() ? value : null;
 }
 
-function errorMessage(error: unknown, fallback: string) {
-  if (typeof error === "string" && error.trim()) return error;
-  if (error instanceof Error && error.message) return error.message;
-  if (typeof error === "object" && error !== null && "message" in error) {
-    const message = (error as { message?: unknown }).message;
-    if (typeof message === "string" && message.trim()) return message;
-  }
-  return fallback;
-}

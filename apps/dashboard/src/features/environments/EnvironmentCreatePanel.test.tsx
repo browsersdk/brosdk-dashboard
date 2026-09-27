@@ -94,6 +94,11 @@ describe("EnvironmentCreatePanel", () => {
     expect(onCancel).toHaveBeenCalledTimes(2);
   });
 
+  it("surfaces the create failure next to the submit button", () => {
+    renderPanel({ error: "kernel is not known to the local manager（KERNEL_NOT_FOUND）" });
+    expect(screen.getByRole("alert").textContent).toContain("KERNEL_NOT_FOUND");
+  });
+
   it("filters and sorts usable cores deterministically", () => {
     const result = usableEnvironmentKernels([
       kernel("older", 131),

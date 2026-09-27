@@ -13,6 +13,7 @@ import {
   retryOperation,
 } from "../../api";
 import { environmentLabel } from "../../environmentIdentity";
+import { errorMessage } from "../../errors";
 import type { DashboardSnapshot } from "../../types";
 
 const statusLabel: Record<string, string> = {
@@ -73,7 +74,7 @@ export function OperationsPage({ snapshot, onRefresh, onError }: {
       await callback();
       await onRefresh();
     } catch (requestError) {
-      onError(requestError instanceof Error ? requestError.message : "操作处理失败");
+      onError(errorMessage(requestError, "操作处理失败"));
     } finally {
       setBusy("");
     }

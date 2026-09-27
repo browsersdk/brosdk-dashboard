@@ -499,6 +499,49 @@ h2 {
   overflow-wrap: anywhere;
 }
 
+.notice-banner {
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  margin: 0 0 14px;
+  padding: 6px 12px;
+  gap: 9px;
+  border: 1px solid #f3d7a6;
+  border-radius: 5px;
+  color: #8a5a05;
+  background: #fffaf0;
+  font-size: 13px;
+}
+
+.notice-banner span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.notice-banner .button {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.inline-error {
+  display: flex;
+  align-items: center;
+  margin: 0;
+  padding: 6px 10px;
+  gap: 8px;
+  border: 1px solid #f0c4c7;
+  border-radius: 5px;
+  color: #9e2e35;
+  background: #fff6f6;
+  font-size: 12px;
+}
+
+.inline-error span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+
 .summary-band {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Boxes, HardDriveDownload, LoaderCircle, Plus, X } from "lucide-react";
+import { Boxes, CircleAlert, HardDriveDownload, LoaderCircle, Plus, X } from "lucide-react";
 import { actionTitle, desktopActionReason } from "../../actionTitles";
 import type { EnvironmentCreateInput, KernelRecord, ProxyProfile } from "../../types";
 
@@ -24,6 +24,7 @@ export function EnvironmentCreatePanel({
   platform,
   busy,
   desktop,
+  error,
   onCancel,
   onOpenKernels,
   onCreate,
@@ -33,6 +34,7 @@ export function EnvironmentCreatePanel({
   platform: string;
   busy: boolean;
   desktop: boolean;
+  error?: string;
   onCancel: () => void;
   onOpenKernels: () => void;
   onCreate: (input: EnvironmentCreateInput) => void | Promise<void>;
@@ -108,6 +110,13 @@ export function EnvironmentCreatePanel({
           ))}
         </select>
       </label>
+
+      {error && (
+        <p className="inline-error" role="alert">
+          <CircleAlert size={14} />
+          <span>{error}</span>
+        </p>
+      )}
 
       <div className="environment-create-actions">
         {availableKernels.length === 0 ? (

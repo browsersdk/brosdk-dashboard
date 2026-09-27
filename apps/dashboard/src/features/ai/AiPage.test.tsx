@@ -373,6 +373,21 @@ describe("AiPage", () => {
     expect((input as HTMLTextAreaElement).value).toBe("保留换行");
   });
 
+  it("prompts to configure the provider API key and routes to settings", () => {
+    const onOpenSettings = vi.fn();
+    renderPage({
+      snapshot: {
+        ...snapshot,
+        ai: { ...snapshot.ai, apiKeyPresent: false, apiKeySource: "none" },
+      },
+      onOpenSettings,
+    });
+
+    expect(screen.getByRole("alert").textContent).toContain("AI API Key 未配置");
+    fireEvent.click(screen.getByRole("button", { name: "前往设置" }));
+    expect(onOpenSettings).toHaveBeenCalledOnce();
+  });
+
   it("does not submit from click or Enter when the provider API key is missing", () => {
     renderPage({
       snapshot: {

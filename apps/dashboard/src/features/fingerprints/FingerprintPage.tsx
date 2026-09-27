@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CircleDot, Columns3, Fingerprint, Globe2, List, LoaderCircle, RefreshCw, Search, X } from "lucide-react";
 import { isDesktopRuntime, openFingerprintCheck, refreshEnvironmentDetail } from "../../api";
 import { actionTitle, desktopActionReason } from "../../actionTitles";
+import { errorMessage } from "../../errors";
 import type { DashboardSnapshot, OperationRecord } from "../../types";
 import { environmentControlLabel } from "../../environmentIdentity";
 import { fingerprintDetailGroups, formatFingerprintValue, formatRemoteValue, readRemoteValue, remoteProxyLabel } from "../environments/remoteDetails";
@@ -78,7 +79,7 @@ export function FingerprintPage({
       if (operation.status !== "succeeded") throw new Error(operation.message || "环境详情刷新失败");
       await onRefresh();
     } catch (requestError) {
-      onError(requestError instanceof Error ? requestError.message : "环境详情刷新失败");
+      onError(errorMessage(requestError, "环境详情刷新失败"));
     } finally {
       setBusy("");
     }
@@ -115,7 +116,7 @@ export function FingerprintPage({
       if (failed) throw new Error(failed.message || "环境详情刷新失败");
       await onRefresh();
     } catch (requestError) {
-      onError(requestError instanceof Error ? requestError.message : "环境详情刷新失败");
+      onError(errorMessage(requestError, "环境详情刷新失败"));
     } finally {
       setBusy("");
     }
@@ -128,7 +129,7 @@ export function FingerprintPage({
       await onOpenCheck(envId);
       await onRefresh();
     } catch (requestError) {
-      onError(requestError instanceof Error ? requestError.message : "指纹检查页打开失败");
+      onError(errorMessage(requestError, "指纹检查页打开失败"));
     } finally {
       setBusy("");
     }
