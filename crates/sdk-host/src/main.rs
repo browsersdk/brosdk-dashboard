@@ -167,6 +167,7 @@ fn run_smoke() -> SmokeReport {
                 .map_err(|err| anyhow!(err))
         }));
 
+    // DLL 从请求体取出 apiKey，再以 Bearer 头部发往云端，因此必须传入。
     let api_key = match std::env::var("BROSDK_API_KEY") {
         Ok(value) if !value.trim().is_empty() => value,
         _ => {

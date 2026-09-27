@@ -179,6 +179,7 @@ impl BroSdk {
             )
         };
         let value = self.take_json_output("sdk_init", out, out_len)?;
+        trace_sdk_call("sdk_init", Some(request), code, &value);
         self.check_code("sdk_init", code, Some(value.clone()))?;
         Ok(SdkCallOutput {
             code,
@@ -278,6 +279,7 @@ impl BroSdk {
             )
         };
         let value = self.take_json_output(function, out, out_len)?;
+        trace_sdk_call(function, Some(request), code, &value);
         self.check_code(function, code, Some(value.clone()))?;
         Ok(SdkCallOutput {
             code,
@@ -295,6 +297,7 @@ impl BroSdk {
         let mut out_len = 0usize;
         let code = unsafe { call(&mut out, &mut out_len) };
         let value = self.take_json_output(function, out, out_len)?;
+        trace_sdk_call(function, None, code, &value);
         self.check_code(function, code, Some(value.clone()))?;
         Ok(SdkCallOutput {
             code,
@@ -311,6 +314,7 @@ impl BroSdk {
     ) -> Result<i32, SdkFfiError> {
         let bytes = serde_json::to_vec(request).expect("JSON value always serializes");
         let code = unsafe { call(bytes.as_ptr().cast::<c_char>(), bytes.len()) };
+        trace_sdk_call(function, Some(request), code, &Value::Null);
         self.check_code(function, code, None)?;
         Ok(code)
     }
@@ -463,10 +467,18 @@ pub fn capabilities_for_path(path: impl Into<PathBuf>) -> SdkCapabilities {
     SdkCapabilities { ..capabilities }
 }
 
+/// getUserSig 请求的签名有效期，30 天（DLL 默认 86400）。
+pub const USER_SIG_DURATION_SECS: u64 = 2_592_000;
+
+/// getUserSig 请求体。`apiKey` 是 `sdk_get_user_sig` 的必填入参
+/// （`brosdk.h` / sdk-reference 6.4.2）：DLL 从这里取出它，再以 Bearer
+/// 头部发往云端 sdk-server，因此不能省略。
 pub fn get_user_sig_request(api_key: &str) -> Value {
     json!({
         "apiKey": api_key,
-        "role": "user"
+        "customerId": "",
+        "role": "user",
+        "duration": USER_SIG_DURATION_SECS
     })
 }
 
@@ -511,6 +523,27 @@ pub fn extract_user_sig(value: &Value) -> Option<&str> {
         .pointer("/data/userSig")
         .and_then(Value::as_str)
         .or_else(|| value.get("userSig").and_then(Value::as_str))
+}
+
+/// 开启 `BROSDK_IPC_TRACE` 时把每次 DLL 同步调用的请求与响应打到 stderr。
+/// 请求体与响应都经过脱敏，`apiKey`/`userSig` 等字段显示为 `[redacted]`。
+fn trace_sdk_call(function: &str, request: Option<&Value>, code: i32, response: &Value) {
+    if std::env::var_os("BROSDK_IPC_TRACE").is_none() {
+        return;
+    }
+    if let Some(request) = request {
+        eprintln!("sdk-ffi {function} request: {}", redacted_json(request));
+    }
+    eprintln!(
+        "sdk-ffi {function} code={code} response: {}",
+        redacted_json(response)
+    );
+}
+
+fn redacted_json(value: &Value) -> String {
+    let mut value = value.clone();
+    redact_value(&mut value);
+    serde_json::to_string(&value).unwrap_or_else(|error| format!("<unserializable: {error}>"))
 }
 
 pub fn redact_value(value: &mut Value) {
@@ -679,9 +712,11 @@ mod tests {
     #[test]
     fn user_sig_request_uses_user_role() {
         let request = get_user_sig_request("test-key");
-        assert_eq!(request["role"], "user");
         assert_eq!(request["apiKey"], "test-key");
-        assert_eq!(request.as_object().expect("object").len(), 2);
+        assert_eq!(request["role"], "user");
+        assert_eq!(request["customerId"], "");
+        assert_eq!(request["duration"], 2_592_000);
+        assert_eq!(request.as_object().expect("object").len(), 4);
     }
 
     #[test]

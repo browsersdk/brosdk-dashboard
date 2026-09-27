@@ -58,6 +58,19 @@ libs/windows_x64/brosdk.h
 BROSDK_API_KEY -> sdk_get_user_sig -> userSig -> sdk_init -> sdk_info
 ```
 
+`sdk_get_user_sig` 的请求体字段按 `brosdk.h` 与 `docs/brosdk/release/sdk-reference.md` 6.4.2 构造：
+
+```json
+{
+  "apiKey": "<BROSDK_API_KEY>",
+  "customerId": "",
+  "role": "user",
+  "duration": 2592000
+}
+```
+
+`apiKey` 是 C ABI 的必填入参，DLL 从请求体取出后以 Bearer 头部发往云端 `getUserSig`，空值直接返回 `CL_EINVALID`。`customerId` 与 `duration` 可选，`duration` 单位为秒、DLL 默认 86400，本产品固定 30 天。`role` 不在 DLL 文档的字段表内，仅为本产品历史约定，服务端忽略即可。
+
 桌面首次初始化链路：
 
 ```text

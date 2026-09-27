@@ -134,7 +134,11 @@ impl RuntimeHost {
             .arg(&endpoint)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(if trace_enabled() {
+                Stdio::inherit()
+            } else {
+                Stdio::null()
+            })
             .kill_on_drop(true);
         if let Some(api_key) = api_key {
             command.env("BROSDK_API_KEY", api_key);
@@ -215,6 +219,7 @@ impl RuntimeHost {
             operation_id,
             command,
         };
+        trace_host_payload("request", &request.id, &request.command);
         let (response_tx, response_rx) = oneshot::channel();
         self.commands
             .send(ActorCommand::Call {
@@ -227,6 +232,7 @@ impl RuntimeHost {
             .await
             .map_err(|_| SdkClientError::Timeout(timeout))?
             .map_err(|_| SdkClientError::ChannelClosed)??;
+        trace_host_payload("response", &response.id, &response);
         if response.ok {
             Ok(response.result.unwrap_or(serde_json::Value::Null))
         } else {
@@ -437,9 +443,30 @@ async fn run_actor(
 }
 
 fn trace_ipc(message: &str) {
-    if std::env::var_os("BROSDK_IPC_TRACE").is_some() {
+    if trace_enabled() {
         eprintln!("sdk-client IPC: {message}");
     }
+}
+
+fn trace_enabled() -> bool {
+    std::env::var_os("BROSDK_IPC_TRACE").is_some()
+}
+
+/// Prints the full host request/response JSON (secrets redacted) so a
+/// `tauri dev` console shows what was sent to the SDK and what came back.
+fn trace_host_payload<T: serde::Serialize>(label: &str, id: &str, payload: &T) {
+    if !trace_enabled() {
+        return;
+    }
+    let text = match serde_json::to_value(payload) {
+        Ok(mut value) => {
+            sdk_ffi::redact_value(&mut value);
+            serde_json::to_string(&value)
+                .unwrap_or_else(|error| format!("<unserializable: {error}>"))
+        }
+        Err(error) => format!("<unserializable: {error}>"),
+    };
+    eprintln!("sdk-client {label} {id}: {text}");
 }
 
 fn parse_host_json<T>(stdout: &[u8]) -> Result<T, serde_json::Error>

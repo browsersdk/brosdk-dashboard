@@ -10,6 +10,7 @@ anyhow.workspace = true
 domain = { path = "../domain" }
 platform = { path = "../platform" }
 runtime-ipc = { path = "../runtime-ipc" }
+sdk-ffi = { path = "../sdk-ffi" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

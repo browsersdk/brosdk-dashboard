@@ -281,6 +281,7 @@ impl HostRuntime {
                 "SDK initialization is already complete",
             ));
         }
+        // DLL 从请求体取出 apiKey，再以 Bearer 头部发往云端，因此必须传入。
         let api_key = std::env::var("BROSDK_API_KEY")
             .ok()
             .filter(|value| !value.trim().is_empty())
@@ -458,6 +459,7 @@ impl HostRuntime {
 
     fn normalize_event(&mut self, raw: RawSdkEvent) -> HostEvent {
         let mut payload = serde_json::from_slice::<Value>(&raw.bytes).unwrap_or_else(|_| {
+            trace_raw_callback(&raw.bytes);
             json!({
                 "message": "non-JSON SDK callback payload omitted",
                 "bytes": raw.bytes.len(),
@@ -742,6 +744,24 @@ fn redacted_message(message: &str) -> String {
         .chars()
         .take(512)
         .collect()
+}
+
+/// Prints the raw SDK callback text (redacted, truncated) when
+/// `BROSDK_IPC_TRACE` is set; these payloads are not JSON so they are
+/// otherwise dropped from the event stream.
+fn trace_raw_callback(bytes: &[u8]) {
+    if std::env::var_os("BROSDK_IPC_TRACE").is_none() {
+        return;
+    }
+    let mut value = Value::String(String::from_utf8_lossy(bytes).into_owned());
+    redact_value(&mut value);
+    let text: String = value
+        .as_str()
+        .unwrap_or("[redacted]")
+        .chars()
+        .take(4000)
+        .collect();
+    eprintln!("sdk-host raw callback ({} bytes): {text}", bytes.len());
 }
 
 fn kernel_catalog_from_sdk_init(value: &Value) -> Value {

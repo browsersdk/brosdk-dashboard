@@ -94,7 +94,7 @@ Runtime Host 隔离 smoke：
 npm run sdk:runtime-smoke
 ```
 
-该命令先构建 `sdk-host`，再验证 health/capability、正常 shutdown 和强制 kill。预期正常路径状态为 `stopped`，强制 kill 路径状态为 `degraded`，完成后没有残留 `sdk-host.exe`。可设置 `BROSDK_IPC_TRACE=1` 输出不含 payload 的 IPC 阶段诊断。
+该命令先构建 `sdk-host`，再验证 health/capability、正常 shutdown 和强制 kill。预期正常路径状态为 `stopped`，强制 kill 路径状态为 `degraded`，完成后没有残留 `sdk-host.exe`。设置 `BROSDK_IPC_TRACE=1` 时，除 IPC 阶段诊断外还会在 stderr 打印每次 host 调用的完整请求/响应 JSON（已脱敏）、透传 sidecar 的 stderr、并打印非 JSON 的 SDK 回调原文。调试构建保留控制台，`npm run tauri:dev` 的终端可直接看到这些输出；release 构建仍是无控制台的 windows 子系统。
 
 Dashboard 的同类入口位于“设置 -> 安全与诊断”。只要任一环境为 ready、starting、stopping、failed 或 unknown，按钮必须禁用；可执行时 Manager 使用安全存储中的 API Key，先停止长期 Runtime Host，再运行一次性 smoke，最后重启 Runtime Host。它不应出现在总览快捷操作中，也不能在环境运行时被当作普通健康检查。
 

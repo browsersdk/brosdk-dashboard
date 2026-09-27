@@ -3328,6 +3328,7 @@ dependencies = [
  "domain",
  "platform",
  "runtime-ipc",
+ "sdk-ffi",
  "serde",
  "serde_json",
  "thiserror 2.0.19",
